@@ -9,6 +9,9 @@ const Frame = require('../Source/Codec/Frame');
 const ObjectFrame = require('../Source/Codec/ObjectFrame');
 const Shootaround = require('../Source/Protocol/Shootaround');
 const MyCourt = require('../Source/Protocol/MyCourt');
+const PlayerBody = require('../Source/Protocol/PlayerBody');
+const PlayerBody2K22 = require('../Source/Protocol/PlayerBody2K22');
+const CourtLayout2K22 = require('../Source/Protocol/CourtLayout2K22');
 
 let Passed = 0;
 function Test(Name, Fn) {
@@ -304,6 +307,148 @@ Test('a client room update with little-endian blobs and padding is answered one 
     Assert.deepStrictEqual(Reply.Flags, [0, 1, 2, 3, 12, 13]);
     Assert.ok(Reply.Room.Fields.Customization.equals(Customization));
     Assert.ok(Reply.Room.Fields.PlayerState.equals(PlayerState));
+    MyCourt.ClearConnection(Connection);
+});
+
+function BuildPlayerBody2K22(Puid, MachineId) {
+    const U64 = (Value) => { const Out = Buffer.alloc(8); Out.writeBigUInt64LE(Value); return Out; };
+    const Header = Buffer.alloc(37);
+    Header.writeBigUInt64BE(Puid);
+    Header.writeBigUInt64BE(1n, 8);
+    // Deliberately omit fields 4/5; retain MiniGameId/MiniObjectId and opaque data.
+    for (const Bit of [0, 1, 2, 3, 144]) Header[16 + (Bit >> 3)] |= 0x80 >> (Bit & 7);
+    const Blob = Buffer.from([3, 0, 0, 0, 0xab, 0xcd, 0xef]);
+    return PlayerBody.Mark(Buffer.concat([Header, U64(Puid), U64(MachineId),
+        U64(0x1122334455667788n), U64(0x8877665544332211n), Blob]), '2K22');
+}
+function BuildStart2K22(Players, Type, Count = Players.length) {
+    const Builder = new FieldList.Builder()
+        .AddU64(Shootaround.Field.SoloFlag, 0n)
+        .AddU64(Shootaround.Field.PlayerCount, BigInt(Count))
+        .AddU32('COMMAND', Shootaround.Command)
+        .AddU64(Shootaround.Field.GameSlot, BigInt(Type));
+    Players.forEach((Puid) => Builder.AddU64(Shootaround.Field.Player, Puid));
+    const Body = Builder.Build();
+    const Header = Buffer.from(Buffer.from(LiveStartCribGame, 'hex').subarray(0, 36));
+    Header.writeUInt32LE(Header.length + Body.length);
+    Header.writeUInt32BE(Body.length, 32);
+    return Buffer.concat([Header, Body]);
+}
+
+Test('2K22 MyCourt menu modes are converted, never treated as native COURT types', () => {
+    for (const [Mode, Type] of [[0, 33], [1, 49], [6, 9], [11, 54], [12, 55]]) {
+        Assert.strictEqual(Shootaround.CourtTypeFor({ GameSlot: BigInt(Mode) }, '2K22'), Type);
+    }
+    for (const Mode of [2n, 18n, 19n, 63n, 64n, 0x100000006n]) {
+        Assert.strictEqual(Shootaround.CourtTypeFor({ GameSlot: Mode }, '2K22'), null, 'unknown mode must not fall back or truncate');
+    }
+    Assert.strictEqual(Shootaround.CourtTypeFor({ GameSlot: 6n }), 6, 'legacy mapping unchanged');
+    Assert.strictEqual(Shootaround.CourtTypeFor({ GameSlot: 0n }), 29, 'legacy default unchanged');
+});
+
+Test('2K22 PLAYING/reapply/release insert state fields without overwriting identity or blobs', () => {
+    const Puid = 0x0110000142d875e1n;
+    const MachineId = 0x123456789abcdef0n;
+    const { Connection } = MyCourtConnection(7022, Puid);
+    Connection.ProtocolGeneration = '2K22';
+    Connection.MachineId = MachineId;
+    Connection.PlayerRevision = 1n;
+    Connection.PlayerBody = BuildPlayerBody2K22(Puid, MachineId);
+    const Source = Buffer.from(Connection.PlayerBody);
+    const Before = PlayerBody2K22.Decode(Source);
+    Assert.ok(Shootaround.GrantPlaying(Connection, Shootaround.CourtIndex));
+    const After = PlayerBody2K22.Decode(Connection.PlayerBody);
+    Assert.ok(After.Ok);
+    for (const Bit of [0, 1, 2, 3]) {
+        Assert.strictEqual(Connection.PlayerBody.readBigUInt64LE(After.Offsets.get(Bit)),
+            Source.readBigUInt64LE(Before.Offsets.get(Bit)), `identity field ${Bit} unchanged`);
+    }
+    Assert.ok(Connection.PlayerBody.subarray(After.Offsets.get(144)).equals(Source.subarray(Before.Offsets.get(144))));
+    Assert.strictEqual(Connection.PlayerBody.readUInt32LE(After.Offsets.get(4)), 0xecbccdf8);
+    Assert.strictEqual(Connection.PlayerBody.readUInt32LE(After.Offsets.get(5)), Shootaround.CourtIndex);
+    Assert.strictEqual(Shootaround.Reapply(Connection), false);
+    Connection.PlayerBody.writeUInt32LE(0, After.Offsets.get(5));
+    Assert.strictEqual(Shootaround.Reapply(Connection), true, 'court id also re-applied when state is already PLAYING');
+    Assert.ok(Shootaround.Release(Connection));
+    const Released = PlayerBody2K22.Decode(Connection.PlayerBody);
+    Assert.strictEqual(Connection.PlayerBody.readUInt32LE(Released.Offsets.get(4)), 0x9705bb0d);
+    Assert.strictEqual(Connection.PlayerBody.readUInt32LE(Released.Offsets.get(5)), 0);
+    const Broken = { ...Connection, PlayerBody: Buffer.alloc(10) };
+    Assert.strictEqual(Shootaround.GrantPlaying(Broken, Shootaround.CourtIndex), false);
+    MyCourt.ClearConnection(Connection);
+});
+
+Test('2K22 MyCourt start/end use 148-bit courts, preserve AI ids and keep the room snapshot', () => {
+    const Puid = 0x0110000142d875e1n;
+    const Ai = 0x1234n;
+    const { Sent, Connection } = MyCourtConnection(7023, Puid);
+    Connection.ProtocolGeneration = '2K22';
+    Connection.MachineId = 0x123456789abcdef0n;
+    Connection.PlayerRevision = 1n;
+    Connection.PlayerBody = BuildPlayerBody2K22(Puid, Connection.MachineId);
+    Assert.ok(MyCourt.PublishBootstrap(Connection));
+    const Cached = MyCourt.RoomStateFor(Connection, 0x3f0000d4d06n).State;
+    Cached.Fields.Customization = Buffer.alloc(4860, 7);
+    Cached.Fields.PlayerState = Buffer.alloc(2784, 9);
+    Cached.Fields.OwnerCloudSaveId = 0x1122334455667788n;
+    try {
+        for (const [Requested, Expected, Ids, AwayCount] of [
+            [0, 33, [Puid], 0], [1, 49, [Puid, Ai], 0],
+            [6, 9, [Puid, Ai], 1], [11, 54, [Puid, Ai], 0], [12, 55, [Puid], 0],
+        ]) {
+            const Begin = Sent.length;
+            Assert.ok(Shootaround.Handle(Connection, BuildStart2K22(Ids, Requested)));
+            Assert.strictEqual(Sent.length - Begin, 3, 'court, player, room');
+            const Court = ObjectFrame.Parse(Sent[Begin]);
+            const Native = CourtLayout2K22.Decode(Court.Payload);
+            Assert.ok(Native.Ok, Native.Reason);
+            Assert.strictEqual(Native.Trailing, 0);
+            const Bit = CourtLayout2K22.Bit;
+            Assert.strictEqual(Native.Values.get(Bit.Name).readUInt32LE(), Shootaround.CourtIndex);
+            Assert.strictEqual(Native.Values.get(Bit.CourtType).readUInt32LE(), Expected);
+            Assert.strictEqual(Native.Values.get(Bit.MatchId).readBigUInt64LE(), Court.ObjectId);
+            Assert.strictEqual(Native.Values.get(Bit.AwayCount)[0], AwayCount);
+            Assert.strictEqual(Native.Values.get(Bit.HomeCount)[0], Ids.length - AwayCount);
+            Assert.strictEqual(Native.Values.get(Bit.HomePlayers[0]).readBigUInt64LE(), Puid);
+            if (Ids.length > 1) {
+                Assert.strictEqual(Native.Values.get(AwayCount ? Bit.AwayPlayers[0] : Bit.HomePlayers[1]).readBigUInt64LE(), Ai);
+            }
+            const Room = MyCourt.ParseRoom(Sent[Begin + 2], '2K22');
+            Assert.strictEqual(Room.Room.Fields.State, MyCourt.CribState.Scrimmage);
+            Assert.strictEqual(Room.Room.Fields.GameType, Requested, 'room keeps the menu mode, not COURT type');
+            Assert.strictEqual(Room.Room.Fields.OwnerCloudSaveId, Cached.Fields.OwnerCloudSaveId);
+            Assert.ok(Room.Room.Fields.PlayerState.equals(Buffer.alloc(2784, 9)));
+            Assert.ok(Shootaround.HandleEnd(Connection, Buffer.from(LiveEndCommand, 'hex')));
+            const EndCourt = CourtLayout2K22.Decode(ObjectFrame.Parse(Sent[Sent.length - 2]).Payload);
+            Assert.ok(EndCourt.Ok);
+            Assert.strictEqual(EndCourt.Values.get(Bit.CourtType).readUInt32LE(), Expected);
+            Assert.strictEqual(MyCourt.ParseRoom(Sent[Sent.length - 1], '2K22').Room.Fields.State, MyCourt.CribState.None);
+        }
+    } finally {
+        MyCourt.ClearConnection(Connection);
+    }
+});
+
+Test('unverified menu modes and invalid lineups send no COURT, PLAYING or SCRIMMAGE', () => {
+    const Puid = 0x0110000142d875e1n;
+    const Ai = 0x1234n;
+    const { Sent, Connection } = MyCourtConnection(7024, Puid);
+    Connection.ProtocolGeneration = '2K22';
+    Connection.MachineId = 0x123456789abcdef0n;
+    Connection.PlayerRevision = 1n;
+    Connection.PlayerBody = BuildPlayerBody2K22(Puid, Connection.MachineId);
+    const Body = Connection.PlayerBody;
+    for (const [Ids, Mode, Count] of [
+        [[Puid], 2, 1], [[Puid], 6, 1], [[Puid, Ai], 12, 2],
+        [[Puid, Ai], 0, 2], [[Puid, Puid], 6, 2], [[Ai], 1, 1],
+        [[Puid, 0n], 1, 2], [[Puid, Ai], 1, 99],
+    ]) {
+        Assert.ok(Shootaround.Handle(Connection, BuildStart2K22(Ids, Mode, Count)));
+        Assert.strictEqual(Sent.length, 0);
+        Assert.strictEqual(Connection.PlayerBody, Body);
+        Assert.strictEqual(Connection.Shootaround, undefined);
+        Assert.strictEqual(Connection.ShootaroundCourtKey, undefined);
+    }
     MyCourt.ClearConnection(Connection);
 });
 

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
@@ -41,6 +42,8 @@ bool IsSupportedGameExecutable(const std::wstring& Filename)
 constexpr wchar_t ModuleName[] = L"Module.dll";
 constexpr DWORD InitialLoadWaitMs = 30'000;
 constexpr DWORD GameProcessPollIntervalMs = 1'000;
+constexpr DWORD NativeReadinessTimeoutMs = 30'000;
+constexpr DWORD NativeReadinessPollMs = 250;
 
 enum class ExitCode : int
 {
@@ -51,6 +54,7 @@ enum class ExitCode : int
     ModuleInspectionError = 23,
     InjectionError = 24,
     UnexpectedError = 25,
+    TargetExited = 26,
 };
 
 enum class LogLevel
@@ -536,6 +540,108 @@ bool EnumerateRemoteModules(DWORD ProcessId, std::vector<RemoteModule>& Modules,
     return false;
 }
 
+enum class NativeReadiness { Ready, Exited, Failed };
+
+NativeReadiness WaitForNativeCode(HANDLE Process, DWORD ProcessId, const std::wstring& ImageName,
+                                const fs::path& ModulePath, std::vector<RemoteModule>& Modules)
+{
+    // NBA2K22.exe starts in .bind with encrypted .text. Do not load Module.dll
+    // or create a remote thread until the six supported native sites are restored.
+    // Keep these signatures consistent with SoloParkNative's supported build.
+    struct Signature { std::uintptr_t Rva; const char* Bytes; SIZE_T Size; };
+    constexpr Signature Signatures[] = {
+        {0x166b330, "\x48\x8b\xc4\x55\x53\x56\x41\x55\x41\x56\x48\x8d\x68\x88\x48\x81\xec\x50\x01\x00\x00", 21},
+        {0x16ff0c0, "\x40\x55\x56\x41\x54\x41\x56\x48\x8d\xac\x24\x48\xfd\xff\xff\x48\x81\xec\xb8\x03\x00\x00", 22},
+        {0x169da60, "\x40\x55\x56\x41\x56\x48\x8d\xac\x24\x40\xfa\xff\xff\x48\x81\xec\xc0\x06\x00\x00", 20},
+        {0x10d3e80, "\x8b\x05\x0a\x06\x1b\x05\xc3", 7},
+        {0x10d3e70, "\x8b\x05\x1e\x06\x1b\x05\xc3", 7},
+        {0x167d3c0, "\x48\x89\x5c\x24\x18\x48\x89\x6c\x24\x20\x57\x48\x83\xec\x20", 15},
+    };
+    const ULONGLONG Started = GetTickCount64();
+    bool Announced = false;
+    for (;;)
+    {
+        const DWORD ProcessState = WaitForSingleObject(Process, 0);
+        if (ProcessState == WAIT_OBJECT_0)
+        {
+            DWORD Code = 0;
+            GetExitCodeProcess(Process, &Code);
+            Log(LogLevel::Info, L"Target PID " + std::to_wstring(ProcessId) +
+                L" exited before native code became ready; no injection performed. Exit code: " + std::to_wstring(Code));
+            return NativeReadiness::Exited;
+        }
+        if (ProcessState != WAIT_TIMEOUT)
+        {
+            Log(LogLevel::Error, L"Could not query target readiness: " + DescribeWindowsError(GetLastError()));
+            return NativeReadiness::Failed;
+        }
+
+        DWORD Error = ERROR_SUCCESS;
+        const std::wstring RequestedModulePath = ModulePath.lexically_normal().wstring();
+        std::uintptr_t FailedRva = 0;
+        bool Ready = EnumerateRemoteModules(ProcessId, Modules, Error);
+        {
+            for (const auto& Module : Modules) if (EqualOrdinalIgnoreCase(Module.Name, ModuleName))
+            {
+                const std::wstring LoadedPath = fs::path(Module.Path).lexically_normal().wstring();
+                if (EqualOrdinalIgnoreCase(LoadedPath, RequestedModulePath))
+                {
+                    Log(LogLevel::Info, L"Module.dll is already loaded from the requested path.");
+                    return NativeReadiness::Ready;
+                }
+                Log(LogLevel::Error, L"A different Module.dll is already loaded: " + Module.Path);
+                return NativeReadiness::Failed;
+            }
+            const auto Image = std::find_if(Modules.begin(), Modules.end(), [&ImageName](const RemoteModule& Module)
+                { return EqualOrdinalIgnoreCase(Module.Name, ImageName); });
+            Ready = Image != Modules.end();
+            if (!Ready) Error = ERROR_MOD_NOT_FOUND;
+            else for (const auto& S : Signatures)
+            {
+                unsigned char Bytes[32]{};
+                SIZE_T ReadSize = 0;
+                FailedRva = S.Rva;
+                if (S.Rva > Image->Size || S.Size > Image->Size - S.Rva)
+                { Ready = false; Error = ERROR_BAD_EXE_FORMAT; break; }
+                if (!ReadProcessMemory(Process, reinterpret_cast<const void*>(Image->Base + S.Rva),
+                                       Bytes, S.Size, &ReadSize))
+                { Ready = false; Error = GetLastError(); break; }
+                if (ReadSize != S.Size || memcmp(Bytes, S.Bytes, S.Size))
+                { Ready = false; Error = ReadSize != S.Size ? ERROR_PARTIAL_COPY : ERROR_REVISION_MISMATCH; break; }
+            }
+        }
+        const ULONGLONG Elapsed = GetTickCount64() - Started;
+        if (Ready)
+        {
+            Log(LogLevel::Info, L"NBA2K22 native code ready for injection in PID " + std::to_wstring(ProcessId) +
+                L" after " + std::to_wstring(Elapsed) + L" ms.");
+            return NativeReadiness::Ready;
+        }
+        if (Elapsed >= NativeReadinessTimeoutMs)
+        {
+            std::wostringstream Detail;
+            Detail << L"NBA2K22 native code did not become ready within " << NativeReadinessTimeoutMs
+                   << L" ms; no injection performed. PID=" << ProcessId << L" rva=0x" << std::hex
+                   << FailedRva << std::dec << L" " << DescribeWindowsError(Error);
+            Log(LogLevel::Error, Detail.str());
+            return NativeReadiness::Failed;
+        }
+        if (!Announced)
+        {
+            Log(LogLevel::Info, L"Waiting for NBA2K22 native code in PID " + std::to_wstring(ProcessId) +
+                L" before loading Module.dll (up to 30 seconds).");
+            Announced = true;
+        }
+        const DWORD Remaining = static_cast<DWORD>(NativeReadinessTimeoutMs - Elapsed);
+        const DWORD Wait = WaitForSingleObject(Process, (std::min)(Remaining, NativeReadinessPollMs));
+        if (Wait != WAIT_TIMEOUT && Wait != WAIT_OBJECT_0)
+        {
+            Log(LogLevel::Error, L"Waiting for target readiness failed: " + DescribeWindowsError(GetLastError()));
+            return NativeReadiness::Failed;
+        }
+    }
+}
+
 std::wstring NormalizePathForComparison(const fs::path& Path)
 {
     return Path.lexically_normal().wstring();
@@ -653,36 +759,34 @@ int wmain(int argc, wchar_t* argv[])
 
     try
     {
-        DWORD ProcessId = 0;
-        if (argc == 2)
-        {
-            if (!ParseProcessId(argv[1], ProcessId))
-            {
-                Log(LogLevel::Error, L"Process ID must contain only decimal digits and fit in a nonzero DWORD.");
-                return static_cast<int>(ExitCode::UsageError);
-            }
-        }
-        else if (argc == 1)
-        {
-            Log(LogLevel::Info,
-                L"No PID specified. Waiting for a supported NBA2K game process (NBA2K19/20/21/22); press Ctrl+C to cancel.");
-            do
-            {
-                ProcessId = FindGameProcessId();
-                if (ProcessId == 0)
-                {
-                    Sleep(GameProcessPollIntervalMs);
-                }
-            } while (ProcessId == 0);
-            Log(LogLevel::Info, L"Found running game process with PID " + std::to_wstring(ProcessId) + L".");
-        }
-        else
+        if (argc > 2)
         {
             Log(LogLevel::Error, L"Usage: Injector.exe [NBA2K process ID]");
             return static_cast<int>(ExitCode::UsageError);
         }
-
-        return InjectIntoProcess(ProcessId);
+        const bool Automatic = argc == 1;
+        DWORD ProcessId = 0;
+        if (!Automatic && !ParseProcessId(argv[1], ProcessId))
+        {
+            Log(LogLevel::Error, L"Process ID must contain only decimal digits and fit in a nonzero DWORD.");
+            return static_cast<int>(ExitCode::UsageError);
+        }
+        for (;;)
+        {
+            if (Automatic)
+            {
+                Log(LogLevel::Info,
+                    L"No PID specified. Waiting for a supported NBA2K game process (NBA2K19/20/21/22); press Ctrl+C to cancel.");
+                do
+                {
+                    ProcessId = FindGameProcessId();
+                    if (ProcessId == 0) Sleep(GameProcessPollIntervalMs);
+                } while (ProcessId == 0);
+                Log(LogLevel::Info, L"Found running game process with PID " + std::to_wstring(ProcessId) + L".");
+            }
+            const int Result = InjectIntoProcess(ProcessId);
+            if (!Automatic || Result != static_cast<int>(ExitCode::TargetExited)) return Result;
+        }
     }
     catch (const std::exception& Exception)
     {
@@ -747,7 +851,7 @@ int InjectIntoProcess(DWORD ProcessId)
         if (TargetState == WAIT_OBJECT_0)
         {
             Log(LogLevel::Error, L"Target process has already exited.");
-            return static_cast<int>(ExitCode::ValidationError);
+            return static_cast<int>(ExitCode::TargetExited);
         }
         if (TargetState == WAIT_FAILED)
         {
@@ -787,7 +891,14 @@ int InjectIntoProcess(DWORD ProcessId)
         Log(LogLevel::Verbose, L"Module path: " + ModulePath.wstring());
 
         std::vector<RemoteModule> Modules;
-        if (!EnumerateRemoteModules(ProcessId, Modules, Error))
+        const std::wstring ImageName = TargetImagePath.filename().wstring();
+        if (EqualOrdinalIgnoreCase(ImageName, L"NBA2K22.exe"))
+        {
+            const auto Ready = WaitForNativeCode(Process.Get(), ProcessId, ImageName, ModulePath, Modules);
+            if (Ready == NativeReadiness::Exited) return static_cast<int>(ExitCode::TargetExited);
+            if (Ready != NativeReadiness::Ready) return static_cast<int>(ExitCode::ModuleInspectionError);
+        }
+        else if (!EnumerateRemoteModules(ProcessId, Modules, Error))
         {
             Log(LogLevel::Error, L"Could not enumerate target modules: " + DescribeWindowsError(Error));
             return static_cast<int>(ExitCode::ModuleInspectionError);

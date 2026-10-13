@@ -1,6 +1,6 @@
 # NBA2K22 街区与单人开赛交接
 
-更新：2026-10-13（补充用户验收与遗留问题）。当前Module **0x00010206**；单人2v2开赛/打球用户已通过。Opal原生玩法类型映射修正后，用户确认“完美，场地映射正确了”。本轮仅更新文档，其余暂不处理。
+更新：2026-10-13（补充用户验收与遗留问题）。当前Module **0x00010206**；单人2v2开赛/打球用户已通过。Opal原生玩法类型映射修正后，用户确认“完美，场地映射正确了”。后续调整：SoloParkNative随模块初始化自动安装，不再需要enabled文件；用户已确认“不放置 .enabled 文件的情况下正常进入单人 2v2”，自动启用验收通过。
 
 ## 已解决的场地对齐问题
 
@@ -42,9 +42,27 @@
 - 现有C++局部验证通过：单人初始化人数2/2、普通调用保留原值、其他线程隔离、嵌套作用域及异常恢复；MatchId原生布局、名单拒绝、原生返回值/GetLastError保持仍通过。
 - `node --test Opal/Tests/NativeSoloPark.test.js`相关6项通过，包含两侧队列真人原座位及三个CPU分配；未运行全量测试或启动游戏。
 - Release/x64构建成功，游戏退出后部署 `D:/SteamLibrary/steamapps/common/NBA 2K22/Module.dll`。构建/部署SHA256一致：`C4454ACF0065FF590BD5EE41C1F8DA0B053F1D9703118DF5CD5CF3BAF115DDFC`。本轮测试构建输出及测试临时目录清理完成。
-- 上述DLL构建/部署为此前记录。本次不重编译/部署DLL；旧服务已退出，按现有StartServers.bat启动HTTP PID27632/TCP21000及Opal PID25316/TCP20054/UDP28091，保留12帧/83Hz。PID仅当时状态，接手须重查。
-- `Opal/NativeSoloPark.json` Enabled=true，游戏目录SoloParkNative.enabled及ParkRosterTrace.enabled保留。单人仅支持普通2v2；旧SoloParkTest已撤回，不能恢复重复真人USERDATA方案。
+- 上述DLL构建/部署及以下服务启动均为此前记录：旧服务已退出，按现有StartServers.bat启动HTTP PID27632/TCP21000及Opal PID25316/TCP20054/UDP28091，保留12帧/83Hz。PID仅当时状态，接手须重查。
+- `Opal/NativeSoloPark.json` Enabled=true。SoloParkNative在支持的NBA2K22版本中自动安装，不再读取`SoloParkNative.enabled`；保留游戏模块、Hook指令签名及名单校验。`LogSoloPark`仅控制日志，不控制补丁安装。ParkRosterTrace改由DLL同目录`Granite.ini`中的`EnableParkRosterTrace`控制，默认0，旧enabled文件不再生效。单人仅支持普通2v2；旧SoloParkTest已撤回，不能恢复重复真人USERDATA方案。
+- 本次自动启用改动：Release/x64编译链接、SoloParkNativeTests源码编译、git diff --check通过；未运行测试程序或游戏。新产物`Granite/Build/Release/Module.dll`，时间2026-10-13 23:08:33，SHA256=`47A2F3A6E9986DA9D6E047073CC3FD8C2EFD30B74C4F25AB2933815C4C90745B`；未部署游戏目录、未重启服务。Ghidra返回当前加载目标`NBA2K22.exe.unpacked.exe`（SHA256=`14741e908c9c586fb0a32a9b17f59a0e53f586cdab6b841e6aa056859116ace0`）后连接断开，未重新反编译人数getter；原生地址、指令校验及2v2保护沿用上述已记录实现，本次只取消enabled文件门槛。
+- 用户后续验收：不放置`.enabled`文件正常进入单人2v2，自动启用通过。同时反馈`Attributes/get`请求下的`Body bytes: 96`仍输出；已定位为通用SendRequestHook详情日志未受`LogBadgeBudget`控制，本次补齐该请求的Body bytes和Headers详情开关，关闭徽章上报功能时日志开关也独立生效。Release/x64编译链接与git diff --check通过，最新`Granite/Build/Release/Module.dll`时间2026-10-13 23:21:08，SHA256=`C49A421C349BE5C932C8BF4F9FA286D146751B8D160FFE700D41F3DA8D48F84D`；未部署游戏目录或重启服务。用户最新反馈“验收，全部通过”，本轮INI开关、自动启用与徽章请求详情日志隐藏均已由用户验收。
 
+## 早期注入导致Solo22签名检查失败（已实现修复，待游戏验收）
+
+- 用户报告：游戏窗口出现前注入容易出现`SOLO22 refused: native build signature mismatch`。`granite-20261013-231844.log`第4行确认拒绝安装，第6行才出现游戏`FUN_14182FDD4 → FUN_141830170 → SetUnhandledExceptionFilter(FUN_141830180)`初始化调用。修正前`SoloParkNative::Install`只在`Module.cpp`初始化中调用一次，任意一处签名读取失败或字节不符便退出，不会稍后重试；因此该失败启动中本组五个钩子没有安装，WinHTTP重定向继续工作。
+- Ghidra恢复后重新核对`NBA2K22.exe.unpacked.exe`，SHA256=`14741E908C9C586FB0A32A9B17F59A0E53F586CDAB6B841E6AA056859116ACE0`。Generate/Start/Playing/home-count/away-count/Lookup的RVA分别为`0x166B330/0x16FF0C0/0x169DA60/0x10D3E80/0x10D3E70/0x167D3C0`；六处字节全部与源码签名一致。两个getter重新反编译确认读取`DAT_146284490/DAT_146284494`。
+- 只读PE文件对比：实际启动`NBA2K22.exe`的SHA256=`2036621D953D381433779D7E545F2C8DFE25402E7383D673C95927456FF80D56`，TimeDateStamp=`0x62E4BCE6`，入口RVA=`0x6D86310`（`.bind`段）；六处磁盘代码全部不匹配原生签名，例如Generate为`A6 26 87 A2 27 C2 A6 D8 61 6C 8E 06 8D 4C 94 D9 13 00 C0 DD 04`。解包文件时间戳相同、入口RVA=`0x182FF64`，六处磁盘代码全部匹配Ghidra与源码。这表明实际启动文件需在启动阶段恢复目标代码。
+- 启动器`WaitForGameReadiness`仅等待`kernel32.dll`出现，不检查游戏原生代码就绪；修复前Injector发现`NBA2K22.exe`进程后立即远程调用`LoadLibraryW`。此前失败日志`231549/231844/232446`的崩溃记录器初始化均为`chained: none yet`；成功日志`231603/232451`已为`chained: yes`并记录`SOLO22 enabled`，与启动时序差异一致。
+- 调查结论：证据高度支持早期注入与启动解包竞争，单次检查把尚未就绪的代码作为签名不匹配而永久放弃。旧失败日志没有实际内存字节、ReadProcessMemory状态或失败RVA，尚未直接捕获失败瞬间的加密代码，不能指定当次究竟哪处检查失败。修复保留全部签名约束；窗口出现只作为现象，不作为代码就绪判据。
+- 已按用户授权修改`Granite/Module/SoloParkNative.h`：签名已就绪则立即安装；首次不匹配时在独立线程中每250ms检查六处签名，最多等待30秒，全部匹配才安装一次。等待不阻塞其余模块初始化；原子标志防止重复安装，线程句柄及时关闭，就绪、超时或安装失败后结束本次工作。保留五个钩子的失败回滚和原生名单保护；Lookup在启用钩子前设置，初始回执写入使用现有ReceiptMutex。
+- 日志：首次不匹配记录`SOLO22 waiting for native code signatures`及失败详情，就绪记录`SOLO22 native code ready after ... ms`，安装成功继续记录`SOLO22 enabled`；超时记录`native build signature mismatch after ... ms waiting`。详情包含首个失败RVA、ReadProcessMemory成功状态、错误码、读取字节数、期望/实际字节；不会按250ms刷屏，所有Solo22日志仍受`LogSoloPark`控制。线程创建失败与MinHook失败也记录原因。
+- 代码检查：Release/x64编译链接通过，无编译警告；现有SoloParkNativeTests.cpp仅编译通过，未运行测试程序。六处签名地址、字节和长度与既有版本一致，本轮涉及文件的`git diff --check`通过。Ghidra目标哈希及Generate入口指令再次核对一致。新产物`Granite/Build/Release/Module.dll`，时间2026-10-13 23:44:24，大小460800字节，SHA256=`C8EDBFEEDC0031B4FFAED80BB5ADF2789A62C90FD87B8A08A7147DD99934A935`；`Module_v2.pdb`一并保留，模块/回执版本保持0x00010206。本轮构建临时文件清理，未部署游戏目录、修改运行INI、运行游戏或重启服务。
+- 待用户游戏验收：游戏退出后换用上述DLL，DLL同目录Granite.ini设置`LogSoloPark = 1`，按此前容易触发的时机在游戏窗口出现前注入，重复几次启动。签名未就绪时应先waiting、再ready和enabled，不再立即永久拒绝；签名已经就绪时直接enabled。确认正常进入街区并完成一次单人2v2开赛；若失败，提供新日志中带RVA/字节的超时或钩子错误记录。验收后可恢复`LogSoloPark = 0`；设置均在下一次游戏启动生效。本轮修复尚未游戏验收。
+
+- 用户提供的`granite-crash-20261013-235154-16584.txt`与`granite-crash-20261013-235203-3708.txt`显示两次相同结果：`Trigger=TerminateProcess`、退出码`0x35 (53)`、请求地址均为`NBA2K22.exe+0x6D8996E`，没有访问违规或Module异常。`Module.dll+0x143D5/0x1B46A`只是`CrashHandler::TerminateHook`和`OnSelfExit`记录游戏退出的栈帧；对应日志显示Module只完成初始化、CrashHandler安装和`SOLO22 waiting`，随后游戏在解包阶段退出，未进入Solo22安装钩子。实际`NBA2K22.exe`磁盘`.bind`段的`+0x6D8996E`是退出路径中的间接调用；Ghidra当前解包目标不映射`.bind`，不能从现有转储确定退出码53内部的具体校验原因，但可以确认触发发生在DLL加载后的游戏早期阶段。
+- 已按用户授权修改`Granite/Injector/Injector.cpp`：针对`NBA2K22.exe`，在远程`LoadLibraryW`前每250ms读取目标进程主模块的六处原生签名；全部匹配后才开始Module注入，最多等待30秒。目标进程提前退出时记录PID和退出码并跳过注入；自动无PID模式继续等待后续游戏进程；显式PID模式返回目标已退出。已加载同路径Module会沿用原有成功返回，不会因MinHook改写入口而误判超时；NBA2K19/20/21继续使用原注入流程。SoloParkNative自身的注入后30秒重试仍保留，作为直接注入时的第二层保护。
+- Injector Release/x64使用本机可用的`v145`工具集编译链接通过；项目原配置仍为`v143`，本机未安装v143，本次未修改项目配置。六处Injector签名与SoloParkNative逐项一致，`git diff --check`通过。新产物`Granite/Build/Release/Injector.exe`，时间2026-10-14 00:12:23，大小88064字节，SHA256=`7C50BC54769E528A7AE361379B69C7C6D57FFAD6848367D9411F7C5BFDCB9160`；配套Module仍为2026-10-13 23:44:24、460800字节、SHA256=`C8EDBFEEDC0031B4FFAED80BB5ADF2789A62C90FD87B8A08A7147DD99934A935`。本轮未部署游戏目录、未修改运行INI、未运行游戏或重启服务。
+- 待用户验收：将`Granite/Build/Release/Injector.exe`与同目录Module.dll一起使用，提前打开Injector后启动游戏。Injector日志应先出现`Waiting for NBA2K22 native code ... before loading Module.dll`，游戏解包完成后出现`NBA2K22 native code ready for injection`，然后Module才初始化；不应再在游戏解包阶段看到Module已加载后由游戏退出码53终止。确认游戏能正常启动并完成一次单人2v2；若Injector超时或目标退出，请提供Injector控制台输出及对应的新Granite日志。
 ## 已解决的前置代码错误
 
 MatchId读取：COURT+0x180为字段17 MatchId，+0x170为字段16 RandomSeed。FUN_14173D480传入BuildGameInfo参数3/13；FUN_1416B4A30将MatchId写uint32_t[0xB6]即 **game-info+0x2D8**，RandomSeed写[0xD0]即+0x340。StartGame复制game-info到Session+0xCB0。模块已修正两处MatchId；+0x2E8是此前错误位置。0x00010205此次实际通过StartGame/Playing前置校验，不能继续把本次崩溃归为MatchId错误。

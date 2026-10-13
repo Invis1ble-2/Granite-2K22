@@ -216,4 +216,44 @@ Test('mycourt is recognised by server type or by the crib world key', () => {
     Assert.ok(!ChangeServer.IsMyCourtDestination({ ServerType: 0, WorldKey: Crc('GAMBLING') }));
 });
 
+Test('2K22 travel uses the native body offsets without changing the legacy default', () => {
+    const Args = {
+        SessionId: 1008n,
+        ServerType: Worlds.ServerType.MyCourt,
+        WorldKey: Crc('CRIB'),
+        url: 'wss://127.0.0.1:20054/',
+    };
+    const Body = ChangeServer.Build({ ...Args, Generation: '2K22' }).Frame.subarray(16);
+    Assert.strictEqual(Body.length, 0xb4 + 1024);
+    Assert.strictEqual(Body.readUInt32BE(0x48), Crc('CRIB'));
+    const End = Body.indexOf(0, 0xb4);
+    Assert.strictEqual(Body.subarray(0xb4, End).toString(), Args.url);
+    const Ticket = FieldList.Parse(Body.subarray(End + 1, End + 1 + Body.readUInt16BE(0xb2)), 0);
+    Assert.strictEqual(FieldList.Find(Ticket, 'LOCATION').Data1, Crc('CRIB'));
+    Assert.strictEqual(FieldList.Find(Ticket, 'MATCH_ID').Value, Args.SessionId);
+    Assert.strictEqual(ChangeServer.Build(Args).Frame.length, 1266, '2K19 remains the default');
+});
+
+Test('a 2K22 PLAYER on the legacy Boulevard activity receives a 2K22 MyCourt route', () => {
+    const Body = new FieldList.Builder()
+        .AddU64('MATCH_TYPE', 0xa91b4ef87f821cd9n)
+        .AddU32(0x4b7ad8c3, 0xfeac4070)
+        .AddU32('NAME', Worlds.ServerType.MyCourt)
+        .AddU32('LOCATION', Crc('CRIB'))
+        .AddU32('COMMAND', ChangeServer.StartConnection)
+        .Build();
+    const Req = Frame.Build(0xce148fb1, Buffer.alloc(8), Body, Frame.InnerHeader.None);
+    let Reply;
+    const Client = {
+        Identifier: 'route-2k22', ProtocolGeneration: '2K22', ActivityKey: 0x3cf672c2,
+        Socket: { localAddress: '127.0.0.1' }, Port: 20054,
+        Send: (Bytes) => (Reply = Bytes, true),
+    };
+    OnTravelRequest(Client, Frame.Parse(Req), Req);
+    Assert.ok(Reply);
+    Assert.strictEqual(Reply.length, 16 + 0xb4 + 1024);
+    Assert.strictEqual(Reply.readUInt32BE(16 + 0x48), Crc('CRIB'));
+    Assert.strictEqual(Reply.subarray(16 + 0xb4, Reply.indexOf(0, 16 + 0xb4)).toString(), 'wss://127.0.0.1:20054/');
+});
+
 process.stdout.write(`\n${Passed} passing\n`);

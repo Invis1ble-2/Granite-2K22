@@ -7,6 +7,8 @@ const Fs = require('node:fs');
 const Log = require('../Core/Log');
 const ObjectFrame = require('../Codec/ObjectFrame');
 const Roster = require('./Roster');
+const PlayerBody = require('./PlayerBody');
+const Requests = require('./Requests');
 
 const RoomClass = 0x16a0d01e;
 const RoomClassSize = 7952;
@@ -79,16 +81,32 @@ const RoomFields = Object.freeze([
     { Name: 'FinalValue', Type: 'u64', Size: 8 },
 ]);
 
+// NBA2K22.exe.unpacked.exe: FUN_141655790/FUN_1416E18E0 read/write
+// 30 fields; StadiumData=0x12FC, StadiumSetup=0xAE0, cloud-save ID at bit 29.
+const RoomFields2K22 = Object.freeze([
+    ...RoomFields.map((Field) => {
+        if (Field.Name === 'Customization') return { ...Field, FixedLength: 0x12fc };
+        if (Field.Name === 'PlayerState') return { ...Field, FixedLength: 0xae0 };
+        return Field;
+    }),
+    { Name: 'OwnerCloudSaveId', Type: 'u64', Size: 8 },
+]);
+
+function FieldsFor(Generation = '2K19') {
+    return Generation === '2K22' ? RoomFields2K22 : RoomFields;
+}
+
 function DecodeRoom(Parsed) {
-    if (!Parsed || Parsed.Class !== RoomClass || Parsed.FlagCount !== RoomFields.length || !Parsed.Values) {
+    const Schema = FieldsFor(Parsed && Parsed.Generation);
+    if (!Parsed || Parsed.Class !== RoomClass || Parsed.FlagCount !== Schema.length || !Parsed.Values) {
         return null;
     }
     const Present = new Set(Parsed.Flags);
     const Fields = {};
     let Offset = 0;
-    for (let Index = 0; Index < RoomFields.length; Index++) {
+    for (let Index = 0; Index < Schema.length; Index++) {
         if (!Present.has(Index)) continue;
-        const Field = RoomFields[Index];
+        const Field = Schema[Index];
         if (Field.Type === 'blob32') {
             if (Offset + 4 > Parsed.Values.length) return null;
             const Length = Parsed.Values.readUInt32LE(Offset);
@@ -109,15 +127,21 @@ function DecodeRoom(Parsed) {
     return { Fields: Fields, BytesRead: Offset, Complete: Rest.every((Byte) => Byte === 0) };
 }
 
-function DecodeRoomPayload(Payload) {
-    if (!Buffer.isBuffer(Payload) || Payload.length < 20) return null;
+function DecodeRoomPayload(Payload, Generation = '2K19') {
+    const Count = FieldsFor(Generation).length;
+    const FlagsSize = ObjectFrame.FlagBytes(Count);
+    const ValuesStart = 16 + FlagsSize;
+    if (!Buffer.isBuffer(Payload) || Payload.length < ValuesStart) return null;
+    const UnusedMask = (1 << (FlagsSize * 8 - Count)) - 1;
+    if (Payload[ValuesStart - 1] & UnusedMask) return null;
     const Parsed = {
         Class: RoomClass,
-        FlagCount: RoomFields.length,
+        Generation,
+        FlagCount: Count,
         Key: Payload.readBigUInt64BE(0),
         Version: Payload.readBigUInt64BE(8),
-        Flags: ObjectFrame.ReadFlags(Payload, 16, RoomFields.length),
-        Values: Payload.slice(20),
+        Flags: ObjectFrame.ReadFlags(Payload, 16, Count),
+        Values: Payload.slice(ValuesStart),
     };
     Parsed.Room = DecodeRoom(Parsed);
     return Parsed.Room && Parsed.Room.Complete ? Parsed : null;
@@ -131,14 +155,15 @@ function IsMyCourt(Connection) {
     return !!Connection && String(Connection.ActivityName || '').toLowerCase() === 'mycourt';
 }
 
-function ParseRoom(Bytes) {
+function ParseRoom(Bytes, Generation = '2K19') {
+    if (!Buffer.isBuffer(Bytes) || Bytes.length < 30 || Bytes.readUInt32LE(0) !== Bytes.length) return null;
     const Parsed = ObjectFrame.Parse(Bytes);
     if (!Parsed || Parsed.Class !== RoomClass) return null;
-    Parsed.Room = DecodeRoom(Parsed);
-    return Parsed.Room && Parsed.Room.Complete ? Parsed : null;
+    const Decoded = DecodeRoomPayload(Parsed.Payload, Generation);
+    return Decoded ? Object.assign(Parsed, Decoded) : null;
 }
 
-function ParseRoomList(Bytes) {
+function ParseRoomList(Bytes, Generation = '2K19') {
     if (
         !Buffer.isBuffer(Bytes) ||
         Bytes.length < 23 ||
@@ -158,7 +183,7 @@ function ParseRoomList(Bytes) {
         const End = Offset + 9 + Length;
         if (End > Bytes.length) return null;
         const Payload = Buffer.from(Bytes.slice(Offset + 9, End));
-        const Parsed = DecodeRoomPayload(Payload);
+        const Parsed = DecodeRoomPayload(Payload, Generation);
         if (!Parsed) return null;
         Records.push({ ObjectId: ObjectId, Payload: Payload, Parsed: Parsed });
         Offset = End;
@@ -166,24 +191,24 @@ function ParseRoomList(Bytes) {
     return Offset === Bytes.length ? { Count: Count, Class: ClassCrc, Records: Records } : null;
 }
 
-function ListContainsRoom(Bytes) {
-    return ParseRoomList(Bytes) !== null;
+function ListContainsRoom(Bytes, Generation = '2K19') {
+    return ParseRoomList(Bytes, Generation) !== null;
 }
 
-function PacketRoom(Bytes, PacketId) {
-    const Parsed = ParseRoom(Bytes);
+function PacketRoom(Bytes, PacketId, Generation = '2K19') {
+    const Parsed = ParseRoom(Bytes, Generation);
     if (Parsed) return { Parsed: Parsed, List: false };
     if (PacketId === ObjectDataListPacket) {
-        const List = ParseRoomList(Bytes);
+        const List = ParseRoomList(Bytes, Generation);
         if (List) return { Parsed: { ObjectId: null, Class: RoomClass, RoomList: List }, List: true };
     }
     return null;
 }
 
-function ExtractTemplateFrame(Input) {
+function ExtractTemplateFrame(Input, Generation = '2K19') {
     if (Buffer.isBuffer(Input)) {
         const Id = Input.length >= 8 ? Input.readUInt32BE(4) >>> 0 : null;
-        return Id !== null && IsRoomPacket(Id) && PacketRoom(Input, Id) ? Buffer.from(Input) : null;
+        return Id !== null && IsRoomPacket(Id) && PacketRoom(Input, Id, Generation) ? Buffer.from(Input) : null;
     }
     if (typeof Input !== 'string') return null;
     for (const Line of Input.split(/\r?\n/)) {
@@ -198,7 +223,7 @@ function ExtractTemplateFrame(Input) {
             continue;
         }
         const Id = Frame.length >= 8 ? Frame.readUInt32BE(4) >>> 0 : null;
-        if (Id !== null && IsRoomPacket(Id) && PacketRoom(Frame, Id)) return Frame;
+        if (Id !== null && IsRoomPacket(Id) && PacketRoom(Frame, Id, Generation)) return Frame;
     }
     return null;
 }
@@ -210,7 +235,8 @@ function RoomTemplate() {
     if (!File) return null;
     try {
         const Input = Fs.readFileSync(File);
-        TemplateFrame = ExtractTemplateFrame(File.toLowerCase().endsWith('.txt') ? Input.toString('utf8') : Input);
+        const Data = File.toLowerCase().endsWith('.txt') ? Input.toString('utf8') : Input;
+        TemplateFrame = ExtractTemplateFrame(Data) || ExtractTemplateFrame(Data, '2K22');
         if (!TemplateFrame) {
             Log.Error(`MyCourt room template ${File} contains no complete 0x16A0D01E frame`);
         } else {
@@ -287,6 +313,7 @@ function BuildBootstrap(Connection) {
         ClassCrc: RoomClass,
         Bits: [0, 1, 2],
         Values,
+        FlagCount: FieldsFor(PlayerBody.GenerationForConnection(Connection)).length,
     });
     return ObjectFrame.Build({
         PacketId: ObjectDataPacket,
@@ -300,18 +327,36 @@ function BuildBootstrap(Connection) {
 
 function PublishBootstrap(Connection) {
     if (!IsMyCourt(Connection) || Connection.State !== 2 || Connection.MyCourtBootstrapSent) return false;
-    const Frame = BuildBootstrap(Connection);
+    let Frame = BuildBootstrap(Connection);
     if (!Frame) {
         Log.Error(
             `${Connection.Identifier} could not receive a MyCourt bootstrap because its PUID or session is missing`,
         );
         return false;
     }
-    const Parsed = ParseRoom(Frame);
+    const Generation = PlayerBody.GenerationForConnection(Connection);
+    let Parsed = ParseRoom(Frame, Generation);
+    if (!Parsed) return false;
+    const Existing = RoomStates.get(RoomKey(Connection, Parsed.ObjectId));
+    if (Existing && Existing.Generation === Generation) {
+        if (Existing.Fields.OwnerId !== undefined) {
+            // A native snapshot already supplied ownership. Never reset it or
+            // its version when the delayed bootstrap timer fires.
+            Connection.MyCourtBootstrapSent = true;
+            return false;
+        }
+        Frame = BuildRoomFrame({
+            ObjectId: Parsed.ObjectId, Generation,
+            Version: (Existing.Version > Parsed.Version ? Existing.Version : Parsed.Version) + 1n,
+            Fields: { ...Parsed.Room.Fields, ...Existing.Fields },
+        });
+        Parsed = ParseRoom(Frame, Generation);
+    }
     if (!Parsed || !Connection.SendObject(Frame)) return false;
     Connection.MyCourtBootstrapSent = true;
     Rooms.set(RoomKey(Connection, Parsed.ObjectId), {
         Frame: Buffer.from(Frame),
+        Generation,
         Source: Connection.Id,
         Bootstrap: true,
         ObjectId: Parsed.ObjectId,
@@ -325,6 +370,7 @@ function PublishBootstrap(Connection) {
         ObjectId: Parsed.ObjectId,
         Version: Parsed.Version,
         Fields: { ...Parsed.Room.Fields },
+        Generation,
         Source: Connection.Id,
         ActivityKey:
             Connection.ActivityKey === null || Connection.ActivityKey === undefined
@@ -333,12 +379,12 @@ function PublishBootstrap(Connection) {
         RoomScope: Connection.RoomScope || null,
     });
     Log.Info(
-        `${Connection.Identifier} received the NBA2K19 MyCourt ownership bootstrap ` +
+        `${Connection.Identifier} received the NBA${Generation} MyCourt ownership bootstrap ` +
             `(owner 0x${BigInt(Connection.Puid).toString(16).padStart(16, '0')}, ` +
             `object ${Parsed.ObjectId.toString(16).toUpperCase()})`,
     );
     Log.Verbose(
-        `  room revision 1, fields WorldTime=WALKING, OwnerId=self, State=NONE, ` +
+        `  room revision ${Parsed.Version}, ownership bootstrap retains any native fields, ` +
             `sent ${BootstrapDelayMs}ms after init`,
     );
     return true;
@@ -362,14 +408,17 @@ const CribState = Object.freeze({
     Scrimmage: 0x9712981b,
 });
 
-function EncodeRoom(Fields) {
+function EncodeRoom(Fields, Generation = '2K19') {
     const Bits = [];
     const Parts = [];
-    RoomFields.forEach((Field, Index) => {
+    FieldsFor(Generation).forEach((Field, Index) => {
         const Value = Fields[Field.Name];
         if (Value === undefined || Value === null) return;
         Bits.push(Index);
         if (Field.Type === 'blob32') {
+            if (!Buffer.isBuffer(Value) || (Field.FixedLength !== undefined && Value.length !== 0 && Value.length !== Field.FixedLength)) {
+                throw new Error(`invalid ${Generation} MyCourt ${Field.Name} block`);
+            }
             const Count = Buffer.alloc(4);
             Count.writeUInt32LE(Value.length, 0);
             Parts.push(Count, Value);
@@ -397,6 +446,7 @@ function RoomStateFor(Connection, ObjectId) {
             ObjectId: Id,
             Version: 0n,
             Fields: {},
+            Generation: PlayerBody.GenerationForConnection(Connection),
             Source: Connection.Id,
             ActivityKey:
                 Connection.ActivityKey === null || Connection.ActivityKey === undefined
@@ -409,14 +459,27 @@ function RoomStateFor(Connection, ObjectId) {
     return { Key: Key, State: State };
 }
 
+function CacheRoomState(Connection, Packet, Generation) {
+    const Parsed = Packet.Parsed;
+    const Records = Packet.List ? Parsed.RoomList.Records : [{ ObjectId: Parsed.ObjectId, Parsed }];
+    for (const Record of Records) {
+        const { State } = RoomStateFor(Connection, Record.ObjectId);
+        Object.assign(State.Fields, Record.Parsed.Room.Fields);
+        State.Generation = Generation;
+        if (Record.Parsed.Version > State.Version) State.Version = Record.Parsed.Version;
+    }
+}
+
 function BuildRoomFrame(State) {
-    const Encoded = EncodeRoom(State.Fields);
+    const Generation = State.Generation || '2K19';
+    const Encoded = EncodeRoom(State.Fields, Generation);
     const Payload = ObjectFrame.BuildPayload({
         key: State.ObjectId,
         version: State.Version,
         ClassCrc: RoomClass,
         Bits: Encoded.Bits,
         Values: Encoded.Values,
+        FlagCount: FieldsFor(Generation).length,
     });
     return ObjectFrame.Build({
         PacketId: ObjectDataPacket,
@@ -434,6 +497,7 @@ function PublishRoomState(Connection, Key, State, SeenVersion = 0n) {
     const Frame = BuildRoomFrame(State);
     Rooms.set(Key, {
         Frame: Frame,
+        Generation: State.Generation || '2K19',
         Source: State.Source,
         ObjectId: State.ObjectId,
         ActivityKey: State.ActivityKey,
@@ -441,7 +505,7 @@ function PublishRoomState(Connection, Key, State, SeenVersion = 0n) {
     });
     let Sent = Connection.SendObject(Frame) ? 1 : 0;
     for (const Peer of Roster.Peers(Connection)) {
-        if (IsMyCourt(Peer) && Peer.SendObject(Frame)) Sent++;
+        if (IsMyCourt(Peer) && PlayerBody.GenerationForConnection(Peer) === (State.Generation || '2K19') && Peer.SendObject(Frame)) Sent++;
     }
     return { Frame: Frame, Sent: Sent };
 }
@@ -486,15 +550,22 @@ function Relay(Connection, Bytes, PacketId = null) {
     if (!IsMyCourt(Connection) || Id === null || !IsRoomPacket(Id)) {
         return false;
     }
-    const Packet = PacketRoom(Bytes, Id);
+    const Generation = PlayerBody.GenerationForConnection(Connection);
+    const Schema = FieldsFor(Generation);
+    const Packet = PacketRoom(Bytes, Id, Generation);
     if (!Packet) return false;
     const Parsed = Packet.Parsed;
+    if (Generation === '2K22' && Id === ObjectUpdatePacket && !Packet.List && Parsed.Layout === ObjectFrame.Layout.Player) {
+        const RequestId = Bytes.readBigUInt64BE(16);
+        if (RequestId !== 0n && !Connection.Closed) Connection.Send(Requests.Build(RequestId));
+    }
 
     if ((Id === ObjectUpdatePacket || Id === LegacyObjectUpdatePacket) && !Packet.List) {
         const { Key, State } = RoomStateFor(Connection, Parsed.ObjectId);
         Object.assign(State.Fields, Parsed.Room.Fields);
+        State.Generation = Generation;
         const Out = PublishRoomState(Connection, Key, State, Parsed.Version);
-        const Names = Parsed.Flags.map((Bit) => RoomFields[Bit].Name);
+        const Names = Parsed.Flags.map((Bit) => Schema[Bit].Name);
         Log.Info(
             `${Connection.Identifier} updated MyCourt room ${Parsed.ObjectId.toString(16).toUpperCase()} ` +
                 `(${Names.length ? Names.join(', ') : 'no fields'}); answered at revision ${State.Version} ` +
@@ -503,9 +574,13 @@ function Relay(Connection, Bytes, PacketId = null) {
         return true;
     }
 
+    // Keep the native snapshot for later partial updates without discarding
+    // cloud-save IDs, stadium blocks or guest data supplied by the client.
+    CacheRoomState(Connection, Packet, Generation);
     const Key = RoomKey(Connection, Parsed.ObjectId);
     Rooms.set(Key, {
         Frame: Buffer.from(Bytes),
+        Generation,
         Source: Connection.Id,
         ObjectId: Parsed.ObjectId,
         ActivityKey:
@@ -517,7 +592,7 @@ function Relay(Connection, Bytes, PacketId = null) {
 
     let Sent = Connection.SendObject(Bytes) ? 1 : 0;
     for (const Peer of Roster.Peers(Connection)) {
-        if (IsMyCourt(Peer) && Peer.SendObject(Bytes)) Sent++;
+        if (IsMyCourt(Peer) && PlayerBody.GenerationForConnection(Peer) === Generation && Peer.SendObject(Bytes)) Sent++;
     }
     const ObjectLabel = Packet.List
         ? 'object list containing room state'
@@ -529,15 +604,15 @@ function Relay(Connection, Bytes, PacketId = null) {
     if (Packet.List) {
         Log.Verbose(
             `  ${Parsed.RoomList.Count} native room record${Parsed.RoomList.Count === 1 ? '' : 's'} ` +
-                `validated in the compact 2K19 object-list layout`,
+                `validated in the compact ${Generation} object-list layout`,
         );
     } else {
-        const Names = Parsed.Flags.map((Bit) => RoomFields[Bit].Name);
+        const Names = Parsed.Flags.map((Bit) => Schema[Bit].Name);
         const Owner = Parsed.Room.Fields.OwnerId;
         const Related = Parsed.Room.Fields.RelatedCount;
         const Userdata = Parsed.Room.Fields.UserDataCount;
         Log.Verbose(
-            `  room revision ${Parsed.Version.toString()}, ${Parsed.Flags.length}/29 fields present` +
+            `  room revision ${Parsed.Version.toString()}, ${Parsed.Flags.length}/${Schema.length} fields present` +
                 `${Owner === undefined ? '' : `, owner ${Owner}`}` +
                 `${Related === undefined ? '' : `, related ${Related}`}` +
                 `${Userdata === undefined ? '' : `, userdata ${Userdata.toString()}`}` +
@@ -552,11 +627,14 @@ function PublishTemplate(Connection) {
     const Frame = RoomTemplate();
     if (!Frame) return false;
     const PacketId = Frame.readUInt32BE(4) >>> 0;
-    const Packet = PacketRoom(Frame, PacketId);
+    const Generation = PlayerBody.GenerationForConnection(Connection);
+    const Packet = PacketRoom(Frame, PacketId, Generation);
     if (!Packet) return false;
     const Parsed = Packet.Parsed;
+    CacheRoomState(Connection, Packet, Generation);
     Rooms.set(RoomKey(Connection, Parsed.ObjectId), {
         Frame: Buffer.from(Frame),
+        Generation,
         Source: 'template',
         ObjectId: Parsed.ObjectId,
         ActivityKey:
@@ -567,7 +645,7 @@ function PublishTemplate(Connection) {
     });
     let Sent = Connection.SendObject(Frame) ? 1 : 0;
     for (const Peer of Roster.Peers(Connection)) {
-        if (IsMyCourt(Peer) && Peer.SendObject(Frame)) Sent++;
+        if (IsMyCourt(Peer) && PlayerBody.GenerationForConnection(Peer) === Generation && Peer.SendObject(Frame)) Sent++;
     }
     Log.Info(
         `${Connection.Identifier} received MyCourt room template (${Frame.length} bytes), ` +
@@ -584,6 +662,7 @@ function ReplayTo(Connection) {
     for (const Room of Rooms.values()) {
         if (Room.ActivityKey !== ActivityKey) continue;
         if ((Room.RoomScope || null) !== (Connection.RoomScope || null)) continue;
+        if ((Room.Generation || '2K19') !== PlayerBody.GenerationForConnection(Connection)) continue;
         if (Connection.SendObject(Room.Frame)) Sent++;
     }
     if (Sent) Log.Verbose(`  ${Connection.Identifier} received ${Sent} MyCourt room object${Sent === 1 ? '' : 's'}`);
@@ -610,6 +689,8 @@ module.exports = {
     RoomClassSize,
     RoomRuntime,
     RoomFields,
+    RoomFields2K22,
+    FieldsFor,
     ObjectDataPacket,
     ObjectDataListPacket,
     ObjectUpdatePacket,

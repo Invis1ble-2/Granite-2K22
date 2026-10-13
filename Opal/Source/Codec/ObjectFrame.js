@@ -36,7 +36,7 @@ const PlayerSchema = 0xdd85f493;
 const Body = { Key: 0, Version: 8, Flags: 16 };
 
 const Classes = {
-    0x16a0d01e: { Name: 'MYCOURT_ROOM', Flags: 29, Sizes: null },
+    0x16a0d01e: { Name: 'MYCOURT_ROOM', Flags: 30, Sizes: null },
     0x2c4d49e3: { Name: 'COURT', Flags: 148, Sizes: null },
     0x2c5d2702: {
         Name: 'PLAYER',
@@ -169,13 +169,15 @@ function ReadValue(Parsed, Bit) {
     return Parsed.Values.slice(Offset, Offset + Size);
 }
 
-function BuildPayload({ key: Key, version: Version, ClassCrc, Bits = [], Values = null }) {
+function BuildPayload({ key: Key, version: Version, ClassCrc, Bits = [], Values = null, FlagCount = null }) {
     const Known = ClassOf(ClassCrc);
     if (!Known) throw new Error(`unknown object class ${Hex(ClassCrc)}`);
+    const Count = FlagCount === null ? Known.Flags : FlagCount;
+    if (!Number.isInteger(Count) || Count <= 0) throw new Error('invalid object field count');
     const Head = Buffer.alloc(Body.Flags);
     Head.writeBigUInt64BE(BigInt(Key), Body.Key);
     Head.writeBigUInt64BE(BigInt(Version), Body.Version);
-    return Buffer.concat([Head, WriteFlags(Bits, Known.Flags), Values || Buffer.alloc(0)]);
+    return Buffer.concat([Head, WriteFlags(Bits, Count), Values || Buffer.alloc(0)]);
 }
 
 function Build({ PacketId, ConnectionId, ObjectId, ClassCrc, Payload, Layout: LayoutData = Layout.Nineteen }) {

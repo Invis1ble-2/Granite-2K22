@@ -11,6 +11,9 @@ const MyCourt = require('./MyCourt');
 const PlayerObject = require('./PlayerObject');
 const GotNext = require('./GotNext');
 const Roster = require('./Roster');
+const PlayerBody = require('./PlayerBody');
+const PlayerBody2K22 = require('./PlayerBody2K22');
+const CourtLayout2K22 = require('./CourtLayout2K22');
 
 const CourtClass = 0x2c4d49e3;
 const CourtFlags = 116;
@@ -46,6 +49,56 @@ const CourtTypeName = Object.freeze({
     42: 'HORSE',
     43: 'SIGN_OUT',
 });
+// NBA2K22 type table at 0x142C41E70 (FUN_141484770).
+const CourtType2K22 = Object.freeze({ None: 0, OneVOne: 9, Couch: 31, Blacktop: 32, Shootaround: 33 });
+const CourtTypeName2K22 = Object.freeze({
+    0: 'NONE', 1: 'FIVE_V_FIVE', 2: 'FIVE_V_FIVE_GYM',
+    3: 'FIVE_V_FIVE_EVENT', 4: 'FIVE_V_FIVE_EVENT_FIREANDICE',
+    5: 'FOUR_V_FOUR', 6: 'THREE_V_THREE', 7: 'THREE_V_THREE_GYM',
+    8: 'TWO_V_TWO', 9: 'ONE_V_ONE', 10: 'ONE_V_ONE_HALF',
+    11: 'ONE_V_ONE_QUICK', 12: 'ONE_V_ONE_V_ONE', 13: 'THREE_PT_CONTEST',
+    31: 'COUCH', 32: 'BLACKTOP', 33: 'SHOOTAROUND', 34: 'SHOOTAROUND_PROAM',
+    49: 'BEST_OF_TEN', 54: 'SIGN_OUT', 55: 'GUN',
+});
+
+function TypesFor(Generation) {
+    return Generation === '2K22' ? CourtType2K22 : CourtType;
+}
+
+// START_CRIB_GAME sends the MyCOURT menu mode (FUN_14161A1B0), not
+// COURT.Type. FUN_14168C4B0 validates menu modes 0..18 and their counts.
+// Keep the traced modes explicit; unverified modes must not start an unrelated
+// game with incompatible AI counts. COURT names: table 0x142C41E70.
+const MenuModes2K22 = Object.freeze({
+    0: Object.freeze({ CourtType: 33, Teams: 'together', MinPlayers: 1, MaxPlayers: 1 }),
+    1: Object.freeze({ CourtType: 49, Teams: 'together', MinPlayers: 1, MaxPlayers: 5 }),
+    6: Object.freeze({ CourtType: 9, Teams: 'versus', MinPlayers: 2, MaxPlayers: 2 }),
+    11: Object.freeze({ CourtType: 54, Teams: 'together', MinPlayers: 1, MaxPlayers: 5 }),
+    12: Object.freeze({ CourtType: 55, Teams: 'together', MinPlayers: 1, MaxPlayers: 1 }),
+});
+
+function MenuModeFor(Game) {
+    if (!Game || Game.GameSlot === undefined || Game.GameSlot === null) return null;
+    const Mode = Number(Game.GameSlot);
+    return Number.isInteger(Mode) && Mode >= 0 && Mode <= 18 ? MenuModes2K22[Mode] || null : null;
+}
+
+function ValidateGame2K22(Connection, Game) {
+    const Mode = MenuModeFor(Game);
+    if (!Mode) return { Ok: false, Reason: `unverified MyCOURT menu mode ${Game?.GameSlot}; no COURT fallback` };
+    const Ids = Game.Players || [];
+    const Count = Number(Game.PlayerCount);
+    if (!Number.isInteger(Count) || Count !== Ids.length ||
+        Count < Mode.MinPlayers || Count > Mode.MaxPlayers) {
+        return { Ok: false, Reason: `menu mode ${Game.GameSlot} needs ${Mode.MinPlayers}..${Mode.MaxPlayers} players; count ${Game.PlayerCount}, IDs ${Ids.length}` };
+    }
+    const Unique = new Set(Ids.map((Id) => BigInt(Id)));
+    if (Unique.has(0n) || Unique.size !== Ids.length ||
+        Connection.Puid === null || Connection.Puid === undefined || !Unique.has(BigInt(Connection.Puid))) {
+        return { Ok: false, Reason: 'invalid, duplicate or missing local player IDs in MyCOURT request' };
+    }
+    return { Ok: true, Mode };
+}
 const CourtIndex = 0x000d4d10;
 const CourtBit = Object.freeze({
     Type: 0,
@@ -108,6 +161,12 @@ function Writable(Body) {
 }
 
 function PatchPlayer(Connection, State, GameId) {
+    if (PlayerBody.GenerationForConnection(Connection) === '2K22') {
+        const Patched = PlayerBody2K22.SetGameState(Connection.PlayerBody, State, GameId);
+        if (!Patched.Ok) return false;
+        Connection.PlayerBody = PlayerBody.Mark(Patched.Body, '2K22');
+        return true;
+    }
     if (!Writable(Connection.PlayerBody)) return false;
     const Body = Buffer.from(Connection.PlayerBody);
     Body.writeUInt32LE(State >>> 0, StateOffset);
@@ -141,12 +200,25 @@ function Release(Connection) {
 }
 
 function Reapply(Connection) {
-    if (!Connection || !Connection.Shootaround || !Writable(Connection.PlayerBody)) return false;
-    if (Connection.PlayerBody.readUInt32LE(StateOffset) >>> 0 === GotNext.State.Playing >>> 0) return false;
+    if (!Connection || !Connection.Shootaround) return false;
+    if (PlayerBody.GenerationForConnection(Connection) === '2K22') {
+        const Decoded = PlayerBody2K22.Decode(Connection.PlayerBody);
+        if (!Decoded.Ok) return false;
+        const StateAt = Decoded.Offsets.get(4);
+        const CourtAt = Decoded.Offsets.get(5);
+        if (StateAt !== undefined && CourtAt !== undefined &&
+            Connection.PlayerBody.readUInt32LE(StateAt) === GotNext.State.Playing >>> 0 &&
+            Connection.PlayerBody.readUInt32LE(CourtAt) === Connection.Shootaround.GameId) return false;
+    } else {
+        if (!Writable(Connection.PlayerBody)) return false;
+        if (Connection.PlayerBody.readUInt32LE(StateOffset) >>> 0 === GotNext.State.Playing >>> 0 &&
+            Connection.PlayerBody.readUInt32LE(GameIdOffset) === Connection.Shootaround.GameId) return false;
+    }
     return PatchPlayer(Connection, GotNext.State.Playing, Connection.Shootaround.GameId);
 }
 
-function BuildCourt(ObjectId, Version, Players, Type = CourtType.Shootaround, Away = []) {
+function BuildCourt(ObjectId, Version, Players, Type = null, Away = [], Generation = '2K19') {
+    Type = Type === null ? TypesFor(Generation).Shootaround : Type;
     const U32 = (Value) => {
         const Out = Buffer.alloc(4);
         Out.writeUInt32LE(Value >>> 0, 0);
@@ -161,20 +233,34 @@ function BuildCourt(ObjectId, Version, Players, Type = CourtType.Shootaround, Aw
     const Team = Players.slice(0, 5).map((Player) => BigInt(Player));
     const Other = (Away || []).slice(0, 5).map((Player) => BigInt(Player));
     const Fields = new Map();
-    Fields.set(CourtBit.Type, U32(Type));
-    Fields.set(CourtBit.CourtId, U32(Number(Key & 0xffffffffn)));
-    Fields.set(CourtBit.SetupGate, Buffer.from([0]));
-    Fields.set(CourtBit.MatchId, U64(Key));
-    Fields.set(CourtBit.SecondTeamSize, Buffer.from([Other.length]));
-    Other.forEach((Player, Index) => Fields.set(CourtBit.SecondTeam + Index, U64(Player)));
-    Fields.set(CourtBit.FirstTeamSize, Buffer.from([Team.length]));
-    Team.forEach((Player, Index) => Fields.set(CourtBit.FirstTeam + Index, U64(Player)));
+    if (Generation === '2K22') {
+        // FUN_1416E7A00/FUN_1416E6570: 20 inherited + 128 court bits.
+        const Bit = CourtLayout2K22.Bit;
+        Fields.set(Bit.Name, U32(Number(Key & 0xffffffffn)));
+        Fields.set(Bit.IsActive, Buffer.from([1]));
+        Fields.set(Bit.CourtType, U32(Type));
+        Fields.set(Bit.SetupGate, Buffer.from([0]));
+        Fields.set(Bit.MatchId, U64(Key));
+        Fields.set(Bit.AwayCount, Buffer.from([Other.length]));
+        Other.forEach((Player, Index) => Fields.set(Bit.AwayPlayers[Index], U64(Player)));
+        Fields.set(Bit.HomeCount, Buffer.from([Team.length]));
+        Team.forEach((Player, Index) => Fields.set(Bit.HomePlayers[Index], U64(Player)));
+    } else {
+        Fields.set(CourtBit.Type, U32(Type));
+        Fields.set(CourtBit.CourtId, U32(Number(Key & 0xffffffffn)));
+        Fields.set(CourtBit.SetupGate, Buffer.from([0]));
+        Fields.set(CourtBit.MatchId, U64(Key));
+        Fields.set(CourtBit.SecondTeamSize, Buffer.from([Other.length]));
+        Other.forEach((Player, Index) => Fields.set(CourtBit.SecondTeam + Index, U64(Player)));
+        Fields.set(CourtBit.FirstTeamSize, Buffer.from([Team.length]));
+        Team.forEach((Player, Index) => Fields.set(CourtBit.FirstTeam + Index, U64(Player)));
+    }
 
     const Bits = [...Fields.keys()].sort((A, B) => A - B);
     const Head = Buffer.alloc(16);
     Head.writeBigUInt64BE(Key, 0);
     Head.writeBigUInt64BE(BigInt(Version), 8);
-    const Bitmap = Buffer.alloc(Math.ceil(CourtFlags / 8));
+    const Bitmap = Buffer.alloc(ObjectFrame.FlagBytes(Generation === '2K22' ? CourtLayout2K22.Count : CourtFlags));
     for (const Bit of Bits) Bitmap[Bit >> 3] |= 0x80 >> (Bit & 7);
     const Payload = Buffer.concat([Head, Bitmap, ...Bits.map((Bit) => Fields.get(Bit))]);
     return ObjectFrame.Build({
@@ -187,13 +273,15 @@ function BuildCourt(ObjectId, Version, Players, Type = CourtType.Shootaround, Aw
     });
 }
 
-function CourtTypeFor(Game) {
+function CourtTypeFor(Game, Generation = '2K19') {
+    if (Generation === '2K22') return MenuModeFor(Game)?.CourtType ?? null;
     const Type = Number(Game && Game.GameSlot !== undefined ? Game.GameSlot : 0) >>> 0;
     return Type > 0 && Type < CourtTypeCount ? Type : CourtType.Shootaround;
 }
 
-function CourtTypeLabel(Type) {
-    return CourtTypeName[Type] || `court type ${Type}`;
+function CourtTypeLabel(Type, Generation = '2K19') {
+    const Names = Generation === '2K22' ? CourtTypeName2K22 : CourtTypeName;
+    return Names[Type] || `court type ${Type}`;
 }
 
 function TeamLabel(Team) {
@@ -203,6 +291,14 @@ function TeamLabel(Team) {
 }
 
 function TeamsFor(Connection, Game, Type, Players) {
+    const Generation = PlayerBody.GenerationForConnection(Connection);
+    if (Generation === '2K22') {
+        const Mode = MenuModeFor(Game);
+        if (!Mode || Mode.CourtType !== Type) return null;
+        const Ids = (Game.Players || []).map((Id) => BigInt(Id));
+        if (Mode.Teams === 'together') return { Home: Ids, Away: [] };
+        return { Home: Ids.slice(0, 1), Away: Ids.slice(1, 2) };
+    }
     if (Type === CourtType.Shootaround) {
         const Home = Players.map((Player) => Player.Puid)
             .filter((Puid) => Puid !== null && Puid !== undefined)
@@ -225,6 +321,7 @@ function PlayersFor(Connection, Ids) {
     const Players = [Connection];
     for (const Peer of Roster.Peers(Connection)) {
         if (Peer === Connection || !MyCourt.IsMyCourt(Peer)) continue;
+        if (PlayerBody.GenerationForConnection(Peer) !== PlayerBody.GenerationForConnection(Connection)) continue;
         if (Peer.Puid === null || Peer.Puid === undefined || !Wanted.has(BigInt(Peer.Puid))) continue;
         Players.push(Peer);
     }
@@ -266,10 +363,12 @@ function HandleEnd(Connection, Bytes) {
                 ? Connection.ShootaroundTeam
                 : [Connection.Puid].filter((Puid) => Puid !== null && Puid !== undefined);
         const Type =
-            Connection.ShootaroundCourtType === undefined ? CourtType.Shootaround : Connection.ShootaroundCourtType;
+            Connection.ShootaroundCourtType === undefined
+                ? TypesFor(PlayerBody.GenerationForConnection(Connection)).Shootaround : Connection.ShootaroundCourtType;
         if (
             Connection.SendObject(
-                BuildCourt(CourtKey, Connection.ShootaroundCourtVersion, Team, Type, Connection.ShootaroundAway || []),
+                BuildCourt(CourtKey, Connection.ShootaroundCourtVersion, Team, Type,
+                    Connection.ShootaroundAway || [], PlayerBody.GenerationForConnection(Connection)),
             )
         ) {
             CourtVersion = Connection.ShootaroundCourtVersion;
@@ -297,11 +396,19 @@ function Handle(Connection, Bytes) {
     const Who = Req.Players.length
         ? Req.Players.map((P) => `0x${BigInt(P).toString(16).toUpperCase().padStart(16, '0')}`).join(', ')
         : '(no player ids)';
-    const Type = CourtTypeFor(Req);
+    const Generation = PlayerBody.GenerationForConnection(Connection);
+    const Type = CourtTypeFor(Req, Generation);
+    if (Generation === '2K22') {
+        const Checked = ValidateGame2K22(Connection, Req);
+        if (!Checked.Ok) {
+            Log.Error(`${Connection.Identifier} MyCourt start rejected: ${Checked.Reason}`);
+            return true;
+        }
+    }
     Log.Info(
-        `${Connection.Identifier} asked for a MyCourt ${CourtTypeLabel(Type)} ` +
+        `${Connection.Identifier} asked for a MyCourt ${CourtTypeLabel(Type, Generation)} ` +
             `(players ${Req.Players.length}, count ${Req.PlayerCount}, ` +
-            `soloFlag ${Req.SoloFlag}, type ${Req.GameSlot}) @ ${Log.Clock()}`,
+            `soloFlag ${Req.SoloFlag}, ${Generation === '2K22' ? 'menu mode' : 'type'} ${Req.GameSlot}, COURT type ${Type}) @ ${Log.Clock()}`,
     );
 
     const ObjectId = Bytes.length >= RoomKeyOffset + 8 ? Bytes.readBigUInt64BE(RoomKeyOffset) : null;
@@ -323,10 +430,11 @@ function Handle(Connection, Bytes) {
     Connection.ShootaroundAway = Teams.Away;
     Connection.ShootaroundRoomKey = RoomKey;
     Connection.ShootaroundCourtVersion = (Connection.ShootaroundCourtVersion || 0n) + 1n;
-    const Court = BuildCourt(CourtKey, Connection.ShootaroundCourtVersion, Teams.Home, Type, Teams.Away);
+    const Court = BuildCourt(CourtKey, Connection.ShootaroundCourtVersion, Teams.Home, Type, Teams.Away, Generation);
     let Courts = Connection.SendObject(Court) ? 1 : 0;
     for (const Peer of Roster.Peers(Connection)) {
-        if (Peer !== Connection && MyCourt.IsMyCourt(Peer) && Peer.SendObject(Court)) Courts++;
+        if (Peer !== Connection && MyCourt.IsMyCourt(Peer) &&
+            PlayerBody.GenerationForConnection(Peer) === Generation && Peer.SendObject(Court)) Courts++;
     }
 
     let Playing = 0;
@@ -342,9 +450,9 @@ function Handle(Connection, Bytes) {
         );
         return true;
     }
-    Log.Verbose(
-        `  couch-game start ${Hex(Command)} from ${Who}: ${CourtTypeLabel(Type)} court ` +
-            `${CourtKey.toString(16).toUpperCase()} (type ${Type}, home ${TeamLabel(Teams.Home)}, ` +
+    Log.Info(
+        `  NBA${Generation} MyCourt game start ${Hex(Command)} from ${Who}: ${CourtTypeLabel(Type, Generation)} court ` +
+            `${CourtKey.toString(16).toUpperCase()} (menu mode ${Req.GameSlot}, COURT type ${Type}, home ${TeamLabel(Teams.Home)}, ` +
             `away ${TeamLabel(Teams.Away)}) to ${Courts}, ` +
             `${Playing} player object${Playing === 1 ? '' : 's'} with PLAYING and game ${Hex(GameId)}, ` +
             `room ${Room.ObjectId.toString(16).toUpperCase()} SCRIMMAGE at revision ${Room.Version}`,
@@ -363,11 +471,14 @@ module.exports = {
     CourtClass,
     CourtFlags,
     CourtType,
+    CourtType2K22,
     CourtTypeName,
     CourtIndex,
     CourtBit,
     BuildCourt,
     CourtTypeFor,
+    MenuModes2K22,
+    ValidateGame2K22,
     TeamsFor,
     Read,
     ReadEnd,

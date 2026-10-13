@@ -48,6 +48,11 @@ function SetU64Fields(Body, Changes) {
     }
     return Patch(Body,Values);
 }
+// FUN_1416BD430: State/CourtName are fields 4/5, not legacy body+51/55.
+function SetGameState(Body, State, CourtName) {
+    const U32=N=>{const B=Buffer.alloc(4);B.writeUInt32LE(N>>>0);return B;};
+    return Patch(Body,new Map([[4,U32(State)],[5,U32(CourtName)]]));
+}
 function SetMachineId(Body, Id) {
     const D=Decode(Body), At=D.Ok?D.Offsets.get(0):undefined;
     if (At===undefined || Body.readBigUInt64LE(At)!==Body.readBigUInt64BE(0)) return {Ok:false,Native:false,Body,Reason:'2K22 PUID mismatch'};
@@ -96,4 +101,4 @@ function BuildGeneratedPlayer(Puid, Seed) {
     return Patch(Header,new Map([[0,U64(Puid)],[1,U64(0n)],[4,None],
         [91,Buffer.from([1])],[93,Buffer.from([1])],[144,Buffer.concat([Count,Script])]])).Body;
 }
-module.exports={BitmapBytes,ValuesStart,Widths,ArrayFields,Field,ShowField,IsPresent,Decode,Trim,SetMachineId,SetShow,InspectGeneration,SetGotNextDestination,SetSquadId,SetSquadInvites,SetU64Fields,ReadU64Field,BuildGeneratedPlayer};
+module.exports={BitmapBytes,ValuesStart,Widths,ArrayFields,Field,ShowField,IsPresent,Decode,Trim,SetMachineId,SetShow,InspectGeneration,SetGotNextDestination,SetSquadId,SetSquadInvites,SetU64Fields,ReadU64Field,BuildGeneratedPlayer,SetGameState};

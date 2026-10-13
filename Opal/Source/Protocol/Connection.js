@@ -359,6 +359,7 @@ function OnTravelRequest(Client, FrameData, Bytes) {
             WorldKey,
             url: Url,
             ConnectionId: FrameData.Buffer.slice(8, 16),
+            Generation: require('./PlayerBody').GenerationForConnection(Client),
         });
         Client.Send(Built.Frame);
         Log.Info(`${Client.Identifier} is travelling to ${Destination.Name} @ ${Log.Clock()}`);
@@ -511,6 +512,15 @@ function OnConnect(Client, FrameData, Bytes) {
                 `in world ${Hex(WorldKey)}, which is not one opal serves.`,
         );
         return;
+    }
+    // The WORLD connection remains live during MyCOURT entry. Inherit only an
+    // unambiguous, already decoded PLAYER generation for this account; never
+    // infer it from the shared activity IDs.
+    if (Activity.Name === 'mycourt' && !Client.ProtocolGeneration && Info.Puid) {
+        const Generations = new Set(Roster.Active()
+            .filter((Peer) => Peer.Id !== Client.Id && Peer.Puid === Info.Puid && Peer.ProtocolGeneration)
+            .map((Peer) => Peer.ProtocolGeneration));
+        if (Generations.size === 1) Client.ProtocolGeneration = Generations.values().next().value;
     }
 
 

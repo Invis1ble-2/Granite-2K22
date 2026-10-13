@@ -15,16 +15,21 @@ const SubOpcode = 0x86073f8c;
 const SpectatorSubOpcode = 0xb0bf29b0;
 
 const RouteWindowLength = 1024;
-const BodyLength = 226 + RouteWindowLength;
-
-const Offset = {
+const Offset = Object.freeze({
     SubOpcode: 0,
     SessionId: 4,
     ServerType: 28,
     WorldKey: 176,
     TicketLength: 224,
     Url: 226,
-};
+});
+// NBA2K22.exe.unpacked.exe, FUN_1416871F0; offsets are relative to the body.
+const Offset2K22 = Object.freeze({ ...Offset, WorldKey: 0x48, TicketLength: 0xb2, Url: 0xb4 });
+const BodyLength = Offset.Url + RouteWindowLength;
+
+function OffsetFor(Generation = '2K19') {
+    return Generation === '2K22' ? Offset2K22 : Offset;
+}
 
 function BuildTicket(SessionId, ServerType, WorldKey) {
     return new FieldList.Builder()
@@ -44,25 +49,27 @@ function Build({
     url: Url,
     ConnectionId = null,
     SubOpcode: SubOpcodeValue = SubOpcode,
+    Generation = '2K19',
 }) {
     const Index = Worlds.AssertRoutable(WorldKey);
-
-    const Body = Buffer.alloc(BodyLength);
-    Body.writeUInt32BE(SubOpcodeValue >>> 0, Offset.SubOpcode);
-    Body.writeBigUInt64BE(BigInt.asUintN(64, BigInt(SessionId)), Offset.SessionId);
-    Body.writeUInt32BE(ServerType >>> 0, Offset.ServerType);
-    Body.writeUInt32BE(WorldKey >>> 0, Offset.WorldKey);
+    const Layout = OffsetFor(Generation);
+    const Length = Layout.Url + RouteWindowLength;
+    const Body = Buffer.alloc(Length);
+    Body.writeUInt32BE(SubOpcodeValue >>> 0, Layout.SubOpcode);
+    Body.writeBigUInt64BE(BigInt.asUintN(64, BigInt(SessionId)), Layout.SessionId);
+    Body.writeUInt32BE(ServerType >>> 0, Layout.ServerType);
+    Body.writeUInt32BE(WorldKey >>> 0, Layout.WorldKey);
 
     const Address = Buffer.from(String(Url) + '\0', 'utf8');
     const Ticket = BuildTicket(SessionId, ServerType, WorldKey);
-    const TicketOffset = Offset.Url + Address.length;
-    if (TicketOffset + Ticket.length > BodyLength) {
+    const TicketOffset = Layout.Url + Address.length;
+    if (TicketOffset + Ticket.length > Length) {
         throw new Error(
-            `change server route data exceeds the packet ` + `(${TicketOffset + Ticket.length} of ${BodyLength})`,
+            `change server route data exceeds the packet (${TicketOffset + Ticket.length} of ${Length})`,
         );
     }
-    Body.writeUInt16BE(Ticket.length, Offset.TicketLength);
-    Address.copy(Body, Offset.Url);
+    Body.writeUInt16BE(Ticket.length, Layout.TicketLength);
+    Address.copy(Body, Layout.Url);
     Ticket.copy(Body, TicketOffset);
 
     return {
@@ -72,8 +79,8 @@ function Build({
     };
 }
 
-function BuildSpectator({ SessionId, ServerType, WorldKey, url: Url, ConnectionId = null }) {
-    return Build({ SessionId, ServerType, WorldKey, url: Url, ConnectionId, SubOpcode: SpectatorSubOpcode });
+function BuildSpectator(Args) {
+    return Build({ ...Args, SubOpcode: SpectatorSubOpcode });
 }
 
 function HostFor(Socket) {
@@ -146,6 +153,8 @@ module.exports = {
     RouteWindowLength,
     BodyLength,
     Offset,
+    Offset2K22,
+    OffsetFor,
     Build,
     BuildSpectator,
     BuildTicket,

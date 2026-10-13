@@ -1,5 +1,6 @@
 // Native generated-player readiness and 2v2 start validation. No roster-pointer patching.
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <sstream>
 
@@ -226,53 +227,149 @@ inline uint64_t __fastcall Playing(void* Session)
     SetLastError(PlayingError);
     return Result;
 }
-inline void Install(HMODULE Executable)
+struct Site { size_t Rva; const char* Bytes; size_t Size; void* Detour; void** Original; };
+inline const Site Sites[] = {
+    {0x166b330, "\x48\x8b\xc4\x55\x53\x56\x41\x55\x41\x56\x48\x8d\x68\x88\x48\x81\xec\x50\x01\x00\x00", 21,
+        reinterpret_cast<void*>(&Generate), reinterpret_cast<void**>(&OriginalGenerate)},
+    {0x16ff0c0, "\x40\x55\x56\x41\x54\x41\x56\x48\x8d\xac\x24\x48\xfd\xff\xff\x48\x81\xec\xb8\x03\x00\x00", 22,
+        reinterpret_cast<void*>(&Start), reinterpret_cast<void**>(&OriginalStart)},
+    {0x169da60, "\x40\x55\x56\x41\x56\x48\x8d\xac\x24\x40\xfa\xff\xff\x48\x81\xec\xc0\x06\x00\x00", 20,
+        reinterpret_cast<void*>(&Playing), reinterpret_cast<void**>(&OriginalPlaying)},
+    {0x10d3e80, "\x8b\x05\x0a\x06\x1b\x05\xc3", 7,
+        reinterpret_cast<void*>(&HomeCount), reinterpret_cast<void**>(&OriginalHomeCount)},
+    {0x10d3e70, "\x8b\x05\x1e\x06\x1b\x05\xc3", 7,
+        reinterpret_cast<void*>(&AwayCount), reinterpret_cast<void**>(&OriginalAwayCount)},
+    {0x167d3c0, "\x48\x89\x5c\x24\x18\x48\x89\x6c\x24\x20\x57\x48\x83\xec\x20", 15, nullptr, nullptr},
+};
+inline constexpr DWORD ReadinessTimeoutMs = 30'000, ReadinessPollMs = 250;
+inline std::atomic_bool InstallStarted = false;
+struct SignatureFailure
 {
-    Root = ModuleDirectory();
-    const DWORD Flag = GetFileAttributesW((Root + L"\\SoloParkNative.enabled").c_str());
-    if (Flag == INVALID_FILE_ATTRIBUTES || (Flag & FILE_ATTRIBUTE_DIRECTORY)) return;
-    DeleteFileW((Root + L"\\SoloParkNative.ready.json").c_str());
-    if (GetModuleHandleW(L"nba2k22.exe") != Executable) return;
+    const Site* Where = nullptr;
+    unsigned char Bytes[32]{};
+    SIZE_T ReadSize = 0;
+    bool ReadOk = false;
+    DWORD Error = ERROR_SUCCESS;
+};
+inline bool CheckSignatures(HMODULE Executable, SignatureFailure& Failure)
+{
     auto* Base = reinterpret_cast<unsigned char*>(Executable);
-    struct Site { size_t Rva; const char* Bytes; size_t Size; void* Detour; void** Original; };
-    Site Sites[] = {
-        {0x166b330, "\x48\x8b\xc4\x55\x53\x56\x41\x55\x41\x56\x48\x8d\x68\x88\x48\x81\xec\x50\x01\x00\x00", 21,
-            reinterpret_cast<void*>(&Generate), reinterpret_cast<void**>(&OriginalGenerate)},
-        {0x16ff0c0, "\x40\x55\x56\x41\x54\x41\x56\x48\x8d\xac\x24\x48\xfd\xff\xff\x48\x81\xec\xb8\x03\x00\x00", 22,
-            reinterpret_cast<void*>(&Start), reinterpret_cast<void**>(&OriginalStart)},
-        {0x169da60, "\x40\x55\x56\x41\x56\x48\x8d\xac\x24\x40\xfa\xff\xff\x48\x81\xec\xc0\x06\x00\x00", 20,
-            reinterpret_cast<void*>(&Playing), reinterpret_cast<void**>(&OriginalPlaying)},
-        {0x10d3e80, "\x8b\x05\x0a\x06\x1b\x05\xc3", 7,
-            reinterpret_cast<void*>(&HomeCount), reinterpret_cast<void**>(&OriginalHomeCount)},
-        {0x10d3e70, "\x8b\x05\x1e\x06\x1b\x05\xc3", 7,
-            reinterpret_cast<void*>(&AwayCount), reinterpret_cast<void**>(&OriginalAwayCount)},
-        {0x167d3c0, "\x48\x89\x5c\x24\x18\x48\x89\x6c\x24\x20\x57\x48\x83\xec\x20", 15, nullptr, nullptr},
-    };
     for (const auto& S : Sites)
     {
-        unsigned char Bytes[32]{};
-        if (!Read(Base + S.Rva, Bytes, S.Size) || memcmp(Bytes, S.Bytes, S.Size))
-        { Log(LogLevel::Error, L"SOLO22 refused: native build signature mismatch"); return; }
+        SignatureFailure Probe{};
+        Probe.Where = &S;
+        Probe.ReadOk = ReadProcessMemory(GetCurrentProcess(), Base + S.Rva, Probe.Bytes,
+            S.Size, &Probe.ReadSize) != FALSE;
+        Probe.Error = Probe.ReadOk ? ERROR_SUCCESS : GetLastError();
+        if (!Probe.ReadOk || Probe.ReadSize != S.Size || memcmp(Probe.Bytes, S.Bytes, S.Size))
+        { Failure = Probe; return false; }
     }
+    return true;
+}
+inline std::wstring SignatureDetail(const SignatureFailure& Failure)
+{
+    const auto& S = *Failure.Where;
+    std::wostringstream Text;
+    Text << L"rva=0x" << std::hex << S.Rva << L" read=" << (Failure.ReadOk ? L"ok" : L"failed")
+         << L" error=0x" << Failure.Error << std::dec << L" read-bytes=" << Failure.ReadSize << L"/" << S.Size;
+    Text << std::hex << L" expected=[";
+    Text.fill(L'0');
+    for (size_t I = 0; I < S.Size; ++I)
+    {
+        if (I) Text << L' ';
+        Text.width(2); Text << static_cast<unsigned>(static_cast<unsigned char>(S.Bytes[I]));
+    }
+    Text << L"] actual=[";
+    for (size_t I = 0; I < Failure.ReadSize && I < S.Size; ++I)
+    {
+        if (I) Text << L' ';
+        Text.width(2); Text << static_cast<unsigned>(Failure.Bytes[I]);
+    }
+    Text << L"]";
+    return Text.str();
+}
+inline void InstallHooks(HMODULE Executable)
+{
+    auto* Base = reinterpret_cast<unsigned char*>(Executable);
     size_t Made = 0, Enabled = 0;
+    MH_STATUS Status = MH_OK;
     for (unsigned I = 0; I < 5; ++I)
     {
-        if (MH_CreateHook(Base + Sites[I].Rva, Sites[I].Detour, Sites[I].Original) != MH_OK) break;
+        Status = MH_CreateHook(Base + Sites[I].Rva, Sites[I].Detour, Sites[I].Original);
+        if (Status != MH_OK) break;
         ++Made;
     }
-    if (Made == 5) for (unsigned I = 0; I < 5; ++I)
+    // Hooks can be called as soon as they are enabled; publish Lookup first.
+    if (Made == 5)
     {
-        if (MH_EnableHook(Base + Sites[I].Rva) != MH_OK) break;
-        ++Enabled;
+        Lookup = reinterpret_cast<LookupFn>(Base + Sites[5].Rva);
+        for (unsigned I = 0; I < 5; ++I)
+        {
+            Status = MH_EnableHook(Base + Sites[I].Rva);
+            if (Status != MH_OK) break;
+            ++Enabled;
+        }
     }
     if (Made != 5 || Enabled != 5)
     {
         for (unsigned I = 0; I < Enabled; ++I) MH_DisableHook(Base + Sites[I].Rva);
         for (unsigned I = 0; I < Made; ++I) MH_RemoveHook(Base + Sites[I].Rva);
-        Log(LogLevel::Error, L"SOLO22 refused: hook installation failed"); return;
+        std::wostringstream Detail;
+        Detail << L"SOLO22 refused: hook installation failed rva=0x" << std::hex
+               << Sites[Made != 5 ? Made : Enabled].Rva << std::dec << L" status=" << Status;
+        Log(LogLevel::Error, Detail.str()); return;
     }
-    Lookup = reinterpret_cast<LookupFn>(Base + Sites[5].Rva);
-    Receipt();
+    { std::lock_guard<std::mutex> Lock(ReceiptMutex); Receipt(); }
     Log(LogLevel::Info, L"SOLO22 enabled: native generated-player receipts and guarded 2v2 start");
+}
+inline DWORD WINAPI WaitAndInstall(void* Context)
+{
+    const auto Executable = static_cast<HMODULE>(Context);
+    const ULONGLONG Started = GetTickCount64();
+    try
+    {
+        for (;;)
+        {
+            SignatureFailure Failure{};
+            if (CheckSignatures(Executable, Failure))
+            {
+                Log(LogLevel::Info, L"SOLO22 native code ready after " +
+                    std::to_wstring(GetTickCount64() - Started) + L" ms; installing hooks");
+                InstallHooks(Executable); return 0;
+            }
+            const ULONGLONG Elapsed = GetTickCount64() - Started;
+            if (Elapsed >= ReadinessTimeoutMs)
+            {
+                Log(LogLevel::Error, L"SOLO22 refused: native build signature mismatch after " +
+                    std::to_wstring(Elapsed) + L" ms waiting; " + SignatureDetail(Failure));
+                return 1;
+            }
+            const DWORD Remaining = static_cast<DWORD>(ReadinessTimeoutMs - Elapsed);
+            Sleep(Remaining < ReadinessPollMs ? Remaining : ReadinessPollMs);
+        }
+    }
+    catch (...) { Log(LogLevel::Error, L"SOLO22 refused: native readiness worker failed"); return 1; }
+}
+inline void Install(HMODULE Executable)
+{
+    // Always install for the supported NBA2K22 build; no opt-in flag file.
+    if (!Executable || GetModuleHandleW(L"nba2k22.exe") != Executable) return;
+    if (InstallStarted.exchange(true)) return;
+    Root = ModuleDirectory();
+    DeleteFileW((Root + L"\\SoloParkNative.ready.json").c_str());
+    SignatureFailure Failure{};
+    if (CheckSignatures(Executable, Failure)) { InstallHooks(Executable); return; }
+
+    // The packed executable restores .text during startup. Wait outside Initialise
+    // so WinHTTP redirection and the other enabled features remain available.
+    Log(LogLevel::Info, L"SOLO22 waiting for native code signatures (up to " +
+        std::to_wstring(ReadinessTimeoutMs) + L" ms); " + SignatureDetail(Failure));
+    if (HANDLE Thread = CreateThread(nullptr, 0, WaitAndInstall, Executable, 0, nullptr)) CloseHandle(Thread);
+    else
+    {
+        const DWORD Error = GetLastError();
+        InstallStarted = false;
+        Log(LogLevel::Error, L"SOLO22 refused: native readiness thread could not start: " + std::to_wstring(Error));
+    }
 }
 }

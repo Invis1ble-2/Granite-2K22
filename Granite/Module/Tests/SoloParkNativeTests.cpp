@@ -111,7 +111,7 @@ int main()
         memset(Info+0x48,0,40);memset(Info+0xb0,0,40);SetLastError(73);
         SoloParkNative::Start(Players[0],Info);Check(StartCalls==2 && GetLastError()==92);
         R.Cpu[2]=R.Cpu[0];RequestFile(R);Check(!SoloParkNative::LoadRequest(Loaded));
-        SoloParkNative::Install(nullptr); // no flag: no hooks or receipt installation
+        SoloParkNative::Install(nullptr); // invalid executable: no hooks or receipt installation
         SoloParkNative::Root=Root;
         DeleteFileW((Root+L"\\SoloParkNative.request").c_str());DeleteFileW((Root+L"\\SoloParkNative.ready.json").c_str());
         DeleteFileW((Root+L"\\SoloParkNative.ready.tmp").c_str());RemoveDirectoryW(Root.c_str());

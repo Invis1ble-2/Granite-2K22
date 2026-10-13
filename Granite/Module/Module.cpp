@@ -28,6 +28,7 @@
 #include "BadgeSync.h"
 
 #include "CrashHandler.h"
+#include "ModuleConfig.h"
 #include "MinHook/include/MinHook.h"
 
 #pragma comment(lib, "MinHook/lib/libMinHook.x64.lib")
@@ -80,15 +81,17 @@ enum class LogLevel
 
 void Log(LogLevel Level, const std::wstring& Message)
 {
+    if (Message.starts_with(L"SOLO22") && !ModuleConfig::LogSoloPark) return;
+    if (Message.starts_with(L"PARKTRACE") && !ModuleConfig::LogParkRosterTrace) return;
     const wchar_t Symbol = Level == LogLevel::Info ? L'@' : Level == LogLevel::Verbose ? L'~' : L'!';
     const WORD Colour = Level == LogLevel::Info      ? FOREGROUND_GREEN | FOREGROUND_INTENSITY
                         : Level == LogLevel::Verbose ? FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY
                                                      : FOREGROUND_RED | FOREGROUND_INTENSITY;
     const std::wstring Line = std::wstring(1, Symbol) + L" " + Message + L"\n";
     OutputDebugStringW(Line.c_str());
-    CrashHandler::RecordLogLine(Line.c_str(), Line.size());
+    if (ModuleConfig::EnableCrashHandler) CrashHandler::RecordLogLine(Line.c_str(), Line.size());
     const HANDLE Output = GetStdHandle(Level == LogLevel::Error ? STD_ERROR_HANDLE : STD_OUTPUT_HANDLE);
-    if (Output && Output != INVALID_HANDLE_VALUE)
+    if (ModuleConfig::EnableConsole && Output && Output != INVALID_HANDLE_VALUE)
     {
         CONSOLE_SCREEN_BUFFER_INFO Previous{};
         const BOOL HasPrevious = GetConsoleScreenBufferInfo(Output, &Previous);
@@ -99,7 +102,7 @@ void Log(LogLevel Level, const std::wstring& Message)
     }
 
     std::scoped_lock Lock(LogMutex);
-    if (LogFile != INVALID_HANDLE_VALUE)
+    if (ModuleConfig::EnableFileLogging && LogFile != INVALID_HANDLE_VALUE)
     {
         const int Bytes =
             WideCharToMultiByte(CP_UTF8, 0, Line.c_str(), static_cast<int>(Line.size()), nullptr, 0, nullptr, nullptr);
@@ -115,6 +118,16 @@ void Log(LogLevel Level, const std::wstring& Message)
     }
 }
 
+void LogPrice(LogLevel Level, const std::wstring& Message)
+{
+    if (ModuleConfig::LogAttributePrice) Log(Level, Message);
+}
+
+void LogBadges(LogLevel Level, const std::wstring& Message)
+{
+    if (ModuleConfig::LogBadgeBudget) Log(Level, Message);
+}
+
 std::wstring ModuleDirectory()
 {
     wchar_t Path[MAX_PATH] = {};
@@ -127,6 +140,7 @@ std::wstring ModuleDirectory()
 
 void OpenLogFile()
 {
+    if (!ModuleConfig::EnableFileLogging) return;
     const std::wstring Directory = ModuleDirectory() + L"\\console logs";
     CreateDirectoryW(Directory.c_str(), nullptr);
 
@@ -160,6 +174,7 @@ void OpenLogFile()
 
 bool EnsureConsole()
 {
+    if (!ModuleConfig::EnableConsole) return false;
     if (!GetConsoleWindow() && !AllocConsole())
     {
         OutputDebugStringW(L"! Granite could not allocate a logging console\n");
@@ -234,6 +249,7 @@ HINTERNET WINAPI OpenRequestHook(HINTERNET Connection, LPCWSTR Verb, LPCWSTR Obj
         if (Object.find(L"/session/login") != std::wstring::npos) LoginRequests.insert(Request);
         const size_t Query = Object.find(L'?');
         const std::wstring Path = Object.substr(0, Query);
+        // Classify attribute requests for logging even when budget reporting is disabled.
         if (Path.ends_with(L"/mycareer/attributes/get")) BadgeRequests.insert(Request);
     }
     if (IsRedirectedConnection(Connection))
@@ -255,19 +271,25 @@ void BufferBadgeStream(HINTERNET Request, LPCWSTR Headers, DWORD HeadersLength, 
         std::scoped_lock Lock(HandlesMutex);
         PendingBadgeRequests[Request] = Pending;
     }
-    Log(LogLevel::Info, L"badge budget report buffering WinHttpWriteData body bytes=" + std::to_wstring(TotalLength));
+    LogBadges(LogLevel::Info, L"badge budget report buffering WinHttpWriteData body bytes=" + std::to_wstring(TotalLength));
 }
 
 BOOL WINAPI SendRequestHook(HINTERNET Request, LPCWSTR Headers, DWORD HeadersLength, LPVOID Optional,
                             DWORD OptionalLength, DWORD TotalLength, DWORD_PTR Context)
 {
+    bool BadgeRequest = false;
+    {
+        std::scoped_lock Lock(HandlesMutex);
+        BadgeRequest = BadgeRequests.contains(Request);
+    }
+    const bool LogDetails = !BadgeRequest || ModuleConfig::LogBadgeBudget;
     if (IsRedirectedRequest(Request))
     {
-        if (Headers && HeadersLength > 0)
+        if (LogDetails && Headers && HeadersLength > 0)
         {
             Log(LogLevel::Verbose, L"   Headers: " + std::wstring(Headers, HeadersLength == static_cast<DWORD>(-1) ? wcslen(Headers) : HeadersLength));
         }
-        if (Optional && OptionalLength > 0)
+        if (LogDetails && Optional && OptionalLength > 0)
         {
             Log(LogLevel::Info, L"   Body bytes: " + std::to_wstring(OptionalLength));
         }
@@ -298,11 +320,7 @@ BOOL WINAPI SendRequestHook(HINTERNET Request, LPCWSTR Headers, DWORD HeadersLen
             }
         }
     }
-    bool ReportBadges = false;
-    {
-        std::scoped_lock Lock(HandlesMutex);
-        ReportBadges = BadgeRequests.contains(Request);
-    }
+    const bool ReportBadges = ModuleConfig::EnableBadgeBudgets && BadgeRequest;
     // Ghidra FUN_141f1a480 sends no optional body, then synchronously writes the
     // stream and receives the response. Buffer only this verified caller so we
     // can validate scope and replace lengths before any HTTP headers are sent.
@@ -315,7 +333,7 @@ BOOL WINAPI SendRequestHook(HINTERNET Request, LPCWSTR Headers, DWORD HeadersLen
         return TRUE;
     }
     if (ReportBadges && OptionalLength != TotalLength)
-        Log(LogLevel::Info, L"badge budget report deferred: unsupported stream caller RVA=" +
+        LogBadges(LogLevel::Info, L"badge budget report deferred: unsupported stream caller RVA=" +
             std::to_wstring(reinterpret_cast<uintptr_t>(_ReturnAddress()) - Base) +
             L" optional=" + std::to_wstring(OptionalLength) + L" total=" + std::to_wstring(TotalLength));
     if (ReportBadges && OptionalLength == TotalLength)
@@ -349,7 +367,7 @@ BOOL WINAPI SendRequestHook(HINTERNET Request, LPCWSTR Headers, DWORD HeadersLen
                     std::scoped_lock Lock(HandlesMutex);
                     BadgeRequestBodies[Request] = Body;
                 }
-                Log(LogLevel::Info, L"badge budget report slot=" + std::to_wstring(Slot) + L" points=" +
+                LogBadges(LogLevel::Info, L"badge budget report slot=" + std::to_wstring(Slot) + L" points=" +
                     std::to_wstring(Snapshot.Caps[0]) + L"/" + std::to_wstring(Snapshot.Caps[1]) + L"/" +
                     std::to_wstring(Snapshot.Caps[2]) + L"/" + std::to_wstring(Snapshot.Caps[3]));
                 return OriginalSendRequest(Request, CleanHeaders.empty() ? nullptr : CleanHeaders.c_str(),
@@ -358,7 +376,7 @@ BOOL WINAPI SendRequestHook(HINTERNET Request, LPCWSTR Headers, DWORD HeadersLen
             }
             Failure = L"request size headers could not be replaced";
         }
-        Log(LogLevel::Info, L"badge budget report deferred: " + std::wstring(Failure) +
+        LogBadges(LogLevel::Info, L"badge budget report deferred: " + std::wstring(Failure) +
             L" requested save=" + std::to_wstring(SaveId) + L" slot=" + std::to_wstring(Slot) +
             L" native save=" + std::to_wstring(Snapshot.SaveId) + L" slot=" + std::to_wstring(Snapshot.Slot));
     }
@@ -367,6 +385,7 @@ BOOL WINAPI SendRequestHook(HINTERNET Request, LPCWSTR Headers, DWORD HeadersLen
 
 BOOL WINAPI WriteDataHook(HINTERNET Request, LPCVOID Buffer, DWORD Length, LPDWORD Written)
 {
+    if (!ModuleConfig::EnableBadgeBudgets) return OriginalWriteData(Request, Buffer, Length, Written);
     std::shared_ptr<PendingBadgeRequest> Pending;
     {
         std::scoped_lock Lock(HandlesMutex);
@@ -575,44 +594,44 @@ void FetchAndApplyServerPrices(void* JobContext)
                         DWORD SvrStep = FindNumber("stepPrice");
                         if (SvrBase > 0) ResolvedBase = SvrBase;
                         if (SvrStep > 0) ResolvedStep = SvrStep;
-                        Log(LogLevel::Info, L"Received authoritative attribute price parameters from Granite server: base=" +
+                        LogPrice(LogLevel::Info, L"Received authoritative attribute price parameters from Granite server: base=" +
                                                 std::to_wstring(ResolvedBase) + L", step=" + std::to_wstring(ResolvedStep));
                     }
                 }
                 else
                 {
-                    Log(LogLevel::Error, L"direct attribute price request failed: " +
+                    LogPrice(LogLevel::Error, L"direct attribute price request failed: " +
                                             std::to_wstring(GetLastError()));
                 }
                 WinHttpCloseHandle(Request);
             }
             else
             {
-                Log(LogLevel::Error, L"could not create direct attribute price request: " +
+                LogPrice(LogLevel::Error, L"could not create direct attribute price request: " +
                                         std::to_wstring(GetLastError()));
             }
             WinHttpCloseHandle(Connection);
         }
         else
         {
-            Log(LogLevel::Error, L"could not connect to Granite direct price endpoint: " +
+            LogPrice(LogLevel::Error, L"could not connect to Granite direct price endpoint: " +
                                     std::to_wstring(GetLastError()));
         }
         WinHttpCloseHandle(Session);
     }
     else
     {
-        Log(LogLevel::Error, L"could not open WinHTTP session for direct attribute prices: " +
+        LogPrice(LogLevel::Error, L"could not open WinHTTP session for direct attribute prices: " +
                                 std::to_wstring(GetLastError()));
     }
 
     PopulateCareerPrices(ResolvedBase, ResolvedStep, JobContext);
-    Log(LogLevel::Info, L"Career attribute prices direct-connected! State set to 2 (READY).");
+    LogPrice(LogLevel::Info, L"Career attribute prices direct-connected! State set to 2 (READY).");
 }
 
 DWORD HookedCreateAndSendRequest(void* JobContext)
 {
-    Log(LogLevel::Info, L">> Intercepted CareerUpgrades_CreateAndSendRequest (0x5f5950). Synchronizing directly with Granite server...");
+    LogPrice(LogLevel::Info, L">> Intercepted CareerUpgrades_CreateAndSendRequest (0x5f5950). Synchronizing directly with Granite server...");
     FetchAndApplyServerPrices(JobContext);
     return 0;
 }
@@ -635,7 +654,7 @@ DWORD WINAPI CareerPriceWatchdog(void*)
         // script and leaves no dependency on the missing price request.
         if (CurrentState == 0 || CurrentState == 1 || CurrentState == 3)
         {
-            Log(LogLevel::Info, L"Watchdog detected attribute price state=" + std::to_wstring(CurrentState) +
+            LogPrice(LogLevel::Info, L"Watchdog detected attribute price state=" + std::to_wstring(CurrentState) +
                                     L", synchronizing from Granite server...");
             FetchAndApplyServerPrices(nullptr);
         }
@@ -648,11 +667,15 @@ DWORD WINAPI CareerPriceWatchdog(void*)
 
 DWORD WINAPI Initialise(void*)
 {
+    const auto Directory = ModuleDirectory();
+    const bool ConfigSaved = ModuleConfig::Load(Directory);
     EnsureConsole();
     OpenLogFile();
-    Log(LogLevel::Info, L"Granite module 0x00010206 log started in the console logs folder (native solo 2v2 and roster tracing)");
-    CrashHandler::Install([](const wchar_t* Text) { Log(LogLevel::Info, Text); },
-                          (ModuleDirectory() + L"\\console logs").c_str(), LogPath, SelfModule);
+    Log(LogLevel::Info, L"Granite module 0x00010206 initialized; configuration: " + Directory + L"\\Granite.ini");
+    if (!ConfigSaved) Log(LogLevel::Error, L"Granite.ini could not be created or accessed; missing settings use defaults");
+    if (ModuleConfig::EnableCrashHandler)
+        CrashHandler::Install([](const wchar_t* Text) { Log(LogLevel::Info, Text); },
+                              (Directory + L"\\console logs").c_str(), LogPath, SelfModule);
     DWORD TicketLength = GetEnvironmentVariableW(L"CELESTIAL_IDENTITY_TICKET", nullptr, 0);
     if (TicketLength > 1 && TicketLength < 8192)
     {
@@ -674,10 +697,11 @@ DWORD WINAPI Initialise(void*)
         PatchImport(Executable, "WINHTTP.dll", "WinHttpSendRequest", SendRequestHook, OriginalSendRequest);
     const bool Close =
         PatchImport(Executable, "WINHTTP.dll", "WinHttpCloseHandle", CloseHandleHook, OriginalCloseHandle);
-    const bool Write =
+    const bool Write = !ModuleConfig::EnableBadgeBudgets ||
         PatchImport(Executable, "WINHTTP.dll", "WinHttpWriteData", WriteDataHook, OriginalWriteData);
 
-    Log(LogLevel::Info, L"Native system clock retained; career badge budgets attach to Attributes/get requests");
+    if (ModuleConfig::EnableBadgeBudgets)
+        LogBadges(LogLevel::Info, L"Native system clock retained; career badge budgets attach to Attributes/get requests");
 
     // Install CareerUpgrades_CreateAndSendRequest Hook via MinHook
     MH_STATUS MhStatus = MH_Initialize();
@@ -685,17 +709,26 @@ DWORD WINAPI Initialise(void*)
     {
         ParkRosterTrace::Install(Executable);
         SoloParkNative::Install(Executable);
-        void* Target = reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(Executable) + 0x5f5950);
-        MH_STATUS HookStatus = MH_CreateHook(Target, reinterpret_cast<void*>(&HookedCreateAndSendRequest),
-                                             reinterpret_cast<void**>(&OriginalCreateAndSendRequest));
-        if (HookStatus == MH_OK)
+        if (ModuleConfig::EnablePriceWatchdog)
         {
-            MH_EnableHook(Target);
-            Log(LogLevel::Info, L"Career attribute price direct-connect hook installed at 0x5f5950");
-        }
-        else
-        {
-            Log(LogLevel::Error, L"Failed to create hook at 0x5f5950: " + std::to_wstring(HookStatus));
+            void* Target = reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(Executable) + 0x5f5950);
+            MH_STATUS HookStatus = MH_CreateHook(Target, reinterpret_cast<void*>(&HookedCreateAndSendRequest),
+                                                 reinterpret_cast<void**>(&OriginalCreateAndSendRequest));
+            if (HookStatus == MH_OK)
+            {
+                HookStatus = MH_EnableHook(Target);
+                if (HookStatus == MH_OK)
+                    LogPrice(LogLevel::Info, L"Career attribute price direct-connect hook installed at 0x5f5950");
+                else
+                {
+                    MH_RemoveHook(Target);
+                    LogPrice(LogLevel::Error, L"Failed to enable hook at 0x5f5950: " + std::to_wstring(HookStatus));
+                }
+            }
+            else
+            {
+                LogPrice(LogLevel::Error, L"Failed to create hook at 0x5f5950: " + std::to_wstring(HookStatus));
+            }
         }
     }
     else
@@ -704,10 +737,17 @@ DWORD WINAPI Initialise(void*)
     }
 
     // Start background watchdog thread for seamless attribute price state management
-    if (HANDLE WatchdogThread = CreateThread(nullptr, 0, CareerPriceWatchdog, nullptr, 0, nullptr))
+    if (ModuleConfig::EnablePriceWatchdog)
     {
-        CloseHandle(WatchdogThread);
-        Log(LogLevel::Info, L"Career attribute price watchdog thread started");
+        if (HANDLE WatchdogThread = CreateThread(nullptr, 0, CareerPriceWatchdog, nullptr, 0, nullptr))
+        {
+            CloseHandle(WatchdogThread);
+            LogPrice(LogLevel::Info, L"Career attribute price watchdog thread started");
+        }
+        else
+        {
+            LogPrice(LogLevel::Error, L"Career attribute price watchdog thread failed: " + std::to_wstring(GetLastError()));
+        }
     }
 
     if (Connect && Open && Send && Close && Write)

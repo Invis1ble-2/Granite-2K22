@@ -36,6 +36,7 @@ void __fastcall NativeAi(void* Data, void* Selected, int Mode)
 int main()
 {
     try {
+        ModuleConfig::LogParkRosterTrace = true;
         ParkRosterTrace::OriginalGameInit = NativeGame;
         ParkRosterTrace::OriginalAiRoster = NativeAi;
         ParkRosterTrace::OriginalRosterValue = NativeValue;
@@ -50,7 +51,7 @@ int main()
         Check(Captures == 2); // repeated getter calls are sampled once per team
         Check(ParkRosterTrace::RosterValue(Roster) == 37 && GetterCalls == 4);
         const size_t Count = Lines.size();
-        ParkRosterTrace::Install(nullptr); // absent flag does not install any native hook
+        ParkRosterTrace::Install(nullptr); // default-disabled INI feature installs no native hook
         Check(Lines.size() == Count);
         puts("ParkRosterTrace: original arguments/returns, last-error preservation, bounded unique roster sampling, null handling and disabled installation passed");
         return 0;

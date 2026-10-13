@@ -1,5 +1,6 @@
 // Temporary, opt-in NBA2K22 roster diagnostics. Does not construct or replace players.
 #pragma once
+#include "ModuleConfig.h"
 
 namespace ParkRosterTrace
 {
@@ -22,6 +23,7 @@ inline bool Read(const void* Address, void* Output, size_t Size)
 
 inline void Snapshot(const wchar_t* Label, const void* Address, size_t Size)
 {
+    if (!ModuleConfig::LogParkRosterTrace) return;
     unsigned char Bytes[0x300]{};
     if (Size > sizeof(Bytes)) return;
     wchar_t Head[160]{};
@@ -44,6 +46,7 @@ inline void Snapshot(const wchar_t* Label, const void* Address, size_t Size)
 
 inline void __fastcall GameInit(int Mode, void* Settings)
 {
+    if (!ModuleConfig::LogParkRosterTrace) { OriginalGameInit(Mode, Settings); return; }
     const DWORD LastError = GetLastError();
     try
     {
@@ -58,6 +61,7 @@ inline void __fastcall GameInit(int Mode, void* Settings)
 
 inline void __fastcall AiRoster(void* Team, void* SelectedRoster, int Mode)
 {
+    if (!ModuleConfig::LogParkRosterTrace) { OriginalAiRoster(Team, SelectedRoster, Mode); return; }
     const DWORD LastError = GetLastError();
     try
     {
@@ -94,7 +98,7 @@ inline void __fastcall AiRoster(void* Team, void* SelectedRoster, int Mode)
 inline unsigned int __fastcall RosterValue(void* Roster)
 {
     const DWORD LastError = GetLastError();
-    if (InAiRoster && SeenCount < 16)
+    if (ModuleConfig::LogParkRosterTrace && InAiRoster && SeenCount < 16)
     {
         bool AlreadySeen = false;
         for (unsigned int I = 0; I < SeenCount; ++I) AlreadySeen |= Seen[I] == Roster;
@@ -110,9 +114,7 @@ inline unsigned int __fastcall RosterValue(void* Roster)
 
 inline void Install(HMODULE Executable)
 {
-    const auto Flag = ModuleDirectory() + L"\\ParkRosterTrace.enabled";
-    const DWORD Attributes = GetFileAttributesW(Flag.c_str());
-    if (Attributes == INVALID_FILE_ATTRIBUTES || (Attributes & FILE_ATTRIBUTE_DIRECTORY)) return;
+    if (!ModuleConfig::EnableParkRosterTrace) return;
     if (GetModuleHandleW(L"nba2k22.exe") != Executable)
     {
         Log(LogLevel::Error, L"PARKTRACE refused: executable is not NBA2K22");

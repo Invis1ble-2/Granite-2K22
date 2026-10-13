@@ -144,3 +144,142 @@ Test('the same player reconnecting lands in the same court', (T) => {
     const Again = Enter(0x0110000100000021n, []);
     Assert.equal(Again.RoomScope, Scope);
 });
+
+function RoomState22(Fields = {}) {
+    return {
+        ObjectId: 0xaa01n, Version: 1n, Generation: '2K22',
+        Fields: {
+            WorldTime: MyCourt.InitialWorldTime, OwnerId: 0x0110000100000061n,
+            State: MyCourt.InitialState, IsValid: 1,
+            Customization: Buffer.alloc(0x12fc, 7), PlayerState: Buffer.alloc(0xae0, 8),
+            UserDataCount: 1n, UserDataId0: 81n, UserData0: Buffer.from([1, 2, 3, 4]),
+            OwnerCloudSaveId: 0x1122334455667788n,
+            ...Fields,
+        },
+    };
+}
+
+function RoomUpdate22(State, RequestId) {
+    const Encoded = MyCourt.EncodeRoom(State.Fields, '2K22');
+    const Payload = ObjectFrame.BuildPayload({
+        key: State.ObjectId, version: State.Version, ClassCrc: MyCourt.RoomClass,
+        Bits: Encoded.Bits, Values: Encoded.Values, FlagCount: 30,
+    });
+    const Bytes = ObjectFrame.Build({
+        PacketId: MyCourt.ObjectUpdatePacket, ObjectId: State.ObjectId,
+        ClassCrc: MyCourt.RoomClass, Payload, Layout: ObjectFrame.Layout.Player,
+    });
+    Bytes.writeBigUInt64BE(RequestId, 16);
+    return Bytes;
+}
+
+Test('2K22 room blocks and cloud-save ID use a distinct schema; legacy stays strict', () => {
+    const State = RoomState22();
+    const Bytes = MyCourt.BuildRoomFrame(State);
+    const Parsed = MyCourt.ParseRoom(Bytes, '2K22');
+    Assert.equal(Parsed.FlagCount, 30);
+    Assert.equal(Parsed.Room.Fields.OwnerCloudSaveId, State.Fields.OwnerCloudSaveId);
+    Assert.deepEqual(Parsed.Room.Fields.Customization, State.Fields.Customization);
+    Assert.deepEqual(Parsed.Room.Fields.PlayerState, State.Fields.PlayerState);
+    Assert.deepEqual(Parsed.Room.Fields.UserData0, State.Fields.UserData0);
+    Assert.equal(MyCourt.ParseRoom(Bytes), null, 'legacy parser must not silently accept bit 29');
+    Assert.throws(() => MyCourt.EncodeRoom(State.Fields), /invalid 2K19/);
+    Assert.throws(() => MyCourt.EncodeRoom({ Customization: Buffer.alloc(4856) }, '2K22'), /invalid 2K22/);
+    Assert.throws(() => MyCourt.EncodeRoom({ PlayerState: Buffer.alloc(2712) }, '2K22'), /invalid 2K22/);
+    const Invalid = Buffer.from(Bytes);
+    Invalid[32 + 19] |= 2;
+    Assert.equal(MyCourt.ParseRoom(Invalid, '2K22'), null, 'reserved bitmap bits are rejected');
+    Assert.equal(MyCourt.ParseRoom(Bytes.subarray(0, Bytes.length - 1), '2K22'), null);
+});
+
+Test('2K22 bootstrap preserves the compatible minimal ownership bytes', () => {
+    const C = { Puid: 0x0110000100000061n, SessionId: 1008n };
+    const Legacy = MyCourt.BuildBootstrap(C);
+    const Modern = MyCourt.BuildBootstrap({ ...C, ProtocolGeneration: '2K22' });
+    Assert.deepEqual(Modern, Legacy);
+    const Parsed = MyCourt.ParseRoom(Modern, '2K22');
+    Assert.equal(Parsed.FlagCount, 30);
+    Assert.deepEqual(Parsed.Flags, [0, 1, 2]);
+    Assert.equal(Parsed.Room.Fields.OwnerId, C.Puid);
+    Assert.equal(Parsed.Room.Fields.OwnerCloudSaveId, undefined, 'do not invent a cloud-save ID');
+});
+
+Test('2K22 room updates ACK the complete request ID and retain native fields on partial updates', (T) => {
+    Roster.Players.clear();
+    MyCourt.Rooms.clear();
+    MyCourt.RoomStates.clear();
+    T.after(() => { Roster.Players.clear(); MyCourt.Rooms.clear(); MyCourt.RoomStates.clear(); });
+    const Sent = [], Objects = [];
+    const C = {
+        Id: 9201, State: 2, Closed: false, ProtocolGeneration: '2K22',
+        ActivityName: 'mycourt', ActivityKey: 0xfeac4070, RoomScope: 'mycourt:owner22',
+        Puid: 0x0110000100000061n, SessionId: 1008n, Identifier: 'owner22',
+        Send: (B) => (Sent.push(B), true), SendObject: (B) => (Objects.push(B), true),
+    };
+    Roster.Add(C);
+    const State = RoomState22();
+    State.ObjectId = MyCourt.SessionObjectId(C.SessionId);
+    Assert.ok(MyCourt.Relay(C, MyCourt.BuildRoomFrame(State)), 'cache the full initial snapshot');
+    Assert.equal(MyCourt.PublishBootstrap(C), false, 'late bootstrap cannot replace native ownership');
+    Assert.equal(Objects.length, 1, 'the native snapshot was not overwritten by another frame');
+    Assert.equal(MyCourt.RoomStateFor(C, State.ObjectId).State.Version, 1n);
+    const RequestId = 0x0102030405060781n;
+    const Partial = { ...State, Version: 8n, Fields: { IsValid: 1, State: MyCourt.CribState.Scrimmage } };
+    const Req = RoomUpdate22(Partial, RequestId);
+    Assert.ok(MyCourt.Relay(C, Req));
+    Assert.equal(Sent.length, 1);
+    Assert.equal(Sent[0].readBigUInt64BE(16), RequestId, 'do not truncate the high half or assume IDs 1..16');
+    const Reply = MyCourt.ParseRoom(Objects.at(-1), '2K22');
+    Assert.equal(Reply.Version, 9n);
+    Assert.equal(Reply.Room.Fields.State, MyCourt.CribState.Scrimmage);
+    Assert.equal(Reply.Room.Fields.OwnerCloudSaveId, State.Fields.OwnerCloudSaveId);
+    Assert.deepEqual(Reply.Room.Fields.Customization, State.Fields.Customization);
+    Assert.deepEqual(Reply.Room.Fields.PlayerState, State.Fields.PlayerState);
+    Assert.deepEqual(Reply.Room.Fields.UserData0, State.Fields.UserData0);
+    Assert.equal(MyCourt.Relay(C, Req.subarray(0, Req.length - 1)), false);
+    Assert.equal(Sent.length, 1, 'malformed requests are not ACKed');
+    Assert.equal(MyCourt.ReplayTo({ ...C, Id: 9202, ProtocolGeneration: '2K19' }), 0,
+        'a legacy connection cannot receive the cached modern room');
+});
+
+Test('a MyCourt connection inherits only a known unambiguous PLAYER generation for the same PUID', (T) => {
+    Roster.Players.clear();
+    const Puid = 0x0110000100000071n;
+    Roster.Add({ Id: -1, State: 2, Closed: false, Puid, ProtocolGeneration: '2K22', ActivityKey: 0x3cf672c2 });
+    const C = Enter(Puid, []);
+    T.after(() => { C.Close('test'); Roster.Players.clear(); MyCourt.Rooms.clear(); MyCourt.RoomStates.clear(); });
+    Assert.equal(C.ProtocolGeneration, '2K22');
+    Assert.ok(MyCourt.PublishBootstrap(C));
+    Assert.equal(MyCourt.RoomStates.values().next().value.Generation, '2K22');
+});
+
+Test('a 2K22 template supplies the field cache and revision for subsequent partial replies', (T) => {
+    const Fs = require('node:fs');
+    const OriginalRead = Fs.readFileSync;
+    const Previous = process.env.OPAL_MYCOURT_ROOM_FRAME;
+    const State = RoomState22();
+    State.Version = 12n;
+    const Template = MyCourt.BuildRoomFrame(State);
+    process.env.OPAL_MYCOURT_ROOM_FRAME = 'mycourt-2k22-fixture.bin';
+    T.mock.method(Fs, 'readFileSync', (Path, ...Args) =>
+        Path === 'mycourt-2k22-fixture.bin' ? Template : OriginalRead(Path, ...Args));
+    Roster.Players.clear(); MyCourt.Rooms.clear(); MyCourt.RoomStates.clear();
+    T.after(() => {
+        if (Previous === undefined) delete process.env.OPAL_MYCOURT_ROOM_FRAME;
+        else process.env.OPAL_MYCOURT_ROOM_FRAME = Previous;
+        Roster.Players.clear(); MyCourt.Rooms.clear(); MyCourt.RoomStates.clear();
+    });
+    const Objects = [];
+    const C = {
+        Id: 9301, State: 2, Closed: false, ProtocolGeneration: '2K22',
+        ActivityName: 'mycourt', ActivityKey: 0xfeac4070, RoomScope: 'mycourt:template22',
+        Identifier: 'template22', Send: () => true, SendObject: (B) => (Objects.push(B), true),
+    };
+    Assert.ok(MyCourt.PublishTemplate(C));
+    Assert.ok(MyCourt.Relay(C, RoomUpdate22({ ...State, Version: 12n, Fields: { IsValid: 1 } }, 17n)));
+    const Reply = MyCourt.ParseRoom(Objects.at(-1), '2K22');
+    Assert.equal(Reply.Version, 13n);
+    Assert.equal(Reply.Room.Fields.OwnerCloudSaveId, State.Fields.OwnerCloudSaveId);
+    Assert.deepEqual(Reply.Room.Fields.Customization, State.Fields.Customization);
+    Assert.deepEqual(Reply.Room.Fields.PlayerState, State.Fields.PlayerState);
+});
