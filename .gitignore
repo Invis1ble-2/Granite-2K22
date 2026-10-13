@@ -13,3 +13,4 @@ Granite/Server/Storage/UserContent/
 Granite/Server/Storage/Inventory/OwnedItems.json
 __pycache__/
 /nul
+AGENTS.md

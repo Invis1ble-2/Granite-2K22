@@ -40,6 +40,7 @@ bool IsSupportedGameExecutable(const std::wstring& Filename)
 }
 constexpr wchar_t ModuleName[] = L"Module.dll";
 constexpr DWORD InitialLoadWaitMs = 30'000;
+constexpr DWORD GameProcessPollIntervalMs = 1'000;
 
 enum class ExitCode : int
 {
@@ -663,13 +664,16 @@ int wmain(int argc, wchar_t* argv[])
         }
         else if (argc == 1)
         {
-            Log(LogLevel::Info, L"No PID specified. Scanning for running NBA2K process (NBA2K19/20/21/22)...");
-            ProcessId = FindGameProcessId();
-            if (ProcessId == 0)
+            Log(LogLevel::Info,
+                L"No PID specified. Waiting for a supported NBA2K game process (NBA2K19/20/21/22); press Ctrl+C to cancel.");
+            do
             {
-                Log(LogLevel::Error, L"No running NBA2K process found. Please start the game first or specify PID.");
-                return static_cast<int>(ExitCode::UsageError);
-            }
+                ProcessId = FindGameProcessId();
+                if (ProcessId == 0)
+                {
+                    Sleep(GameProcessPollIntervalMs);
+                }
+            } while (ProcessId == 0);
             Log(LogLevel::Info, L"Found running game process with PID " + std::to_wstring(ProcessId) + L".");
         }
         else
