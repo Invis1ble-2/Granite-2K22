@@ -1,0 +1,254 @@
+{
+  "Source": "levels/ship_deck1_park_markers.iff",
+  "Archive": "2Q",
+  "ArchiveByteOffset": 2951918272,
+  "AssetSha256": "b418800bbb36c412e248b095b6f295addd7883070356ae5dfafcfc9904720fa5",
+  "Courts": [
+    {
+      "Name": "SHORT_BOTTOM_LEFT",
+      "Translate": [
+        -1134.53711,
+        0.0,
+        -1000.38855
+      ],
+      "Rotate": [
+        8.66118717e-06,
+        0.0,
+        8.66118717e-06
+      ],
+      "Attributes": {
+        "VC_CourtType": "SHORT",
+        "VC_BasketType": "PARK_RIGID",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_BOTTOM_LEFT@basket0",
+        "VC_AwayBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_BOTTOM_LEFT@basket1"
+      }
+    },
+    {
+      "Name": "SHORT_BOTTOM",
+      "Translate": [
+        -1136.70142,
+        0.0,
+        2547.41309
+      ],
+      "Rotate": [
+        8.66118717e-06,
+        0.0,
+        8.66118717e-06
+      ],
+      "Attributes": {
+        "VC_CourtType": "SHORT",
+        "VC_BasketType": "PARK_RIGID",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_BOTTOM@basket0_1",
+        "VC_AwayBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_BOTTOM@basket1_1"
+      }
+    },
+    {
+      "Name": "SHORT_TOP_LEFT",
+      "Translate": [
+        1154.40723,
+        0.0,
+        -997.62561
+      ],
+      "Rotate": [
+        8.66118717e-06,
+        0.0,
+        8.66118717e-06
+      ],
+      "Attributes": {
+        "VC_CourtType": "SHORT",
+        "VC_BasketType": "PARK_RIGID",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_TOP_LEFT@basket0_2",
+        "VC_AwayBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_TOP_LEFT@basket1_2"
+      }
+    },
+    {
+      "Name": "SHORT_TOP_RIGHT",
+      "Translate": [
+        1155.66357,
+        0.0,
+        6088.38867
+      ],
+      "Rotate": [
+        3.14158416,
+        1.87253491e-07,
+        3.14158416
+      ],
+      "Attributes": {
+        "VC_CourtType": "SHORT",
+        "VC_BasketType": "PARK_RIGID",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_TOP_RIGHT@basket0_3",
+        "VC_AwayBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_TOP_RIGHT@basket1_3"
+      }
+    },
+    {
+      "Name": "SHORT_BOTTOM_RIGHT",
+      "Translate": [
+        -1133.94897,
+        0.0,
+        6100.66797
+      ],
+      "Rotate": [
+        8.66118717e-06,
+        0.0,
+        8.66118717e-06
+      ],
+      "Attributes": {
+        "VC_CourtType": "SHORT",
+        "VC_BasketType": "PARK_RIGID",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_BOTTOM_RIGHT@basket0_4",
+        "VC_AwayBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_BOTTOM_RIGHT@basket1_4"
+      }
+    },
+    {
+      "Name": "SHORT_TOP",
+      "Translate": [
+        1155.30005,
+        0.0,
+        2548.48096
+      ],
+      "Rotate": [
+        3.14158416,
+        1.87253491e-07,
+        3.14158416
+      ],
+      "Attributes": {
+        "VC_CourtType": "SHORT",
+        "VC_BasketType": "PARK_RIGID",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_TOP@basket0_5",
+        "VC_AwayBasket": "ship_deck1_park@GameObjects@court_markers@SHORT_TOP@basket1_5"
+      }
+    },
+    {
+      "Name": "HALF_CENTER_BOTTOM",
+      "Translate": [
+        -660.0,
+        0.0,
+        -8837.59961
+      ],
+      "Rotate": [
+        8.66118717e-06,
+        1.57019842,
+        8.66118717e-06
+      ],
+      "Attributes": {
+        "VC_CourtType": "NBA",
+        "VC_BasketType": "NBA_STANCHION",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@ship_deck1_deuces_master.lvl@GameObjects@HALF_CENTER_BOTTOM@basket0_7"
+      }
+    },
+    {
+      "Name": "HALF_CENTER_BOTTOM_RIGHT",
+      "Translate": [
+        -660.0,
+        0.0,
+        -6213.3042
+      ],
+      "Rotate": [
+        8.66118717e-06,
+        1.57019842,
+        8.66118717e-06
+      ],
+      "Attributes": {
+        "VC_CourtType": "NBA",
+        "VC_BasketType": "NBA_STANCHION",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@ship_deck1_deuces_master.lvl@GameObjects@HALF_CENTER_BOTTOM_RIGHT@basket0_8"
+      }
+    },
+    {
+      "Name": "HALF_CENTER_BOTTOM_LEFT",
+      "Translate": [
+        -660.0,
+        0.0,
+        -11460.0
+      ],
+      "Rotate": [
+        8.66118717e-06,
+        1.57019842,
+        8.66118717e-06
+      ],
+      "Attributes": {
+        "VC_CourtType": "NBA",
+        "VC_BasketType": "NBA_STANCHION",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@ship_deck1_deuces_master.lvl@GameObjects@HALF_CENTER_BOTTOM_LEFT@basket0_1"
+      }
+    },
+    {
+      "Name": "HALF_CENTER_TOP_RIGHT",
+      "Translate": [
+        660.0,
+        0.0,
+        -6213.2998
+      ],
+      "Rotate": [
+        8.66118717e-06,
+        -1.57019842,
+        8.66118717e-06
+      ],
+      "Attributes": {
+        "VC_CourtType": "NBA",
+        "VC_BasketType": "NBA_STANCHION",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@ship_deck1_deuces_master.lvl@GameObjects@HALF_CENTER_TOP_RIGHT@basket0"
+      }
+    },
+    {
+      "Name": "HALF_CENTER_TOP",
+      "Translate": [
+        660.0,
+        0.0,
+        -8837.59961
+      ],
+      "Rotate": [
+        8.66118717e-06,
+        -1.57019842,
+        8.66118717e-06
+      ],
+      "Attributes": {
+        "VC_CourtType": "NBA",
+        "VC_BasketType": "NBA_STANCHION",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@ship_deck1_deuces_master.lvl@GameObjects@HALF_CENTER_TOP@basket0_12"
+      }
+    },
+    {
+      "Name": "HALF_CENTER_TOP_LEFT",
+      "Translate": [
+        660.0,
+        0.0,
+        -11460.0
+      ],
+      "Rotate": [
+        8.66118717e-06,
+        -1.57019842,
+        8.66118717e-06
+      ],
+      "Attributes": {
+        "VC_CourtType": "NBA",
+        "VC_BasketType": "NBA_STANCHION",
+        "VC_NetType": "CLOTH",
+        "VC_LevelCreated": 1,
+        "VC_HomeBasket": "ship_deck1_park@ship_deck1_deuces_master.lvl@GameObjects@HALF_CENTER_TOP_LEFT@basket0_13"
+      }
+    }
+  ]
+}
