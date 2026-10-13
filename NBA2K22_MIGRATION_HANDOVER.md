@@ -26,7 +26,7 @@ DLL保持0x00010206及原部署SHA256=`C4454ACF0065FF590BD5EE41C1F8DA0B053F1D970
 
 ## 工程与运行
 
-根目录D:/download/Granite-main，Git仓库已初始化（main）；首次提交及GitHub私有仓库推送状态见本次交接更新。游戏目录D:/SteamLibrary/steamapps/common/NBA 2K22，日志console logs。HTTP源码Granite/Server（node Server.js，TLS21000）；Opal源码Opal（node Opal.js，TCP20054/UDP28091）；模块Granite/Module，构建DLL为Granite/Build/Release/Module.dll，加载DLL为游戏目录Module.dll。HTTP封包Granite/Server/Storage/Captures/Http，Opal/Capture仅保留历史文件，新流量帧捕获功能已移除。
+根目录D:/download/Granite-main，Git仓库已初始化，分支main；GitHub私有仓库：[Invis1ble-2/Granite-NBA2K22](https://github.com/Invis1ble-2/Granite-NBA2K22)。首次项目提交`c8256db`，补入服务所需TLS私钥的提交`357428f`；`Granite/Server/Storage/Certificate/Granite.key`按用户要求一并保留在私有仓库。游戏目录D:/SteamLibrary/steamapps/common/NBA 2K22，日志console logs。HTTP源码Granite/Server（node Server.js，TLS21000）；Opal源码Opal（node Opal.js，TCP20054/UDP28091）；模块Granite/Module，构建DLL为Granite/Build/Release/Module.dll，加载DLL为游戏目录Module.dll。HTTP封包Granite/Server/Storage/Captures/Http，Opal/Capture仅保留历史文件，新流量帧捕获功能已移除。
 
 构建工具C:/Program Files/Microsoft Visual Studio/18/Community/MSBuild/Current/Bin/MSBuild.exe，Module.vcxproj，Release/x64/v145。Git Bash需MSYS_NO_PATHCONV=1。部署DLL须游戏退出，覆盖磁盘文件不会替换已注入模块。
 
@@ -56,8 +56,8 @@ Ghidra程序NBA2K22.exe.unpacked.exe，基址0x140000000，SHA256=`14741e908c9c5
 - **自创球场无法正常进入**：用户反馈，原因未确认。
 - **动画商店内容疑似不完整**：用户观察似乎缺失很多动画，尚未核对完整目录。
 - **多件服装无法正常显示**：客户端仍向服务端请求衣服资源；截图包含 `/2k19/...` 的HEAD/GET请求。资源请求与显示异常的因果关系尚未确认，不能据截图直接认定缺文件、响应失败或版本路径错误。
- - **竞赛球场Ante-Up无法进入**：Opal日志为 `0110000142D875E1 is travelling to stage @ 19:58:03`。用户怀疑未做2K22适配，仅为待验证假设。
- - **公园比赛结束后的比赛数据展示异常**：用户反馈赛后比赛数据不会正常显示；尚未取得结算数据包、日志或截图，原因待查。
+- **竞赛球场Ante-Up无法进入**：Opal日志为 `0110000142D875E1 is travelling to stage @ 19:58:03`。用户怀疑未做2K22适配，仅为待验证假设。
+- **公园比赛结束后的比赛数据展示异常**：用户反馈赛后比赛数据不会正常显示；尚未取得结算数据包、日志或截图，原因待查。
 
 详细现象、截图请求路径和验收边界见 [NBA2K22_NEIGHBORHOOD_HANDOVER.md](NBA2K22_NEIGHBORHOOD_HANDOVER.md)“当前遗留问题与用户证据”。其中列出的问题仅记录、暂不处理；本次另按用户要求移除了Opal生产环境的自动帧捕获调试功能，历史抓包文件保留且由.gitignore排除。
 
