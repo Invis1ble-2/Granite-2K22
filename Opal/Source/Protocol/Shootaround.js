@@ -14,6 +14,7 @@ const Roster = require('./Roster');
 const PlayerBody = require('./PlayerBody');
 const PlayerBody2K22 = require('./PlayerBody2K22');
 const CourtLayout2K22 = require('./CourtLayout2K22');
+const Requests = require('./Requests');
 
 const CourtClass = 0x2c4d49e3;
 const CourtFlags = 116;
@@ -58,23 +59,43 @@ const CourtTypeName2K22 = Object.freeze({
     8: 'TWO_V_TWO', 9: 'ONE_V_ONE', 10: 'ONE_V_ONE_HALF',
     11: 'ONE_V_ONE_QUICK', 12: 'ONE_V_ONE_V_ONE', 13: 'THREE_PT_CONTEST',
     31: 'COUCH', 32: 'BLACKTOP', 33: 'SHOOTAROUND', 34: 'SHOOTAROUND_PROAM',
-    49: 'BEST_OF_TEN', 54: 'SIGN_OUT', 55: 'GUN',
+    49: 'BEST_OF_TEN', 50: 'AROUND_THE_WORLD', 51: 'PARTNER_SHOOTING',
+    52: 'SEVEN_ON_BOARD', 53: 'HORSE', 54: 'SIGN_OUT', 55: 'GUN',
+    56: 'PRIVATE_WORKOUT_DRILL', 57: 'PRIVATE_WORKOUT_DRILLDEFENSE',
+    58: 'FREETHROW_PRACTICE', 59: 'FULLCOURT_PRESS',
+    60: 'CATCH_AND_SHOOT', 61: 'DEFENSIVE_PRESS',
 });
 
 function TypesFor(Generation) {
     return Generation === '2K22' ? CourtType2K22 : CourtType;
 }
 
-// START_CRIB_GAME sends the MyCOURT menu mode (FUN_14161A1B0), not
-// COURT.Type. FUN_14168C4B0 validates menu modes 0..18 and their counts.
-// Keep the traced modes explicit; unverified modes must not start an unrelated
-// game with incompatible AI counts. COURT names: table 0x142C41E70.
+// START_CRIB_GAME sends a menu mode, not COURT.Type (FUN_14161A1B0).
+// NBA2K22 menu rows: 0x142432A20 / FUN_140640F60; counts:
+// FUN_14166F030/FUN_14166EFA0. COURT names: 0x142C41E70.
+// FUN_140744BF0 orders versus IDs by side, without moving the local player.
+// Most training rosters are Home-only; private workout instead needs 1/1
+// (2026-10-14 client AI_FillInGameDescription asserts; native position tables
+// 0x1432375D0/0x143237600). Mode 16 selects the local second menu side.
+// Couch/arcade modes 9/10 have a separate entry path, not these menu rows.
 const MenuModes2K22 = Object.freeze({
     0: Object.freeze({ CourtType: 33, Teams: 'together', MinPlayers: 1, MaxPlayers: 1 }),
-    1: Object.freeze({ CourtType: 49, Teams: 'together', MinPlayers: 1, MaxPlayers: 5 }),
+    1: Object.freeze({ CourtType: 49, Teams: 'together', MinPlayers: 2, MaxPlayers: 4 }),
+    2: Object.freeze({ CourtType: 50, Teams: 'together', MinPlayers: 2, MaxPlayers: 4 }),
+    3: Object.freeze({ CourtType: 51, Teams: 'together', MinPlayers: 2, MaxPlayers: 2 }),
+    4: Object.freeze({ CourtType: 52, Teams: 'together', MinPlayers: 2, MaxPlayers: 5 }),
+    5: Object.freeze({ CourtType: 53, Teams: 'together', MinPlayers: 2, MaxPlayers: 5 }),
     6: Object.freeze({ CourtType: 9, Teams: 'versus', MinPlayers: 2, MaxPlayers: 2 }),
-    11: Object.freeze({ CourtType: 54, Teams: 'together', MinPlayers: 1, MaxPlayers: 5 }),
+    7: Object.freeze({ CourtType: 8, Teams: 'versus', MinPlayers: 4, MaxPlayers: 4 }),
+    8: Object.freeze({ CourtType: 6, Teams: 'versus', MinPlayers: 6, MaxPlayers: 6 }),
+    11: Object.freeze({ CourtType: 54, Teams: 'together', MinPlayers: 2, MaxPlayers: 5 }),
     12: Object.freeze({ CourtType: 55, Teams: 'together', MinPlayers: 1, MaxPlayers: 1 }),
+    13: Object.freeze({ CourtType: 58, Teams: 'together', MinPlayers: 1, MaxPlayers: 1 }),
+    14: Object.freeze({ CourtType: 61, Teams: 'together', MinPlayers: 3, MaxPlayers: 3 }),
+    15: Object.freeze({ CourtType: 56, Teams: 'versus', MinPlayers: 2, MaxPlayers: 2, LocalSlot: 0 }),
+    16: Object.freeze({ CourtType: 57, Teams: 'versus', MinPlayers: 2, MaxPlayers: 2, LocalSlot: 1 }),
+    17: Object.freeze({ CourtType: 59, Teams: 'together', MinPlayers: 3, MaxPlayers: 3 }),
+    18: Object.freeze({ CourtType: 60, Teams: 'together', MinPlayers: 1, MaxPlayers: 1 }),
 });
 
 function MenuModeFor(Game) {
@@ -97,6 +118,15 @@ function ValidateGame2K22(Connection, Game) {
         Connection.Puid === null || Connection.Puid === undefined || !Unique.has(BigInt(Connection.Puid))) {
         return { Ok: false, Reason: 'invalid, duplicate or missing local player IDs in MyCOURT request' };
     }
+    if (Mode.LocalSlot !== undefined && BigInt(Ids[Mode.LocalSlot]) !== BigInt(Connection.Puid)) {
+        return { Ok: false, Reason: `menu mode ${Game.GameSlot} requires the local player in slot ${Mode.LocalSlot}` };
+    }
+    // FUN_14168C4B0: this flag means more than one non-AI participant,
+    // not "solo". A local COURT without native synchronization/transport must
+    // not silently start a multiplayer-human request as an offline game.
+    if (Game.SoloFlag !== 0n && Game.SoloFlag !== 0) {
+        return { Ok: false, Reason: 'MyCOURT multiplayer-human synchronization is not supported; expected request flag 0' };
+    }
     return { Ok: true, Mode };
 }
 const CourtIndex = 0x000d4d10;
@@ -116,6 +146,7 @@ const RequestPacket = 0xce148fb1;
 const Command = 0xab153d7e;
 
 const EndCommand = 0xdaeafe9e;
+const ConnectedCommand = 0xdfc1471f;
 
 const RoomKeyOffset = 24;
 
@@ -131,12 +162,14 @@ const Field = Object.freeze({
     Result: 0xe3920695,
 });
 
-function Read(Bytes) {
-    const CommandData = FieldList.Scan(Bytes, 'COMMAND');
+function Read(Bytes, List = null) {
+    const CommandData = List ? FieldList.Find(List, 'COMMAND') : FieldList.Scan(Bytes, 'COMMAND');
     if (!CommandData || CommandData.Data1 >>> 0 !== Command >>> 0) return null;
-    const At = FieldList.Locate(Bytes);
-    if (At < 0) return null;
-    const List = FieldList.Parse(Bytes, At);
+    if (!List) {
+        const At = FieldList.Locate(Bytes);
+        if (At < 0) return null;
+        List = FieldList.Parse(Bytes, At);
+    }
     const Find = (Crc) => List.Fields.find((F) => F.Crc === Crc >>> 0) || null;
     const Solo = Find(Field.SoloFlag);
     const Count = Find(Field.PlayerCount);
@@ -297,7 +330,8 @@ function TeamsFor(Connection, Game, Type, Players) {
         if (!Mode || Mode.CourtType !== Type) return null;
         const Ids = (Game.Players || []).map((Id) => BigInt(Id));
         if (Mode.Teams === 'together') return { Home: Ids, Away: [] };
-        return { Home: Ids.slice(0, 1), Away: Ids.slice(1, 2) };
+        const Half = Ids.length / 2;
+        return { Home: Ids.slice(0, Half), Away: Ids.slice(Half) };
     }
     if (Type === CourtType.Shootaround) {
         const Home = Players.map((Player) => Player.Puid)
@@ -328,11 +362,13 @@ function PlayersFor(Connection, Ids) {
     return Players;
 }
 
-function ReadEnd(Bytes) {
-    const CommandData = FieldList.Scan(Bytes, 'COMMAND');
+function ReadEnd(Bytes, List = null) {
+    const CommandData = List ? FieldList.Find(List, 'COMMAND') : FieldList.Scan(Bytes, 'COMMAND');
     if (!CommandData || CommandData.Data1 >>> 0 !== EndCommand >>> 0) return null;
-    const At = FieldList.Locate(Bytes);
-    const List = At >= 0 ? FieldList.Parse(Bytes, At) : { Fields: [] };
+    if (!List) {
+        const At = FieldList.Locate(Bytes);
+        List = At >= 0 ? FieldList.Parse(Bytes, At) : { Fields: [] };
+    }
     const Find = (Crc) => List.Fields.find((F) => F.Crc === Crc >>> 0) || null;
     const Score = Find(Field.Score);
     const Result = Find(Field.Result);
@@ -343,9 +379,62 @@ function ReadEnd(Bytes) {
     };
 }
 
+function ReadRequest2K22(Bytes) {
+    // FUN_1416D6F30: COMMAND body is request u64, object u64, field-list size.
+    if (!Buffer.isBuffer(Bytes) || Bytes.length < 52 ||
+        Bytes.readUInt32LE(0) !== Bytes.length || Bytes.readUInt32BE(4) !== RequestPacket) return null;
+    const Length = Bytes.readUInt32BE(32);
+    if (Length < 16 || Length > Bytes.length - 36 || Length % 16 !== 0) return null;
+    const List = FieldList.Parse(Bytes.subarray(36, 36 + Length), 0);
+    const CommandData = FieldList.Find(List, 'COMMAND');
+    if (!CommandData || CommandData.Type !== FieldList.Type.U32) return null;
+    return {
+        Id: Bytes.readBigUInt64BE(16),
+        ObjectId: Bytes.readBigUInt64BE(RoomKeyOffset),
+        Command: CommandData.Data1 >>> 0,
+        List,
+    };
+}
+
+function AckRequest2K22(Connection, Request) {
+    if (!Request || Request.Id === 0n || Connection.Closed) return false;
+    const Sent = Connection.Send(Requests.Build(Request.Id));
+    if (!Sent) Log.Error(`${Connection.Identifier} could not acknowledge MyCourt request ${Request.Id}`);
+    return !!Sent;
+}
+
+function HandleConnected2K22(Connection, Request) {
+    AckRequest2K22(Connection, Request);
+    if (Connection.ShootaroundCourtKey === undefined ||
+        Request.ObjectId !== Connection.ShootaroundCourtKey ||
+        Connection.ShootaroundCourtType === undefined || !Connection.ShootaroundTeam) {
+        Log.Error(`${Connection.Identifier} MyCourt connection-complete rejected: no matching court`);
+        return true;
+    }
+    // FUN_141746ED0 requires ACK AND a newer associated object. Do not reset
+    // PLAYER/room state on retries, including a notification arriving after end.
+    Connection.ShootaroundCourtVersion = (Connection.ShootaroundCourtVersion || 0n) + 1n;
+    Connection.SendObject(BuildCourt(Request.ObjectId, Connection.ShootaroundCourtVersion,
+        Connection.ShootaroundTeam, Connection.ShootaroundCourtType,
+        Connection.ShootaroundAway || [], '2K22'));
+    Log.Verbose(`  MyCourt connection-complete request ${Request.Id}, court revision ${Connection.ShootaroundCourtVersion}`);
+    return true;
+}
+
 function HandleEnd(Connection, Bytes) {
-    const End = ReadEnd(Bytes);
-    if (!End || !MyCourt.IsMyCourt(Connection)) return false;
+    if (!MyCourt.IsMyCourt(Connection)) return false;
+    const Modern = PlayerBody.GenerationForConnection(Connection) === '2K22';
+    const Request = Modern ? ReadRequest2K22(Bytes) : null;
+    if (Modern && (!Request || Request.Command !== EndCommand || Connection.Closed)) return false;
+    const End = ReadEnd(Bytes, Request ? Request.List : null);
+    if (!End) return false;
+    if (Modern) {
+        AckRequest2K22(Connection, Request);
+        if (Request.ObjectId !== 0n && Request.ObjectId !== Connection.ShootaroundCourtKey) {
+            Log.Error(`${Connection.Identifier} MyCourt end rejected: no matching court`);
+            return true;
+        }
+    }
     Log.Info(
         `${Connection.Identifier} finished their MyCourt shootaround (result ` +
             `${End.Result === null ? 'unknown' : Hex(End.Result)}, score ${End.Score === null ? '?' : End.Score}) @ ${Log.Clock()}`,
@@ -389,19 +478,35 @@ function HandleEnd(Connection, Bytes) {
 }
 
 function Handle(Connection, Bytes) {
-    if (HandleEnd(Connection, Bytes)) return true;
-    const Req = Read(Bytes);
-    if (!Req) return false;
     if (!MyCourt.IsMyCourt(Connection)) return false;
+    const Modern = PlayerBody.GenerationForConnection(Connection) === '2K22';
+    const Request = Modern ? ReadRequest2K22(Bytes) : null;
+    if (Modern && (!Request || Connection.Closed)) return false;
+    if (Modern && Request.Command === ConnectedCommand) return HandleConnected2K22(Connection, Request);
+    if (HandleEnd(Connection, Bytes)) return true;
+    const Req = Read(Bytes, Request ? Request.List : null);
+    if (!Req) return false;
     const Who = Req.Players.length
         ? Req.Players.map((P) => `0x${BigInt(P).toString(16).toUpperCase().padStart(16, '0')}`).join(', ')
         : '(no player ids)';
     const Generation = PlayerBody.GenerationForConnection(Connection);
     const Type = CourtTypeFor(Req, Generation);
-    if (Generation === '2K22') {
+    if (Modern) {
+        AckRequest2K22(Connection, Request);
+        if (Connection.SessionId === null || Connection.SessionId === undefined ||
+            Request.ObjectId !== MyCourt.SessionObjectId(Connection.SessionId)) {
+            Log.Error(`${Connection.Identifier} MyCourt start rejected: no matching room`);
+            return true;
+        }
+        const Starts = Connection.ShootaroundStartRequests;
+        if (Request.Id !== 0n && Starts && Starts.RoomKey === Request.ObjectId && Starts.Ids.has(Request.Id)) {
+            MyCourt.RepublishRoom(Connection, Request.ObjectId);
+            return true;
+        }
         const Checked = ValidateGame2K22(Connection, Req);
         if (!Checked.Ok) {
             Log.Error(`${Connection.Identifier} MyCourt start rejected: ${Checked.Reason}`);
+            MyCourt.RepublishRoom(Connection, Request.ObjectId);
             return true;
         }
     }
@@ -450,6 +555,13 @@ function Handle(Connection, Bytes) {
         );
         return true;
     }
+    if (Modern && Request.Id !== 0n) {
+        let Starts = Connection.ShootaroundStartRequests;
+        if (!Starts || Starts.RoomKey !== RoomKey) {
+            Starts = Connection.ShootaroundStartRequests = { RoomKey, Ids: new Set() };
+        }
+        Starts.Ids.add(Request.Id);
+    }
     Log.Info(
         `  NBA${Generation} MyCourt game start ${Hex(Command)} from ${Who}: ${CourtTypeLabel(Type, Generation)} court ` +
             `${CourtKey.toString(16).toUpperCase()} (menu mode ${Req.GameSlot}, COURT type ${Type}, home ${TeamLabel(Teams.Home)}, ` +
@@ -463,6 +575,7 @@ function Handle(Connection, Bytes) {
 module.exports = {
     Command,
     EndCommand,
+    ConnectedCommand,
     Field,
     RequestPacket,
     RoomKeyOffset,

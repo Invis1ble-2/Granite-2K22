@@ -12,6 +12,7 @@ const MyCourt = require('../Source/Protocol/MyCourt');
 const PlayerBody = require('../Source/Protocol/PlayerBody');
 const PlayerBody2K22 = require('../Source/Protocol/PlayerBody2K22');
 const CourtLayout2K22 = require('../Source/Protocol/CourtLayout2K22');
+const Requests = require('../Source/Protocol/Requests');
 
 let Passed = 0;
 function Test(Name, Fn) {
@@ -43,8 +44,12 @@ const LiveStartCribGame =
 
 function MyCourtConnection(Id, Puid) {
     const Sent = [];
+    const Acks = [];
+    const Events = [];
     return {
         Sent,
+        Acks,
+        Events,
         Connection: {
             Id: Id,
             State: 2,
@@ -56,8 +61,14 @@ function MyCourtConnection(Id, Puid) {
             SessionId: 0x3f0n,
             MyCourtBootstrapSent: false,
             MyCourtBootstrapTimer: null,
+            Send(FrameData) {
+                Acks.push(FrameData);
+                Events.push('ack');
+                return true;
+            },
             SendObject(FrameData) {
                 Sent.push(FrameData);
+                Events.push('object');
                 return true;
             },
         },
@@ -321,9 +332,9 @@ function BuildPlayerBody2K22(Puid, MachineId) {
     return PlayerBody.Mark(Buffer.concat([Header, U64(Puid), U64(MachineId),
         U64(0x1122334455667788n), U64(0x8877665544332211n), Blob]), '2K22');
 }
-function BuildStart2K22(Players, Type, Count = Players.length) {
+function BuildStart2K22(Players, Type, Count = Players.length, RequestId = 4n, SoloFlag = 0n) {
     const Builder = new FieldList.Builder()
-        .AddU64(Shootaround.Field.SoloFlag, 0n)
+        .AddU64(Shootaround.Field.SoloFlag, SoloFlag)
         .AddU64(Shootaround.Field.PlayerCount, BigInt(Count))
         .AddU32('COMMAND', Shootaround.Command)
         .AddU64(Shootaround.Field.GameSlot, BigInt(Type));
@@ -332,18 +343,119 @@ function BuildStart2K22(Players, Type, Count = Players.length) {
     const Header = Buffer.from(Buffer.from(LiveStartCribGame, 'hex').subarray(0, 36));
     Header.writeUInt32LE(Header.length + Body.length);
     Header.writeUInt32BE(Body.length, 32);
+    Header.writeBigUInt64BE(RequestId, 16);
     return Buffer.concat([Header, Body]);
 }
 
+function BuildCommand2K22(Command, ObjectId, RequestId) {
+    const Body = new FieldList.Builder().AddU32('COMMAND', Command).Build();
+    const Header = Buffer.from(Buffer.from(LiveStartCribGame, 'hex').subarray(0, 36));
+    Header.writeUInt32LE(Header.length + Body.length);
+    Header.writeBigUInt64BE(RequestId, 16);
+    Header.writeBigUInt64BE(ObjectId, 24);
+    Header.writeUInt32BE(Body.length, 32);
+    return Buffer.concat([Header, Body]);
+}
+
+function AssertAck(Ack, RequestId) {
+    Assert.strictEqual(Ack.length, 24);
+    Assert.strictEqual(Ack.readUInt32BE(4), Requests.Packet);
+    Assert.strictEqual(Ack.readBigUInt64BE(16), RequestId, 'the entire u64 ID, not just its low word');
+}
+
+function ModernMyCourtConnection(Id) {
+    const Fixture = MyCourtConnection(Id, 0x0110000142d875e1n);
+    const Connection = Fixture.Connection;
+    Connection.ProtocolGeneration = '2K22';
+    Connection.MachineId = 0x123456789abcdef0n;
+    Connection.PlayerRevision = 1n;
+    Connection.PlayerBody = BuildPlayerBody2K22(Connection.Puid, Connection.MachineId);
+    return Fixture;
+}
+
+// Native menu rows 0x142432A20, counts FUN_14166F030/FUN_14166EFA0.
+// The last number is the encoded Away count, not the drill's actor roles.
+const MenuCases2K22 = [
+    [0, 33, 1, 1, 0], [1, 49, 2, 4, 0], [2, 50, 2, 4, 0],
+    [3, 51, 2, 2, 0], [4, 52, 2, 5, 0], [5, 53, 2, 5, 0],
+    [6, 9, 2, 2, 1], [7, 8, 4, 4, 2], [8, 6, 6, 6, 3],
+    [11, 54, 2, 5, 0], [12, 55, 1, 1, 0], [13, 58, 1, 1, 0],
+    [14, 61, 3, 3, 0], [15, 56, 2, 2, 1], [16, 57, 2, 2, 1],
+    [17, 59, 3, 3, 0], [18, 60, 1, 1, 0],
+];
+
+function ModePlayers2K22(Puid, Mode, Count) {
+    const Ids = Array.from({ length: Count }, (_, Index) => 0x1234n + BigInt(Index));
+    if (Count) Ids[Mode === 16 && Count > 1 ? 1 : 0] = Puid;
+    return Ids;
+}
+
 Test('2K22 MyCourt menu modes are converted, never treated as native COURT types', () => {
-    for (const [Mode, Type] of [[0, 33], [1, 49], [6, 9], [11, 54], [12, 55]]) {
+    for (const [Mode, Type] of MenuCases2K22) {
         Assert.strictEqual(Shootaround.CourtTypeFor({ GameSlot: BigInt(Mode) }, '2K22'), Type);
     }
-    for (const Mode of [2n, 18n, 19n, 63n, 64n, 0x100000006n]) {
+    for (const Mode of [9n, 10n, 19n, 63n, 64n, 0x100000006n]) {
         Assert.strictEqual(Shootaround.CourtTypeFor({ GameSlot: Mode }, '2K22'), null, 'unknown mode must not fall back or truncate');
     }
     Assert.strictEqual(Shootaround.CourtTypeFor({ GameSlot: 6n }), 6, 'legacy mapping unchanged');
     Assert.strictEqual(Shootaround.CourtTypeFor({ GameSlot: 0n }), 29, 'legacy default unchanged');
+});
+
+Test('2K22 every menu enforces native count boundaries and preserves every ordered ID', () => {
+    const { Connection } = ModernMyCourtConnection(7030);
+    for (const [Mode, Type, Min, Max, AwayCount] of MenuCases2K22) {
+        for (let Count = 0; Count <= 7; Count++) {
+            const Ids = ModePlayers2K22(Connection.Puid, Mode, Count);
+            const Game = { GameSlot: BigInt(Mode), PlayerCount: BigInt(Count), Players: Ids, SoloFlag: 0n };
+            const Checked = Shootaround.ValidateGame2K22(Connection, Game);
+            const Valid = Count >= Min && Count <= Max;
+            Assert.strictEqual(Checked.Ok, Valid, `menu ${Mode}, count ${Count}`);
+            if (!Valid) continue;
+            const Teams = Shootaround.TeamsFor(Connection, Game, Type, []);
+            Assert.deepStrictEqual(Teams.Home, Ids.slice(0, Count - AwayCount));
+            Assert.deepStrictEqual(Teams.Away, Ids.slice(Count - AwayCount));
+            Assert.deepStrictEqual([...Teams.Home, ...Teams.Away], Ids, 'no lost, cloned or reordered IDs');
+        }
+    }
+    for (const Mode of [6, 7, 8]) {
+        const Count = Mode === 6 ? 2 : Mode === 7 ? 4 : 6;
+        const Ids = ModePlayers2K22(Connection.Puid, Mode, Count).reverse();
+        const Game = { GameSlot: BigInt(Mode), PlayerCount: BigInt(Count), Players: Ids, SoloFlag: 0n };
+        Assert.ok(Shootaround.ValidateGame2K22(Connection, Game).Ok);
+        const Teams = Shootaround.TeamsFor(Connection, Game, Shootaround.CourtTypeFor(Game, '2K22'), []);
+        Assert.deepStrictEqual(Teams.Home, Ids.slice(0, Count / 2));
+        Assert.deepStrictEqual(Teams.Away, Ids.slice(Count / 2), 'local Away player must not be moved to Home');
+    }
+});
+
+Test('2K22 private workout supplies one roster per side for both local roles', () => {
+    // 17:40:33 start: native AI settings require HOME1/AWAY1, not HOME2/AWAY0.
+    const Puid = 0x0110000142d875e1n;
+    const Ai = 0x91d3bea8327bc2f3n;
+    const { Connection } = ModernMyCourtConnection(7031);
+    Assert.strictEqual(Connection.Puid, Puid);
+    const Bit = CourtLayout2K22.Bit;
+    try {
+        for (const [Mode, Type, Ids] of [[15, 56, [Puid, Ai]], [16, 57, [Ai, Puid]]]) {
+            const Game = { GameSlot: BigInt(Mode), PlayerCount: 2n, Players: Ids, SoloFlag: 0n };
+            Assert.ok(Shootaround.ValidateGame2K22(Connection, Game).Ok);
+            const Teams = Shootaround.TeamsFor(Connection, Game, Type, []);
+            Assert.deepStrictEqual(Teams, { Home: [Ids[0]], Away: [Ids[1]] });
+            const Court = Shootaround.BuildCourt(0x3f0000d4d10n, 1n, Teams.Home, Type, Teams.Away, '2K22');
+            const Native = CourtLayout2K22.Decode(ObjectFrame.Parse(Court).Payload);
+            Assert.ok(Native.Ok, Native.Reason);
+            Assert.strictEqual(Native.Values.get(Bit.CourtType).readUInt32LE(), Type);
+            Assert.strictEqual(Native.Values.get(Bit.HomeCount)[0], 1);
+            Assert.strictEqual(Native.Values.get(Bit.AwayCount)[0], 1);
+            Assert.strictEqual(Native.Values.get(Bit.HomePlayers[0]).readBigUInt64LE(), Ids[0]);
+            Assert.strictEqual(Native.Values.get(Bit.AwayPlayers[0]).readBigUInt64LE(), Ids[1]);
+            Assert.ok(!Native.Values.has(Bit.HomePlayers[1]), 'no second Home actor or cloned AI');
+            Assert.ok(!Shootaround.ValidateGame2K22(Connection, { ...Game, Players: [...Ids].reverse() }).Ok,
+                'wrong local role must be rejected, not repaired by moving the player');
+        }
+    } finally {
+        MyCourt.ClearConnection(Connection);
+    }
 });
 
 Test('2K22 PLAYING/reapply/release insert state fields without overwriting identity or blobs', () => {
@@ -378,10 +490,9 @@ Test('2K22 PLAYING/reapply/release insert state fields without overwriting ident
     MyCourt.ClearConnection(Connection);
 });
 
-Test('2K22 MyCourt start/end use 148-bit courts, preserve AI ids and keep the room snapshot', () => {
+Test('2K22 all mapped starts/connected/ends acknowledge exact IDs and preserve native rosters', () => {
     const Puid = 0x0110000142d875e1n;
-    const Ai = 0x1234n;
-    const { Sent, Connection } = MyCourtConnection(7023, Puid);
+    const { Sent, Acks, Events, Connection } = MyCourtConnection(7023, Puid);
     Connection.ProtocolGeneration = '2K22';
     Connection.MachineId = 0x123456789abcdef0n;
     Connection.PlayerRevision = 1n;
@@ -392,13 +503,18 @@ Test('2K22 MyCourt start/end use 148-bit courts, preserve AI ids and keep the ro
     Cached.Fields.PlayerState = Buffer.alloc(2784, 9);
     Cached.Fields.OwnerCloudSaveId = 0x1122334455667788n;
     try {
-        for (const [Requested, Expected, Ids, AwayCount] of [
-            [0, 33, [Puid], 0], [1, 49, [Puid, Ai], 0],
-            [6, 9, [Puid, Ai], 1], [11, 54, [Puid, Ai], 0], [12, 55, [Puid], 0],
-        ]) {
+        for (const [Requested, Expected, Count, , AwayCount] of MenuCases2K22) {
+            const Ids = ModePlayers2K22(Puid, Requested, Count);
             const Begin = Sent.length;
-            Assert.ok(Shootaround.Handle(Connection, BuildStart2K22(Ids, Requested)));
+            const AckBegin = Acks.length;
+            const EventBegin = Events.length;
+            const RequestId = 0x1234567800000011n + BigInt(Requested);
+            const RoomVersion = Cached.Version;
+            Assert.ok(Shootaround.Handle(Connection, BuildStart2K22(Ids, Requested, Ids.length, RequestId)));
             Assert.strictEqual(Sent.length - Begin, 3, 'court, player, room');
+            Assert.strictEqual(Acks.length - AckBegin, 1);
+            AssertAck(Acks[AckBegin], RequestId);
+            Assert.strictEqual(Events[EventBegin], 'ack', 'ACK precedes authoritative objects');
             const Court = ObjectFrame.Parse(Sent[Begin]);
             const Native = CourtLayout2K22.Decode(Court.Payload);
             Assert.ok(Native.Ok, Native.Reason);
@@ -409,19 +525,47 @@ Test('2K22 MyCourt start/end use 148-bit courts, preserve AI ids and keep the ro
             Assert.strictEqual(Native.Values.get(Bit.MatchId).readBigUInt64LE(), Court.ObjectId);
             Assert.strictEqual(Native.Values.get(Bit.AwayCount)[0], AwayCount);
             Assert.strictEqual(Native.Values.get(Bit.HomeCount)[0], Ids.length - AwayCount);
-            Assert.strictEqual(Native.Values.get(Bit.HomePlayers[0]).readBigUInt64LE(), Puid);
-            if (Ids.length > 1) {
-                Assert.strictEqual(Native.Values.get(AwayCount ? Bit.AwayPlayers[0] : Bit.HomePlayers[1]).readBigUInt64LE(), Ai);
+            for (const [Side, Team] of [
+                ['Home', Ids.slice(0, Ids.length - AwayCount)],
+                ['Away', Ids.slice(Ids.length - AwayCount)],
+            ]) {
+                Team.forEach((Id, Index) => Assert.strictEqual(
+                    Native.Values.get(Bit[`${Side}Players`][Index]).readBigUInt64LE(), Id,
+                    `${Requested}: ${Side} slot ${Index} preserves the requested ID`));
             }
             const Room = MyCourt.ParseRoom(Sent[Begin + 2], '2K22');
+            Assert.ok(Room.Version > RoomVersion, 'associated room version advances on start');
             Assert.strictEqual(Room.Room.Fields.State, MyCourt.CribState.Scrimmage);
             Assert.strictEqual(Room.Room.Fields.GameType, Requested, 'room keeps the menu mode, not COURT type');
             Assert.strictEqual(Room.Room.Fields.OwnerCloudSaveId, Cached.Fields.OwnerCloudSaveId);
             Assert.ok(Room.Room.Fields.PlayerState.equals(Buffer.alloc(2784, 9)));
-            Assert.ok(Shootaround.HandleEnd(Connection, Buffer.from(LiveEndCommand, 'hex')));
+            const Player = Connection.PlayerBody;
+            const Playing = Connection.Shootaround;
+            const Version = Connection.ShootaroundCourtVersion;
+            const ConnectedId = RequestId + 0x100n;
+            Assert.ok(Shootaround.Handle(Connection, BuildCommand2K22(Shootaround.ConnectedCommand, Court.ObjectId, ConnectedId)));
+            AssertAck(Acks[AckBegin + 1], ConnectedId);
+            Assert.strictEqual(Sent.length - Begin, 4, 'connected only sends a newer COURT');
+            Assert.strictEqual(Connection.ShootaroundCourtVersion, Version + 1n);
+            const ConnectedCourt = ObjectFrame.Parse(Sent[Begin + 3]);
+            Assert.ok(ConnectedCourt.Payload.subarray(16).equals(Court.Payload.subarray(16)), 'same fields/IDs, only version changes');
+            Assert.strictEqual(Connection.PlayerBody, Player);
+            Assert.strictEqual(Connection.Shootaround, Playing);
+            Assert.strictEqual(Cached.Version, Room.Version, 'connected does not change room state');
+            const EndId = RequestId + 0x200n;
+            Assert.ok(Shootaround.HandleEnd(Connection, BuildCommand2K22(Shootaround.EndCommand, Court.ObjectId, EndId)));
+            Assert.strictEqual(Acks.length - AckBegin, 3);
+            AssertAck(Acks[AckBegin + 2], EndId);
+            Assert.strictEqual(Connection.ShootaroundCourtVersion, Version + 2n);
             const EndCourt = CourtLayout2K22.Decode(ObjectFrame.Parse(Sent[Sent.length - 2]).Payload);
             Assert.ok(EndCourt.Ok);
             Assert.strictEqual(EndCourt.Values.get(Bit.CourtType).readUInt32LE(), Expected);
+            Assert.strictEqual(EndCourt.Values.get(Bit.HomeCount)[0], Ids.length - AwayCount);
+            Assert.strictEqual(EndCourt.Values.get(Bit.AwayCount)[0], AwayCount);
+            Ids.slice(0, Ids.length - AwayCount).forEach((Id, Index) => Assert.strictEqual(
+                EndCourt.Values.get(Bit.HomePlayers[Index]).readBigUInt64LE(), Id));
+            Ids.slice(Ids.length - AwayCount).forEach((Id, Index) => Assert.strictEqual(
+                EndCourt.Values.get(Bit.AwayPlayers[Index]).readBigUInt64LE(), Id));
             Assert.strictEqual(MyCourt.ParseRoom(Sent[Sent.length - 1], '2K22').Room.Fields.State, MyCourt.CribState.None);
         }
     } finally {
@@ -432,24 +576,166 @@ Test('2K22 MyCourt start/end use 148-bit courts, preserve AI ids and keep the ro
 Test('unverified menu modes and invalid lineups send no COURT, PLAYING or SCRIMMAGE', () => {
     const Puid = 0x0110000142d875e1n;
     const Ai = 0x1234n;
-    const { Sent, Connection } = MyCourtConnection(7024, Puid);
+    const { Sent, Acks, Connection } = MyCourtConnection(7024, Puid);
     Connection.ProtocolGeneration = '2K22';
     Connection.MachineId = 0x123456789abcdef0n;
     Connection.PlayerRevision = 1n;
     Connection.PlayerBody = BuildPlayerBody2K22(Puid, Connection.MachineId);
     const Body = Connection.PlayerBody;
-    for (const [Ids, Mode, Count] of [
-        [[Puid], 2, 1], [[Puid], 6, 1], [[Puid, Ai], 12, 2],
-        [[Puid, Ai], 0, 2], [[Puid, Puid], 6, 2], [[Ai], 1, 1],
+    Assert.ok(MyCourt.PublishBootstrap(Connection));
+    const Cached = MyCourt.RoomStateFor(Connection, MyCourt.SessionObjectId(Connection.SessionId)).State;
+    Cached.Fields.Customization = Buffer.alloc(4860, 7);
+    Cached.Fields.PlayerState = Buffer.alloc(2784, 9);
+    Cached.Fields.OwnerCloudSaveId = 0x1122334455667788n;
+    const Fields = { ...Cached.Fields };
+    let RequestId = 0xabcdef1200000020n;
+    for (const [Ids, Mode, Count, Flag = 0n] of [
+        [[Puid], 9, 1], [[Puid], 10, 1], [[Puid], 19, 1],
+        [[Puid], 1, 1], [[Puid], 11, 1],
+        [ModePlayers2K22(Puid, 1, 5), 1, 5], [[Puid], 2, 1],
+        [[Puid], 6, 1], [[Puid, Ai], 12, 2], [[Puid, Ai], 0, 2],
+        [[Puid, Puid], 6, 2], [[Ai], 13, 1],
         [[Puid, 0n], 1, 2], [[Puid, Ai], 1, 99],
+        [[Ai, Puid], 15, 2], [[Puid, Ai], 16, 2],
+        [[Puid, Ai], 6, 2, 1n], [[Puid, Ai], 6, 2, 2n],
     ]) {
-        Assert.ok(Shootaround.Handle(Connection, BuildStart2K22(Ids, Mode, Count)));
-        Assert.strictEqual(Sent.length, 0);
+        const Begin = Sent.length;
+        const AckBegin = Acks.length;
+        const Version = Cached.Version;
+        Assert.ok(Shootaround.Handle(Connection, BuildStart2K22(Ids, Mode, Count, ++RequestId, Flag)));
+        Assert.strictEqual(Acks.length, AckBegin + 1);
+        AssertAck(Acks[AckBegin], RequestId);
+        Assert.strictEqual(Sent.length, Begin + 1, 'only a room snapshot, no gameplay objects');
+        const Room = MyCourt.ParseRoom(Sent[Begin], '2K22');
+        Assert.ok(Room.Version > Version);
+        Assert.deepStrictEqual(Room.Room.Fields, Fields, 'ownership, state, blobs and IDs unchanged');
         Assert.strictEqual(Connection.PlayerBody, Body);
         Assert.strictEqual(Connection.Shootaround, undefined);
         Assert.strictEqual(Connection.ShootaroundCourtKey, undefined);
     }
     MyCourt.ClearConnection(Connection);
+});
+
+Test('2K22 retries acknowledge and advance versions without reopening an ended game', () => {
+    const { Sent, Acks, Connection } = ModernMyCourtConnection(7025);
+    Assert.ok(MyCourt.PublishBootstrap(Connection));
+    const Start = BuildStart2K22([Connection.Puid], 12, 1, 0x1111111100000020n);
+    const CourtKey = MyCourt.SessionObjectId(Connection.SessionId, Shootaround.CourtIndex);
+    const Connected = BuildCommand2K22(Shootaround.ConnectedCommand, CourtKey, 0x2222222200000021n);
+    const End = BuildCommand2K22(Shootaround.EndCommand, CourtKey, 0x3333333300000022n);
+    try {
+        Assert.ok(Shootaround.Handle(Connection, Start));
+        const PlayingBody = Connection.PlayerBody;
+        for (let Retry = 0; Retry < 2; Retry++) {
+            const Version = Connection.ShootaroundCourtVersion;
+            const Begin = Sent.length;
+            Assert.ok(Shootaround.Handle(Connection, Connected));
+            AssertAck(Acks[Acks.length - 1], 0x2222222200000021n);
+            Assert.strictEqual(Sent.length, Begin + 1);
+            Assert.strictEqual(Connection.ShootaroundCourtVersion, Version + 1n);
+            Assert.strictEqual(Connection.PlayerBody, PlayingBody);
+        }
+        Assert.ok(Shootaround.Handle(Connection, End));
+        Assert.ok(Shootaround.Handle(Connection, End), 'end retry also receives ACK/new version');
+        AssertAck(Acks[Acks.length - 1], 0x3333333300000022n);
+        const WalkingBody = Connection.PlayerBody;
+        const Version = Connection.ShootaroundCourtVersion;
+        Assert.ok(Shootaround.Handle(Connection, Connected), 'late connected notification');
+        Assert.strictEqual(Connection.PlayerBody, WalkingBody);
+        Assert.strictEqual(Connection.Shootaround, null);
+        Assert.strictEqual(Connection.ShootaroundCourtVersion, Version + 1n);
+        const Begin = Sent.length;
+        Assert.ok(Shootaround.Handle(Connection, Start), 'late duplicate start does not reopen');
+        AssertAck(Acks[Acks.length - 1], 0x1111111100000020n);
+        Assert.strictEqual(Sent.length, Begin + 1, 'only the unchanged room snapshot');
+        Assert.strictEqual(Connection.PlayerBody, WalkingBody);
+        Assert.strictEqual(Connection.Shootaround, null);
+        Assert.strictEqual(MyCourt.ParseRoom(Sent[Sent.length - 1], '2K22').Room.Fields.State, MyCourt.CribState.None);
+        Assert.ok(Shootaround.Handle(Connection,
+            BuildStart2K22([Connection.Puid], 0, 1, 0x7777777700000025n)), 'a different start ID opens the next game');
+        Assert.ok(Connection.Shootaround);
+        Assert.ok(Shootaround.Handle(Connection,
+            BuildCommand2K22(Shootaround.EndCommand, 0n, 0x8888888800000026n)), 'native zero-object end');
+        AssertAck(Acks[Acks.length - 1], 0x8888888800000026n);
+        const AfterSecondGame = Connection.PlayerBody;
+        const AfterSecondVersion = Connection.ShootaroundCourtVersion;
+        const AfterSecondCount = Sent.length;
+        Assert.ok(Shootaround.Handle(Connection, Start), 'old start A after game B must not reopen A');
+        AssertAck(Acks[Acks.length - 1], 0x1111111100000020n);
+        Assert.strictEqual(Sent.length, AfterSecondCount + 1, 'only the current room snapshot');
+        Assert.strictEqual(Connection.PlayerBody, AfterSecondGame);
+        Assert.strictEqual(Connection.ShootaroundCourtVersion, AfterSecondVersion);
+        Assert.strictEqual(Connection.ShootaroundCourtType, 33, 'old GUN start does not replace SHOOTAROUND');
+        Assert.strictEqual(Connection.Shootaround, null);
+        Assert.strictEqual(MyCourt.ParseRoom(Sent[Sent.length - 1], '2K22').Room.Fields.State, MyCourt.CribState.None);
+    } finally {
+        MyCourt.ClearConnection(Connection);
+    }
+});
+
+Test('2K22 rejects unrelated object keys without changing the active game', () => {
+    const { Sent, Acks, Connection } = ModernMyCourtConnection(7026);
+    Assert.ok(MyCourt.PublishBootstrap(Connection));
+    Assert.ok(Shootaround.Handle(Connection, BuildStart2K22([Connection.Puid], 12)));
+    const Body = Connection.PlayerBody;
+    const Playing = Connection.Shootaround;
+    const Version = Connection.ShootaroundCourtVersion;
+    const Foreign = MyCourt.SessionObjectId(Connection.SessionId + 1n, Shootaround.CourtIndex);
+    try {
+        for (const Command of [Shootaround.Command, Shootaround.ConnectedCommand, Shootaround.EndCommand]) {
+            const Packet = Command === Shootaround.Command
+                ? BuildStart2K22([Connection.Puid], 12, 1, 0x4444444400000023n)
+                : BuildCommand2K22(Command, Foreign, 0x4444444400000023n);
+            Packet.writeBigUInt64BE(Foreign, 24);
+            const Begin = Sent.length;
+            const AckBegin = Acks.length;
+            Assert.ok(Shootaround.Handle(Connection, Packet));
+            Assert.strictEqual(Acks.length, AckBegin + 1);
+            AssertAck(Acks[AckBegin], 0x4444444400000023n);
+            Assert.strictEqual(Sent.length, Begin, 'no foreign objects published');
+            Assert.strictEqual(Connection.PlayerBody, Body);
+            Assert.strictEqual(Connection.Shootaround, Playing);
+            Assert.strictEqual(Connection.ShootaroundCourtVersion, Version);
+        }
+    } finally {
+        MyCourt.ClearConnection(Connection);
+    }
+});
+
+Test('2K22 command ACK path ignores malformed frames, unrelated worlds and legacy connected notifications', () => {
+    const { Sent, Acks, Connection } = ModernMyCourtConnection(7027);
+    const Valid = BuildStart2K22([Connection.Puid], 12);
+    const WrongPacket = Buffer.from(Valid);
+    WrongPacket.writeUInt32BE(MyCourt.ObjectDataPacket, 4);
+    const WrongLength = Buffer.from(Valid);
+    WrongLength.writeUInt32LE(Valid.length + 1);
+    const ShortBody = Buffer.from(Valid);
+    ShortBody.writeUInt32BE(Valid.length, 32);
+    for (const Packet of [Valid.subarray(0, 35), WrongPacket, WrongLength, ShortBody,
+        BuildCommand2K22(0x5bb78c48, 0n, 32n)]) {
+        Assert.strictEqual(Shootaround.Handle(Connection, Packet), false);
+        Assert.strictEqual(Sent.length, 0);
+        Assert.strictEqual(Acks.length, 0);
+    }
+    Connection.ActivityName = 'neighborhood';
+    Connection.ActivityKey = 0x3cf672c2;
+    Assert.strictEqual(Shootaround.Handle(Connection, Valid), false);
+    Assert.strictEqual(Acks.length, 0);
+    const Legacy = MyCourtConnection(7028, Connection.Puid);
+    Assert.strictEqual(Shootaround.Handle(Legacy.Connection,
+        BuildCommand2K22(Shootaround.ConnectedCommand, 0x3f0000d4d10n, 32n)), false);
+    Assert.strictEqual(Legacy.Acks.length, 0);
+    Assert.strictEqual(Legacy.Sent.length, 0);
+});
+
+Test('rejecting a 2K22 mode without a cached room does not invent room state', () => {
+    const { Sent, Acks, Connection } = ModernMyCourtConnection(7029);
+    const Count = MyCourt.RoomStates.size;
+    Assert.ok(Shootaround.Handle(Connection, BuildStart2K22([Connection.Puid], 2, 1, 0x5555555500000024n)));
+    AssertAck(Acks[0], 0x5555555500000024n);
+    Assert.strictEqual(Sent.length, 0);
+    Assert.strictEqual(MyCourt.RoomStates.size, Count);
+    Assert.strictEqual(Connection.Shootaround, undefined);
 });
 
 process.stdout.write(`\n${Passed} passing\n`);

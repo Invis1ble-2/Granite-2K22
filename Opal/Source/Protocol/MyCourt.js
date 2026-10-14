@@ -510,6 +510,16 @@ function PublishRoomState(Connection, Key, State, SeenVersion = 0n) {
     return { Frame: Frame, Sent: Sent };
 }
 
+function RepublishRoom(Connection, ObjectId) {
+    if (!IsMyCourt(Connection)) return null;
+    const Key = RoomKey(Connection, ObjectId);
+    const State = RoomStates.get(Key);
+    if (!State || State.Generation !== PlayerBody.GenerationForConnection(Connection)) return null;
+    // Complete a rejected command without changing ownership, game state or blobs.
+    const Out = PublishRoomState(Connection, Key, State);
+    return { ObjectId: State.ObjectId, Version: State.Version, Sent: Out.Sent, Frame: Out.Frame };
+}
+
 function StartCribGame(Connection, ObjectId, Game) {
     if (!IsMyCourt(Connection)) return null;
     if (
@@ -723,6 +733,7 @@ module.exports = {
     RoomStateFor,
     BuildRoomFrame,
     PublishRoomState,
+    RepublishRoom,
     StartCribGame,
     EndCribGame,
 };
