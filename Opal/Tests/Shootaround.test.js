@@ -445,6 +445,7 @@ Test('2K22 private workout supplies one roster per side for both local roles', (
             const Native = CourtLayout2K22.Decode(ObjectFrame.Parse(Court).Payload);
             Assert.ok(Native.Ok, Native.Reason);
             Assert.strictEqual(Native.Values.get(Bit.CourtType).readUInt32LE(), Type);
+            Assert.strictEqual(Native.Values.get(Bit.ArtBinding).readUInt32LE(), 0xbf28cd64);
             Assert.strictEqual(Native.Values.get(Bit.HomeCount)[0], 1);
             Assert.strictEqual(Native.Values.get(Bit.AwayCount)[0], 1);
             Assert.strictEqual(Native.Values.get(Bit.HomePlayers[0]).readBigUInt64LE(), Ids[0]);
@@ -521,6 +522,8 @@ Test('2K22 all mapped starts/connected/ends acknowledge exact IDs and preserve n
             Assert.strictEqual(Native.Trailing, 0);
             const Bit = CourtLayout2K22.Bit;
             Assert.strictEqual(Native.Values.get(Bit.Name).readUInt32LE(), Shootaround.CourtIndex);
+            Assert.strictEqual(Native.Values.get(Bit.ArtBinding).readUInt32LE(), 0xbf28cd64,
+                'retail main marker binding must not use the session court ID');
             Assert.strictEqual(Native.Values.get(Bit.CourtType).readUInt32LE(), Expected);
             Assert.strictEqual(Native.Values.get(Bit.MatchId).readBigUInt64LE(), Court.ObjectId);
             Assert.strictEqual(Native.Values.get(Bit.AwayCount)[0], AwayCount);
@@ -560,6 +563,7 @@ Test('2K22 all mapped starts/connected/ends acknowledge exact IDs and preserve n
             const EndCourt = CourtLayout2K22.Decode(ObjectFrame.Parse(Sent[Sent.length - 2]).Payload);
             Assert.ok(EndCourt.Ok);
             Assert.strictEqual(EndCourt.Values.get(Bit.CourtType).readUInt32LE(), Expected);
+            Assert.strictEqual(EndCourt.Values.get(Bit.ArtBinding).readUInt32LE(), 0xbf28cd64);
             Assert.strictEqual(EndCourt.Values.get(Bit.HomeCount)[0], Ids.length - AwayCount);
             Assert.strictEqual(EndCourt.Values.get(Bit.AwayCount)[0], AwayCount);
             Ids.slice(0, Ids.length - AwayCount).forEach((Id, Index) => Assert.strictEqual(

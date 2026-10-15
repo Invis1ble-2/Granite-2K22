@@ -574,6 +574,9 @@ function OccupancyPayload(Layout, CourtId, OwnerId, ObjectId, SeatsByQueue, Prof
         CourtType: Layout.CourtType,
         CourtTransform: CourtTransform(Layout),
         CourtObjectId: ObjectId >>> 0,
+        // FUN_14148AD80 registers graphics baskets by the court marker name CRC.
+        // Name/object identity alone does not populate the independent bit8 binding.
+        ArtBinding: Generation === '2K22' ? Crc32(Layout.name) >>> 0 : undefined,
         Count: SetupRecords.length,
         SpotRecords,
         SetupRecords,

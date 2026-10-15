@@ -12,6 +12,9 @@ namespace ModuleConfig
     inline bool EnableParkRosterTrace = false;
     inline bool EnablePriceWatchdog = true;
     inline bool EnableBadgeBudgets = true;
+    inline bool EnableAnimationShopAll = true;
+    inline bool EnableAnimationRequirementBypass = true;
+    inline bool EnableAnimationUnlockAll = false;
 
     // Logging & Output toggles
     inline bool EnableFileLogging = true;
@@ -43,6 +46,9 @@ namespace ModuleConfig
             L"; Optional native park roster diagnostics\r\nEnableParkRosterTrace = 0\r\n\r\n"
             L"; Career attribute direct prices and watchdog\r\nEnablePriceWatchdog = 1\r\n\r\n"
             L"; Career badge budget reporting\r\nEnableBadgeBudgets = 1\r\n\r\n"
+            L"; Show all native animation shop candidates (season/exclusion/rule filters bypassed)\r\nEnableAnimationShopAll = 1\r\n\r\n"
+            L"; Ignore animation height/attributes/progression requirements; normal purchases remain\r\nEnableAnimationRequirementBypass = 1\r\n\r\n"
+            L"; Virtual ownership plus eligibility: equip animations without purchasing\r\nEnableAnimationUnlockAll = 0\r\n\r\n"
             L"[Logging]\r\n"
             L"; Write .log files in console logs\r\nEnableFileLogging = 1\r\n\r\n"
             L"; Allocate a console window and print to it\r\nEnableConsole = 1\r\n\r\n"
@@ -83,6 +89,9 @@ namespace ModuleConfig
         EnableParkRosterTrace = ReadToggle(L"Features", L"EnableParkRosterTrace", false, Ini);
         EnablePriceWatchdog   = ReadToggle(L"Features", L"EnablePriceWatchdog", true, Ini);
         EnableBadgeBudgets    = ReadToggle(L"Features", L"EnableBadgeBudgets", true, Ini);
+        EnableAnimationShopAll = ReadToggle(L"Features", L"EnableAnimationShopAll", true, Ini);
+        EnableAnimationRequirementBypass = ReadToggle(L"Features", L"EnableAnimationRequirementBypass", true, Ini);
+        EnableAnimationUnlockAll = ReadToggle(L"Features", L"EnableAnimationUnlockAll", false, Ini);
 
         // Logging & Output
         EnableFileLogging   = ReadToggle(L"Logging", L"EnableFileLogging", true, Ini);

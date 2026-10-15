@@ -29,6 +29,7 @@ Test('actual 2K22 handshake on legacy Boulevard activity switches published cour
         for(const F of Courts) {
             const D=Native.Decode(F.subarray(32)),Entry=Ship.Courts.find(E=>BigInt(E.id)===F.readBigUInt64BE(16));
             Assert.ok(Entry);Assert.equal(D.Values.get(0).readUInt32LE(),Entry.id);
+            Assert.equal(D.Values.get(Native.Bit.ArtBinding).readUInt32LE(),Entry.id);
             Assert.equal(D.Values.get(20).readUInt32LE(),Entry.TeamSize===2?8:6);
             Assert.equal(D.Values.get(22)[0],Entry.TeamSize===2?1:0);
             const Transform=D.Values.get(4);
@@ -46,13 +47,13 @@ Test('actual old court sent to NBA2K22 does not satisfy the native queue field c
 Test('2K22 bootstrap places setup and occupancy after the inherited fields and team result arrays',()=>{
     const Setup=Buffer.alloc(144,0x11),Spot=Buffer.alloc(72,0x22),Transform=Buffer.alloc(64);
     const Body=Court.BuildGotNextCourtDataPayload({Generation:'2K22',CourtId:123n,OwnerId:4n,CourtType:2,
-        CourtTransform:Transform,CourtObjectId:321,Count:3,SetupRecords:[Setup,Setup,Setup],SpotRecords:[Spot,Spot,Spot]});
+        CourtTransform:Transform,CourtObjectId:321,ArtBinding:456,Count:3,SetupRecords:[Setup,Setup,Setup],SpotRecords:[Spot,Spot,Spot]});
     const D=Native.Decode(Body);Assert.equal(D.Ok,true);Assert.equal(D.Trailing,0);
     Assert.equal(Native.Count,148);Assert.equal(D.Values.get(82)[0],3);
     Assert.deepEqual(D.Values.get(86),Setup);Assert.deepEqual(D.Values.get(83),Spot);
     Assert.equal(D.Values.get(0).readUInt32LE(),321);
     Assert.equal(D.Values.get(20).readUInt32LE(),2);
-    Assert.equal(D.Values.has(8),false); // ArtBinding is not the marker ID.
+    Assert.equal(D.Values.get(Native.Bit.ArtBinding).readUInt32LE(),456,'ArtBinding is independent of Name');
     Assert.equal(D.Values.get(1)[0],1);
     Assert.equal(D.Values.has(58),false);
     Assert.equal(Native.Decode(Body.subarray(0,Body.length-1)).Ok,false);
@@ -84,6 +85,13 @@ Test('2K22 native park geometry uses NBA half courts for 2v2 and SHORT full cour
             Assert.equal(D.Values.get(20).readUInt32LE(),Entry.TeamSize===2?8:6);
             Assert.equal(D.Values.get(22)[0],Entry.TeamSize===2?1:0);
             Assert.deepEqual(D.Values.get(4),Expected,'preserve resource marker transform');
+            Assert.equal(D.Values.get(Native.Bit.ArtBinding).readUInt32LE(),
+                require('../Source/Core/Crc32').Crc32(Entry.Marker.Name),'bind both ends by the resource court marker name');
         }
     }
+});
+Test('2K22 court encoder never infers graphics binding from object identity',()=>{
+    const Body=Native.Build({CourtId:123n,CourtObjectId:321});
+    const D=Native.Decode(Body);Assert.equal(D.Ok,true);
+    Assert.equal(D.Values.has(Native.Bit.ArtBinding),false);
 });

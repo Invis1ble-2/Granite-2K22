@@ -664,6 +664,7 @@ DWORD WINAPI CareerPriceWatchdog(void*)
 
 #include "ParkRosterTrace.h"
 #include "SoloParkNative.h"
+#include "AnimationUnlock.h"
 
 DWORD WINAPI Initialise(void*)
 {
@@ -709,6 +710,7 @@ DWORD WINAPI Initialise(void*)
     {
         ParkRosterTrace::Install(Executable);
         SoloParkNative::Install(Executable);
+        AnimationUnlock::Install(Executable);
         if (ModuleConfig::EnablePriceWatchdog)
         {
             void* Target = reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(Executable) + 0x5f5950);

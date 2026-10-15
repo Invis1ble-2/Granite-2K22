@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CheatTable CheatEngineTableVersion="45">
+  <CheatEntries>
+    <CheatEntry>
+      <ID>0</ID>
+      <Description>"NBA2K22 动画排查：先备份生涯，附加 NBA2K22.exe，退出动画子页后切换"</Description>
+      <GroupHeader>1</GroupHeader>
+      <CheatEntries>
+        <CheatEntry>
+          <ID>1</ID>
+          <Description>"1. 全动画视为已拥有（不写服务器库存；取消勾选恢复）"</Description>
+          <VariableType>Auto Assembler Script</VariableType>
+          <AssemblerScript><![CDATA[
+// Private-server diagnosis only. Default: disabled. No purchase or save writes.
+// Ghidra: NBA2K22.exe.unpacked.exe, image base 140000000.
+// SHA256: 14741e908c9c586fb0a32a9b17f59a0e53f586cdab6b841e6aa056859116ace0
+// FUN_1411F98D0: native animation ownership predicate, called by
+// FUN_1411D71C0 (animation state) and FUN_1411FF130 (menu presentation).
+// Change the return value only; do not change ownership flags or enumerate IDs.
+
+[ENABLE]
+assert(NBA2K22.exe+11F98D0,40 53 48 83 EC 20 48 8B D9 48 8B 0D F8 57 13 05 48 8B 01 FF 90 B0 04 00 00 85 C0 75 0B B8 01 00)
+assert(NBA2K22.exe+3D20F10,1C 00 00 00 9A 00 00 00 01 B7 9C CF)
+assert(NBA2K22.exe+3D37170,21 00 00 00 D9 00 00 00 B2 4E 5B 09)
+
+NBA2K22.exe+11F98D0:
+  // mov eax,1; ret -- replaces the complete six-byte prologue.
+  db B8 01 00 00 00 C3
+
+[DISABLE]
+// Do not overwrite another tool's subsequent patch. Check unchanged code too.
+assert(NBA2K22.exe+11F98D0,B8 01 00 00 00 C3 48 8B D9 48 8B 0D F8 57 13 05 48 8B 01 FF 90 B0 04 00 00 85 C0 75 0B B8 01 00)
+
+NBA2K22.exe+11F98D0:
+  db 40 53 48 83 EC 20
+]]></AssemblerScript>
+        </CheatEntry>
+        <CheatEntry>
+          <ID>2</ID>
+          <Description>"2. 忽略动画资格限制（配合1排查；取消勾选恢复）"</Description>
+          <VariableType>Auto Assembler Script</VariableType>
+          <AssemblerScript><![CDATA[
+// FUN_1412011D0: animation attribute/height/progression eligibility predicate.
+// This does not add missing catalog rows/assets or force unsupported animation
+// playback. Equipping an animation can still be saved by the normal game.
+// Toggle outside animation submenus. Use only for this private-server build.
+
+[ENABLE]
+assert(NBA2K22.exe+12011D0,48 89 5C 24 10 48 89 6C 24 18 48 89 74 24 20 57 41 56 41 57 48 83 EC 50 48 8B D9 0F 29 74 24 40)
+assert(NBA2K22.exe+3D20F10,1C 00 00 00 9A 00 00 00 01 B7 9C CF)
+assert(NBA2K22.exe+3D37170,21 00 00 00 D9 00 00 00 B2 4E 5B 09)
+
+NBA2K22.exe+12011D0:
+  // mov eax,1; ret; four nops -- replaces two complete five-byte instructions.
+  db B8 01 00 00 00 C3 90 90 90 90
+
+[DISABLE]
+assert(NBA2K22.exe+12011D0,B8 01 00 00 00 C3 90 90 90 90 48 89 74 24 20 57 41 56 41 57 48 83 EC 50 48 8B D9 0F 29 74 24 40)
+
+NBA2K22.exe+12011D0:
+  db 48 89 5C 24 10 48 89 6C 24 18
+]]></AssemblerScript>
+        </CheatEntry>
+        <CheatEntry>
+          <ID>3</ID>
+          <Description>"3. 街区动作表情商店列表诊断（仅类别1，预期44项；先勿购买）"</Description>
+          <VariableType>Auto Assembler Script</VariableType>
+          <AssemblerScript><![CDATA[
+// Independent of entries 1/2. Default: disabled. Toggle OUTSIDE animation pages.
+// Verified target SHA256 is recorded in entry 1. User v2 snapshot identifies
+// shop object 14526A2F0, category 1, and the nine indices reproduced by season 8.
+// FUN_1405E5BD0: 45 candidates (0..44); FUN_1405E5720: 13 exclusions.
+// FUN_14068BBE0: allow only this shop/category's 44 nonzero candidates.
+// This bypasses BOTH static exclusions and seasonal filtering for diagnosis.
+// No candidate/season/ownership/inventory/price/purchase data is modified.
+// Some hidden entries may be rewards: visibility does NOT prove purchasability.
+// Fixed 18-byte absolute detour; no dependence on a near allocation succeeding.
+
+[ENABLE]
+assert(NBA2K22.exe+68BBE0,48 89 5C 24 08 55 56 57 48 81 EC 80 00 00 00 48 63 F2 33 FF 49 63 D8 BD 01 00 00 00 83 FE 03 0F)
+assert(NBA2K22.exe+3D20F10,1C 00 00 00 9A 00 00 00 01 B7 9C CF)
+assert(NBA2K22.exe+3D37170,21 00 00 00 D9 00 00 00 B2 4E 5B 09)
+assert(NBA2K22.exe+2432230,00 00 00 00 01 00 00 00 2A 00 00 00 18 00 00 00)
+
+alloc(nba2k22ShopEmotesDiagnostic,1000)
+label(nba2k22ShopEmotesOriginal)
+registersymbol(nba2k22ShopEmotesDiagnostic)
+
+nba2k22ShopEmotesDiagnostic:
+  cmp edx,1
+  jne nba2k22ShopEmotesOriginal
+  cmp r8d,1
+  jb nba2k22ShopEmotesOriginal
+  cmp r8d,2C
+  ja nba2k22ShopEmotesOriginal
+  push rax
+  mov rax,NBA2K22.exe+526A2F0
+  cmp rcx,rax
+  pop rax
+  jne nba2k22ShopEmotesOriginal
+  mov eax,1
+  ret
+
+nba2k22ShopEmotesOriginal:
+  // Replay all six complete, non-RIP-relative instructions overwritten below.
+  mov [rsp+08],rbx
+  push rbp
+  push rsi
+  push rdi
+  sub rsp,80
+  movsxd rsi,edx
+  db FF 25 00 00 00 00
+  dq NBA2K22.exe+68BBF2
+
+NBA2K22.exe+68BBE0:
+  db FF 25 00 00 00 00
+  dq nba2k22ShopEmotesDiagnostic
+  db 90 90 90 90
+
+[DISABLE]
+{$lua}
+if syntaxcheck then return end
+local hook = getAddressSafe('NBA2K22.exe+68BBE0')
+local target = getAddressSafe('nba2k22ShopEmotesDiagnostic')
+assert(hook and target and readQword(hook+6) == target,
+  'Shop hook changed or symbol missing; refused to overwrite another patch')
+{$asm}
+assert(NBA2K22.exe+68BBE0,FF 25 00 00 00 00)
+assert(NBA2K22.exe+68BBEE,90 90 90 90 33 FF 49 63 D8 BD 01 00 00 00 83 FE 03 0F)
+
+NBA2K22.exe+68BBE0:
+  db 48 89 5C 24 08 55 56 57 48 81 EC 80 00 00 00 48 63 F2
+
+unregistersymbol(nba2k22ShopEmotesDiagnostic)
+dealloc(nba2k22ShopEmotesDiagnostic)
+]]></AssemblerScript>
+        </CheatEntry>
+      </CheatEntries>
+    </CheatEntry>
+  </CheatEntries>
+  <UserdefinedSymbols/>
+</CheatTable>

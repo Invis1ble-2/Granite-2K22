@@ -4,7 +4,7 @@
 'use strict';
 
 const Log = require('../Core/Log');
-const { Hex } = require('../Core/Crc32');
+const { Crc32, Hex } = require('../Core/Crc32');
 const FieldList = require('../Codec/FieldList');
 const ObjectFrame = require('../Codec/ObjectFrame');
 const MyCourt = require('./MyCourt');
@@ -18,6 +18,10 @@ const Requests = require('./Requests');
 
 const CourtClass = 0x2c4d49e3;
 const CourtFlags = 116;
+// Retail mycourt.ACTIVITY selects s656/s657; both baskets.SCNE register
+// court_marker "main". FUN_14148AD80 keys graphics baskets by its name CRC,
+// not the session COURT ID or the transform reference "main_marker".
+const MyCourtArtBinding2K22 = Crc32('main') >>> 0;
 const CourtType = Object.freeze({ None: 0, OneVOne: 6, Couch: 27, Blacktop: 28, Shootaround: 29 });
 const CourtTypeCount = 44;
 const CourtTypeName = Object.freeze({
@@ -271,6 +275,7 @@ function BuildCourt(ObjectId, Version, Players, Type = null, Away = [], Generati
         const Bit = CourtLayout2K22.Bit;
         Fields.set(Bit.Name, U32(Number(Key & 0xffffffffn)));
         Fields.set(Bit.IsActive, Buffer.from([1]));
+        Fields.set(Bit.ArtBinding, U32(MyCourtArtBinding2K22));
         Fields.set(Bit.CourtType, U32(Type));
         Fields.set(Bit.SetupGate, Buffer.from([0]));
         Fields.set(Bit.MatchId, U64(Key));
