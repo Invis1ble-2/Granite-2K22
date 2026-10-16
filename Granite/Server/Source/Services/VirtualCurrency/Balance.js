@@ -42,6 +42,26 @@ function BalanceFor(Context = {}) {
     return Context.Wallets.get(Key);
 }
 
+function SetBalance(Context = {}, Value) {
+    if (!(Context.Wallets instanceof Map)) return Value;
+    const Key = Context.userId === null || Context.userId === undefined ? 'anonymous' : Context.userId.toString();
+    const Previous = Context.Wallets.get(Key);
+    const HadPrevious = Context.Wallets.has(Key);
+    const Static = IsStaticBalance(Context);
+    const Next = Static ? StartingBalance : BigInt(Value);
+    if (Next < 0n || Next > 0xffffffffffffffffn) throw new RangeError('VC balance is outside the U64 range');
+    Context.Wallets.set(Key, Next);
+    if (Static || typeof Context.SaveWallets !== 'function') return Next;
+    try {
+        Context.SaveWallets();
+    } catch (Failure) {
+        if (HadPrevious) Context.Wallets.set(Key, Previous);
+        else Context.Wallets.delete(Key);
+        throw Failure;
+    }
+    return Next;
+}
+
 function Build(Input, Context = {}) {
     const CurrentBalance = BalanceFor(Context);
     return new Builder()
@@ -58,6 +78,7 @@ module.exports = {
     Balance: Build,
     BalanceFor,
     StartingBalance,
+    SetBalance,
     StaticBalance,
     IsStaticBalance,
     Status: 'CONFIRMED_2K19_BALANCE_FIELD_DEBIT_BY_DEFAULT',

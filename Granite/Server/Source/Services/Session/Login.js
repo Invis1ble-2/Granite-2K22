@@ -53,16 +53,24 @@ function AddJsonRecord(ListBuilder, Record) {
     return ListBuilder.AddU32(Record.Crc, Record.Value);
 }
 
-function BuildEndpointBlob(File) {
+function BuildEndpointBlob(File, Include2K22Catalog = false) {
     if (!File || !Fs.existsSync(File)) {
         Logger.Error(`NBA2K19 endpoint table is missing: ${File}`);
         return Gzip(new Builder().Build().Body);
     }
     const Document = JSON.parse(Fs.readFileSync(File, 'utf8'));
     if (!Array.isArray(Document.Endpoints)) throw new Error('endpoint table has no Endpoints array');
+    const Endpoints = Document.Endpoints.slice();
+    // NBA2K22 FUN_1405a5f80 / 0x1405a6098 requests this catalog endpoint.
+    // Append an alias in the response only; never rewrite the configured endpoint table.
+    if (Include2K22Catalog && !Endpoints.some((Endpoint) => U32(Endpoint.EndpointId) === 0xcd58a443)) {
+        const Template = Endpoints.find((Endpoint) => U32(Endpoint.EndpointId) === 0x25e937ad);
+        if (!Template) throw new Error('2K22 store catalog requires the store HTTP endpoint template');
+        Endpoints.push({ ...Template, EndpointId: '0xCD58A443' });
+    }
     const Seen = new Set();
     const ListBuilder = new Builder();
-    for (const Endpoint of Document.Endpoints) {
+    for (const Endpoint of Endpoints) {
         const Id = U32(Endpoint.EndpointId);
         if (Seen.has(Id)) throw new Error(`duplicate endpoint id ${Endpoint.EndpointId}`);
         Seen.add(Id);
@@ -154,7 +162,7 @@ function Build(Input, Context = {}) {
     if (Identity && Identity.verified) {
         Logger.Verbose(`login verified as Celestial user ${Identity.celestialUserId} -> account ${UserId}`);
     }
-    const Endpoints = BuildEndpointBlob(Context.EndpointFile);
+    const Endpoints = BuildEndpointBlob(Context.EndpointFile, Boolean(Context.StoreCatalog2K22));
     const Now = DateToVCDate();
     const Reply = new Builder()
         .AddVCDate(Crcs.ServerTime, Now)

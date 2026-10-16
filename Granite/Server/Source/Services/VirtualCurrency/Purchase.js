@@ -6,9 +6,12 @@
 const { Builder, GetFields, GetField, Types } = require('../../Codec/FieldList');
 const { Crc32 } = require('../../Core/Crc32');
 const { AttributeIds, AttributesFor, AsBigInt, CareerKey } = require('../MyCareer/Attributes/Constants');
-const { BalanceFor, StartingBalance, IsStaticBalance } = require('./Balance');
+const { BalanceFor, SetBalance } = require('./Balance');
 const { OwnedKey, RememberOwnedItem } = require('../../Storage/OwnedItems');
 const { TransactionFields, TransactionModes } = require('./GetPrices');
+const Gatorade = require('../MyCareer/Gatorade');
+const SkillBoosts = require('./SkillBoosts2K22');
+const Logger = require('../../Core/Logger');
 
 const ItemCrc = 0xfd76cfbd;
 const PurchaseType = 0xc1ed2239;
@@ -44,6 +47,8 @@ function NativeCatalogPrice(Item, Context = {}) {
 }
 
 function PriceFor(Item, Index, Fields, Context = {}) {
+    const Skill = SkillBoosts.ProductFor(Item);
+    if (Skill) return Skill.price;
     const TypeField = GetField(Fields, PurchaseType, Index);
     if (TypeField && TypeField.Data1 >>> 0 === ConsumablePurchaseType) {
         const Native = NativeCatalogPrice(Item, Context);
@@ -153,10 +158,24 @@ function Build(Input, Context = {}) {
     const Items = GetFields(Fields, ItemCrc).map((Field) => Field.Data1 >>> 0);
     if (!Items.length) return new Builder().AddU32(Result, Success).Build();
 
-    const Prices = PricesFor(Items, Fields, Context);
-    const Total = Prices.reduce((Sum, Price) => Sum + Price, 0n);
+    let SkillQuantities;
+    let GatoradePlan;
+    try {
+        SkillQuantities = SkillBoosts.QuantitiesFor(Items, Fields);
+        // These are response transaction fields, not native skill-cart inputs.
+        if (SkillQuantities.size && [TransactionFields.Mode, TransactionFields.Price, TransactionFields.Quantity, BalanceCrc]
+            .some(Crc => GetField(Fields, Crc))) throw new Error('invalid skill boost transaction fields');
+        GatoradePlan = Gatorade.Prepare(Input, Context, Items);
+    }
+    catch (Failure) {
+        return new Builder().AddU32(Result, Crc32('FAILURE')).Build();
+    }
+    if (GatoradePlan?.Replay)
+        return new Builder().AddU64(BalanceCrc, BalanceFor(Context)).AddU32(Result, Success).Build();
+    const Prices = Items.map((Item, Index) => GatoradePlan?.Prices.get(Index) ?? PriceFor(Item, Index, Fields, Context));
+    const QuantityFor = Index => SkillQuantities.get(Index) ?? GatoradePlan?.Quantities.get(Index) ?? 1n;
+    const Total = Prices.reduce((Sum, Price, Index) => Sum + Price * QuantityFor(Index), 0n);
     const Current = BalanceFor(Context);
-    const StaticBalance = IsStaticBalance(Context);
     if (Total > Current) return new Builder().AddU32(Result, InsufficientFunds).Build();
 
     const Attributes = AttributesFor(Context);
@@ -172,25 +191,36 @@ function Build(Input, Context = {}) {
         }
         if (Outcome.Changed) Changes.push(Outcome);
     }
-
     const NextBalance = Current - Total;
-    if (Context.Wallets instanceof Map) {
-        const Key = Context.userId === null || Context.userId === undefined ? 'anonymous' : String(Context.userId);
-        Context.Wallets.set(Key, StaticBalance ? StartingBalance : NextBalance);
+    try {
+        SetBalance(Context, NextBalance);
+    } catch (Failure) {
+        Attributes.forEach((Attribute, Index) => { Attribute.level = OriginalLevels[Index]; });
+        return new Builder().AddU32(Result, Crc32('FAILURE')).Build();
+    }
+    try { Gatorade.Commit(Context, GatoradePlan); }
+    catch (Failure) {
+        Attributes.forEach((Attribute, Index) => { Attribute.level = OriginalLevels[Index]; });
+        try { SetBalance(Context, Current); }
+        catch (RollbackFailure) { Logger.Error(`wallet rollback failed after Gatorade commit error: ${RollbackFailure.message}`); }
+        return new Builder().AddU32(Result, Crc32('FAILURE')).Build();
     }
     if (Context.OwnedItems instanceof Map) {
         const Key = OwnedKey(Context);
         if (Key) {
+            let StoredAny = false;
             for (let Index = 0; Index < Items.length; Index++) {
                 if (AttributeForItem(Items[Index], Context) !== null) continue;
+                if (GatoradePlan?.Prices.has(Index)) continue;
                 const TypeField = GetField(Fields, PurchaseType, Index);
                 RememberOwnedItem(Context.OwnedItems, Key, {
                     item: Items[Index] >>> 0,
                     purchaseType: TypeField ? TypeField.Data1 >>> 0 : null,
                     price: Prices[Index],
                 });
+                StoredAny = true;
             }
-            if (typeof Context.SaveOwnedItems === 'function') Context.SaveOwnedItems();
+            if ((!GatoradePlan || StoredAny) && typeof Context.SaveOwnedItems === 'function') Context.SaveOwnedItems();
         }
     }
     if (Changes.length && Context.Careers instanceof Map) {
@@ -233,7 +263,7 @@ function Build(Input, Context = {}) {
             Echo,
             Fields,
             TransactionFields.Quantity,
-            Items.map(() => 1n),
+            Items.map((Item, Index) => QuantityFor(Index)),
         );
         AppendMissingU64(Echo, Fields, BalanceCrc, [BalanceFor(Context)]);
         Echo.push({ Crc: Result, Type: Types.StringCrc, Data1: Success >>> 0, Data2: 0 });
@@ -251,6 +281,8 @@ function BuildConsumable(Input, Context = {}) {
     if (!ItemField) return new Builder().AddU32(Result, InsufficientFunds).Build();
 
     const Item = ItemField.Data1 >>> 0;
+    // Skills use the validated 2K22 cart route, never the legacy tattoo route.
+    if (SkillBoosts.ProductFor(Item)) return new Builder().AddU32(Result, Crc32('FAILURE')).Build();
     const RequestedQuantity = U64(GetField(Fields, TransactionFields.Quantity));
     const Quantity = RequestedQuantity !== null && RequestedQuantity > 0n ? RequestedQuantity : 1n;
     const UnitPrice = CatalogPriceFor(Item, Context);
@@ -258,12 +290,9 @@ function BuildConsumable(Input, Context = {}) {
     const Current = BalanceFor(Context);
     if (Total > Current) return new Builder().AddU32(Result, InsufficientFunds).Build();
 
-    const StaticBalance = IsStaticBalance(Context);
     const NextBalance = Current - Total;
-    if (Context.Wallets instanceof Map) {
-        const Key = Context.userId === null || Context.userId === undefined ? 'anonymous' : String(Context.userId);
-        Context.Wallets.set(Key, StaticBalance ? StartingBalance : NextBalance);
-    }
+    try { SetBalance(Context, NextBalance); }
+    catch (Failure) { return new Builder().AddU32(Result, Crc32('FAILURE')).Build(); }
     if (Context.Purchases instanceof Map) {
         Context.Purchases.set(`consumable:${Item}:${Date.now()}`, {
             item: Item,

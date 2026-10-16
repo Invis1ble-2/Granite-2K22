@@ -5,6 +5,7 @@
 
 const { Builder, GetField } = require('../../Codec/FieldList');
 const { Crc32 } = require('../../Core/Crc32');
+const SkillBoosts = require('./SkillBoosts2K22');
 
 const Result = Crc32('RESULT');
 const Success = Crc32('SUCCESS');
@@ -25,6 +26,8 @@ function ReadRequestedItems(Fields) {
 }
 
 function ResolvePrice(Item, Index, Context = {}) {
+    const Skill = SkillBoosts.ProductFor(Item);
+    if (Skill) return Skill.price;
     const Catalog = Context.VcPrices;
     if (Catalog instanceof Map && Catalog.has(Item)) {
         const Value = Catalog.get(Item);
@@ -48,7 +51,8 @@ function Build(Input, Context = {}) {
             .AddU64(PriceCrc('FINAL_MYTEAM_PRICE', Index), Price)
             .AddU64(PriceCrc('MYTEAM_PRICE', Index), Price);
     }
-    return Reply.AddU32(Result, Success).Build();
+    // NBA2K22 FUN_141E6B830 binary-searches fields by unsigned CRC.
+    return SortRecords(Reply.AddU32(Result, Success)).Build();
 }
 
 const TransactionFields = Object.freeze({

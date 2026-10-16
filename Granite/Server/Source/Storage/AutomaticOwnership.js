@@ -6,6 +6,7 @@
 const Fs = require('node:fs');
 const { OwnedKey, ListOwnedItems } = require('./OwnedItems');
 
+const { ProductFor: GatoradeProduct } = require('./GatoradeBoosts');
 function LoadAutomaticItems(File) {
     const Document = JSON.parse(Fs.readFileSync(File, 'utf8'));
     if (
@@ -34,8 +35,16 @@ function InventoryFor(Context = {}) {
     const Key = OwnedKey(Context);
     if (!Key) return [];
     const Merged = new Map();
-    for (const Entry of Context.AutomaticOwnedItems || []) Merged.set(Number(Entry.item) >>> 0, Entry);
-    for (const Entry of ListOwnedItems(Context.OwnedItems, Key)) Merged.set(Number(Entry.item) >>> 0, Entry);
+    for (const Entry of Context.AutomaticOwnedItems || []) {
+        const Item = Number(Entry.item) >>> 0;
+        if (!GatoradeProduct(Item)) Merged.set(Item, Entry);
+    }
+    // Keep historical purchase records on disk, but consumables are no longer
+    // permanent instances: their remaining uses live in GatoradeBoosts.
+    for (const Entry of ListOwnedItems(Context.OwnedItems, Key)) {
+        const Item = Number(Entry.item) >>> 0;
+        if (!GatoradeProduct(Item)) Merged.set(Item, Entry);
+    }
     return [...Merged.values()];
 }
 

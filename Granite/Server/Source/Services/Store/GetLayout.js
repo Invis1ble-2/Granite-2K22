@@ -1,77 +1,40 @@
 // Copyright (c) 2026 Celestial
 // Licensed under the PolyForm Noncommercial License 1.0.0. See LICENSE.md.
-
 'use strict';
 
 const Zlib = require('node:zlib');
 const { Builder } = require('../../Codec/FieldList');
 const { Crc32 } = require('../../Core/Crc32');
+const { StoreDefinitions } = require('./StoreDefinitions2K22');
 
 const Fields = Object.freeze({
     LayoutJsonSize: 0x6cb1bd26,
     LayoutJsonCompressed: 0xe1e79306,
 });
 
-const Sections = Object.freeze({
-    NBASTORE: [
-        ['NBA_SHIRTS_ALL', 'NBA Shirts'],
-        ['NBA_MITCHELL_NESS', 'Mitchell & Ness'],
-        ['NBA_OTHER_TEAM_HATS', 'Team Hats'],
-        ['NBA_ACCESSORIES', 'NBA Accessories'],
-        ['NBA_GLASSES', 'NBA Glasses'],
-        ['NBA_ALLSTAR', 'All-Star'],
-        ['NBA_HOLIDAY', 'Holiday'],
-        ['NBA_MISC1', 'NBA Collection'],
-        ['NBA_MISC2', 'More NBA Gear'],
-    ],
-    SWAGS: [
-        ['SWAG_SHIRTS', 'Shirts'],
-        ['SWAG_PREMIUM_SHIRTS', 'Premium Shirts'],
-        ['SWAG_HOODIES_AND_OUTERWEAR', 'Hoodies & Outerwear'],
-        ['SWAG_PANTS_AND_SHORTS', 'Pants & Shorts'],
-        ['SWAG_HATS', 'Hats'],
-        ['SWAG_ACCESSORIES', 'Accessories'],
-        ['SWAG_JEWELRY', 'Jewelry'],
-        ['SWAG_GLASSES', 'Glasses'],
-        ['SWAG_EQUIPMENT', 'Equipment'],
-        ['SWAG_NIKE', 'Nike'],
-        ['SWAG_JORDAN', 'Jordan'],
-        ['SWAG_ADIDAS', 'adidas'],
-        ['SWAG_PROAM', 'Pro-Am'],
-        ['SWAG_HOLIDAY', 'Holiday'],
-        ['SWAG_MISC1', 'Collection'],
-        ['SWAG_MISC2', 'More Gear'],
-    ],
-    FOOTLOCKER: [
-        ['SHOE_NBA', 'NBA Shoes'],
-        ['SHOE_MISC1', 'Shoe Collection'],
-        ['SHOE_MISC2', 'More Shoes'],
-    ],
-});
-
-function LayoutDocument() {
-    return Object.fromEntries(
-        Object.entries(Sections).map(([Store, SectionsValue]) => {
-            const Pages = [];
-            for (let Offset = 0; Offset < SectionsValue.length; Offset += 6) {
-                const Cells = SectionsValue.slice(Offset, Offset + 6).map(([Category, Title]) => ({
-                    store_type: Category,
-                    cell_size: 'ONE_THIRD',
-                    title: Title,
-                    desc: '',
-                    logo_guid: '',
-                }));
-                Pages.push([Cells.slice(0, 3), ...(Cells.length > 3 ? [Cells.slice(3)] : [])]);
-            }
-            return [Store, Pages];
-        }),
-    );
+function LayoutDocument(Catalog = null) {
+    return Object.fromEntries(StoreDefinitions.map(Store => {
+        // Use final sale-view membership, including resource/price/conflict filtering.
+        const VisibleCells = Catalog ? Catalog.GetCellsForPage(Store.Page) : Store.Cells;
+        const Cells = VisibleCells.map(Cell => ({
+            cell_size: 'ONE_BY_ONE', cell_type: 'TAG', store_type: Store.Root,
+            description: '', title: Cell.Title, flag: 'NONE',
+            tag: Cell.Tag, logo_guid: '',
+        }));
+        const Pages = [];
+        for (let Offset = 0; Offset < Cells.length; Offset += 6) {
+            const Page = Cells.slice(Offset, Offset + 6);
+            Pages.push([Page.slice(0, 3), ...(Page.length > 3 ? [Page.slice(3)] : [])]);
+        }
+        return [Store.Root, Pages];
+    }));
 }
 
-const Document = Buffer.from(`${JSON.stringify(LayoutDocument())}\0`, 'utf8');
-const Compressed = Zlib.deflateSync(Document, { level: 9 });
+const RepliesByCatalog = new WeakMap();
 
-function Build() {
+function BuildPacket(Catalog) {
+    const Document = Buffer.from(`${JSON.stringify(LayoutDocument(Catalog))}\0`, 'utf8');
+    const Compressed = Zlib.deflateSync(Document, { level: 9 });
     return new Builder()
         .AddU64(Fields.LayoutJsonSize, BigInt(Document.length))
         .AddBinary(Fields.LayoutJsonCompressed, Compressed)
@@ -79,10 +42,13 @@ function Build() {
         .Build();
 }
 
-module.exports = {
-    Build,
-    GetLayout: Build,
-    Fields,
-    LayoutDocument,
-    Status: 'EXACT_2K19_ENVELOPE_COMPATIBILITY_CATEGORY_LAYOUT',
-};
+const DefaultReply = BuildPacket(null);
+
+function Build(Input = {}, Context = {}) {
+    const Catalog = Context.StoreCatalog2K22;
+    if (!Catalog) return DefaultReply;
+    if (!RepliesByCatalog.has(Catalog)) RepliesByCatalog.set(Catalog, BuildPacket(Catalog));
+    return RepliesByCatalog.get(Catalog);
+}
+
+module.exports = { Build, GetLayout: Build, Fields, LayoutDocument, Status: '2K22_NATIVE_BRAND_STORE_LAYOUT' };

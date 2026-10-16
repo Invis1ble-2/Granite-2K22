@@ -10,6 +10,7 @@ const { Name, Level, CurrentCap, Cap, AttributesFor, CareerKey } = require('./Co
 const GrindPoints = require('../GrindPoints/State');
 const Badges = require('../Badges/State');
 const BadgeReport = require('../Badges/Report');
+const Gatorade = require('../Gatorade');
 
 const FeatureUnlock = 0xae72731a;
 const JumpshotCreator = 0xf1a265a3;
@@ -87,6 +88,7 @@ function Build(Input, Context = {}) {
     }
     BadgeReport.Accept(Input, Context);
     Badges.Append(Reply, Context);
+    Gatorade.Append(Reply, Input, Context);
     return Reply.AddU32(Crc32('RESULT'), Crc32('SUCCESS')).Build();
 }
 

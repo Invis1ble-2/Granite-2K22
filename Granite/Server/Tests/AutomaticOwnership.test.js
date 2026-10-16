@@ -13,6 +13,7 @@ const { OwnedKey } = require('../Source/Storage/OwnedItems');
 const Inventory = require('../Source/Services/Inventory/GetWithTag');
 const StoreOwned = require('../Source/Services/Store/GetOwnedItems');
 const CatalogPath = Path.resolve(__dirname, '../Storage/Inventory/AutomaticCatalog.json');
+const GatoradeIds = [0x4c99dc6d, 0xe80626b4, 0xed175be5, 0x45a9e847, 0xf713373a, 0x88d81a73];
 
 Test('manifest archive import contains native ownership IDs, including direct clothing and shoe references', () => {
     const Catalog = require(CatalogPath);
@@ -42,14 +43,14 @@ Test('automatic grants merge without debiting VC, rewriting purchases, or leakin
     Context.OwnedItems.set(OwnedKey(Context), [Purchased, Exclusive]);
     const Before = JSON.stringify([...Context.OwnedItems]);
     const Result = InventoryFor(Context);
-    Assert.equal(Result.length, 28471);
+    Assert.equal(Result.length, 28465);
     Assert.equal(
         Result.find((Entry) => Entry.item === Purchased.item),
         Purchased,
     );
     Assert.ok(Result.includes(Exclusive));
     const Other = InventoryFor({ ...Context, userId: 43n });
-    Assert.equal(Other.length, 28470);
+    Assert.equal(Other.length, 28464);
     Assert.ok(!Other.includes(Exclusive));
     Assert.deepEqual(InventoryFor({ ...Context, userId: null }), []);
     Assert.equal(JSON.stringify([...Context.OwnedItems]), Before);
@@ -57,7 +58,7 @@ Test('automatic grants merge without debiting VC, rewriting purchases, or leakin
     Assert.deepEqual(InventoryFor({ ...Context, AutomaticOwnedItems: [] }), [Purchased, Exclusive]);
 });
 
-Test('all 28,470 items survive the native compressed inventory response without truncation', () => {
+Test('all 28,464 eligible automatic grants survive the native inventory response without truncation', () => {
     const AutomaticOwnedItems = LoadAutomaticItems(CatalogPath);
     const Context = { userId: 42n, AutomaticOwnedItems, OwnedItems: new Map() };
     const Reply = Inventory.Build({}, Context);
@@ -85,10 +86,41 @@ Test('all 28,470 items survive the native compressed inventory response without 
     });
     Assert.deepEqual(
         Received,
-        AutomaticOwnedItems.map((Entry) => Number(Entry.item)),
+        AutomaticOwnedItems.map((Entry) => Number(Entry.item)).filter(Item => !GatoradeIds.includes(Item)),
     );
     const Legacy = Parse(StoreOwned.Build({}, Context).Body)
         .Fields.filter((Field) => Field.Crc === 0xfd76cfbd)
         .map((Field) => Field.Data1);
     Assert.deepEqual(Legacy, Received);
+});
+
+Test('only the six native Gatorade IDs are excluded from the real automatic catalog', () => {
+    const AutomaticOwnedItems = LoadAutomaticItems(CatalogPath);
+    const Before = JSON.stringify(AutomaticOwnedItems);
+    const Context = { userId: 42n, AutomaticOwnedItems };
+    const Result = InventoryFor(Context);
+    Assert.equal(AutomaticOwnedItems.length, 28470, 'source catalog is not edited');
+    Assert.equal(Result.length, 28464);
+    Assert.deepEqual(AutomaticOwnedItems.filter(Entry => !Result.includes(Entry))
+        .map(Entry => Number(Entry.item)).sort((A, B) => A - B), [...GatoradeIds].sort((A, B) => A - B));
+    Assert.equal(JSON.stringify(AutomaticOwnedItems), Before);
+});
+
+Test('consumable filtering normalizes IDs and preserves historical records without permanent instances', () => {
+    for (const Encode of [Id => Id, Id => String(Id), Id => `0x${Id.toString(16)}`, Id => `0x${Id.toString(16).toUpperCase()}`]) {
+        const Permanent = { item: '0x7C875DB3', price: '0' };
+        const AutomaticOwnedItems = [...GatoradeIds.map(Id => ({ item: Encode(Id) })), Permanent];
+        const OwnedItems = new Map();
+        const Context = { userId: 42n, AutomaticOwnedItems, OwnedItems };
+        const Purchased = GatoradeIds.map(Id => ({ item: Encode(Id), price: '500', purchaseType: '0x00000016' }));
+        OwnedItems.set(OwnedKey(Context), Purchased);
+        const Before = JSON.stringify({ automatic: AutomaticOwnedItems, owned: [...OwnedItems] });
+        const Result = InventoryFor(Context);
+        Assert.deepEqual(Result, [Permanent]);
+        Assert.deepEqual(OwnedItems.get(OwnedKey(Context)), Purchased, 'historical records remain unchanged');
+        Assert.deepEqual(InventoryFor({ ...Context, userId: 43n }), [Permanent]);
+        Assert.deepEqual(InventoryFor({ ...Context, userId: null }), []);
+        Assert.deepEqual(InventoryFor({ ...Context, AutomaticOwnedItems: [] }), []);
+        Assert.equal(JSON.stringify({ automatic: AutomaticOwnedItems, owned: [...OwnedItems] }), Before);
+    }
 });

@@ -8,13 +8,19 @@ const Path = require('node:path');
 
 const Pattern = /^[0-9A-Fa-f]{2}\/[0-9A-Fa-f]{2}\/[0-9A-Fa-f-]{16,64}$/;
 const Neighborhood = /^neighborhood_[0-9A-Fa-f]{8}\.bin$/;
+const AssetPathPattern = /^(?:store\/thumbnails|clothing|cdn\/store)\/[A-Za-z0-9._/-]+\.iff$/i;
+
+function ManifestAssetPath(Relative) {
+    if (typeof Relative !== 'string' || !AssetPathPattern.test(Relative)) return false;
+    return Relative.split('/').every(Segment => Segment && Segment !== '.' && Segment !== '..');
+}
 
 function Normalise(Url) {
     const Pathname = String(Url).split('?')[0];
     const Match = Pathname.match(/\/2k19\/(.+)$/i);
     if (!Match) return null;
     const Relative = Match[1].replace(/^\/+/, '');
-    return Pattern.test(Relative) || Neighborhood.test(Relative) ? Relative : null;
+    return Pattern.test(Relative) || Neighborhood.test(Relative) || ManifestAssetPath(Relative) ? Relative : null;
 }
 
 function Read(Url, Root) {
@@ -26,4 +32,4 @@ function Read(Url, Root) {
     return Fs.readFileSync(File);
 }
 
-module.exports = { Normalise, Read, Status: 'REAL_LOCAL_CDN_ONLY' };
+module.exports = { Normalise, ManifestAssetPath, Read, Status: 'LOCAL_CDN_AND_2K22_MANIFEST_ASSETS' };

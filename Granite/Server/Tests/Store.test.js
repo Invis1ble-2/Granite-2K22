@@ -11,6 +11,7 @@ const { Crc32 } = require('../Source/Core/Crc32');
 const Prices = require('../Source/Services/VirtualCurrency/GetPrices');
 const Layout = require('../Source/Services/Store/GetLayout');
 const Items = require('../Source/Services/Store/GetItems');
+const Overview = require('../Source/Services/Store/GetOverview');
 
 Test('store price completion includes the mandatory native date without clearing local shoes', () => {
     const Res = Parse(Items.Build({}).Body);
@@ -101,15 +102,8 @@ Test('prices keep configured amounts and support empty and maximum-size requests
     Assert.equal(Parse(Prices.Build({ Parsed: Parse(new Builder().Build().Body) }).Body).Fields.length, 1);
 });
 
-const Categories = new Set([
-    0xd953f8bc, 0x00c49e57, 0xbb1a80fa, 0xd9e064d1, 0xa937ceb0, 0x8d9b9da6, 0xfd07cb52, 0x5c95cd10, 0x72b31ebc,
-    0x588bf65e, 0x72c774aa, 0x9cd64d7e, 0x05df1cc4, 0x9371535c, 0x88e9efaf, 0x9aa08066, 0xd6002dd2, 0x6304189e,
-    0x619ef67a, 0x856f5f0a, 0x960b8cac, 0x04aa3e33, 0x76580558, 0x9a557cde, 0x44cf349c, 0x3dd459c8, 0xc5ae972c,
-    0xa9ec3551, 0xf4cec462, 0x5c7db4fc, 0x0dc7b9f7, 0x7e3798de, 0xe6c907b9, 0xbf668063, 0xc4a98591, 0x01570216,
-    0x675ffa4a, 0x4eaa31e6, 0x5a059a6c, 0xb9f6dba4, 0x59a45d55, 0x264aca1e, 0xbf439ba4, 0x6492d904, 0x1268ae2c,
-    0xe4e5c9f4, 0xb1989422, 0xe9f6cb98, 0xfa9a761c, 0x4f2c3cfe, 0x8d8c9c6d, 0xe76e2f0f, 0x6dbac3c5, 0xf4b3927f,
-    0xc523d5a3, 0xf94ba394, 0xd246413a,
-]);
+const { StoreDefinitions, Groups } = require('../Source/Services/Store/StoreDefinitions2K22');
+const StoreRoots = new Set(StoreDefinitions.map(Store => Store.Root));
 
 Test('layout inflates into bounded native pages, rows and recognized category cells', () => {
     const Reply = Layout.Build();
@@ -122,18 +116,50 @@ Test('layout inflates into bounded native pages, rows and recognized category ce
     Assert.equal(BigInt(Raw.length), GetU64(Res.Fields, 0x6cb1bd26));
     Assert.equal(Raw.at(-1), 0);
     const LayoutData = JSON.parse(Raw.subarray(0, -1).toString('utf8'));
-    Assert.deepEqual(Object.keys(LayoutData), ['NBASTORE', 'SWAGS', 'FOOTLOCKER']);
-    for (const Pages of Object.values(LayoutData)) {
-        Assert.ok(Pages.length > 0);
+    Assert.deepEqual(Object.keys(LayoutData), [...StoreRoots]);
+    for (const [Store, Pages] of Object.entries(LayoutData)) {
+        Assert.ok(StoreRoots.has(Store));
+        const Definition = StoreDefinitions.find(Definition => Definition.Root === Store);
+        Assert.equal(Pages.length, Math.ceil(Definition.Cells.length / 6));
+        for (const Page of Pages) {
+            Assert.ok(Page.length > 0 && Page.length <= 2);
+            Assert.ok(Page.every(Row => Row.length > 0 && Row.length <= 3));
+        }
         const Cells = Pages.flat(2);
-        Assert.ok(Cells.length > 0 && Cells.length <= 57);
+        Assert.equal(Cells.length, Definition.Cells.length);
         for (const Cell of Cells) {
-            Assert.ok(Categories.has(Crc32(Cell.store_type)), Cell.store_type);
-            Assert.equal(Crc32(Cell.cell_size), 0x259afd92);
+            Assert.equal(Cell.store_type, Store);
+            Assert.equal(Cell.cell_size, 'ONE_BY_ONE');
+            Assert.equal(Crc32(Cell.cell_size), 0xd9fcbd59);
+            Assert.equal(Cell.cell_type, 'TAG');
+            Assert.equal(Cell.flag, 'NONE');
+            Assert.equal(Crc32(Cell.flag), 0x4905ed7b);
+            Assert.equal(Cell.description, '');
+            Assert.equal(Cell.logo_guid, '');
             Assert.ok(Cell.title.length > 0 && Cell.title.length < 64);
-            Assert.equal(typeof Cell.desc, 'string');
-            Assert.equal(typeof Cell.logo_guid, 'string');
+            Assert.ok(Definition.Cells.some(Defined => Defined.Tag === Cell.tag && Defined.Title === Cell.title));
+            Assert.ok(!Cell.title.startsWith('Local '));
         }
     }
     Assert.equal(Reply.FieldListSize, Reply.Body.length);
+});
+
+function OverviewInput(Page) {
+    const { Body } = new Builder().AddString16(0x952ef509, Page).Build();
+    Body.writeUInt32BE((Page.length + 1) * 2, 12); // Native request length is bytes.
+    return { Body, Parsed: Parse(Body) };
+}
+
+Test('2K22 native local-store overview pages are enabled without inventing online item counts', () => {
+    for (const Page of Overview.LocalStorePages) {
+        const Reply = Parse(Overview.Build(OverviewInput(Page)).Body).Fields;
+        Assert.equal(GetField(Reply, Overview.Fields.Available).Data1, 1, Page);
+        Assert.equal(GetU64(Reply, Overview.Fields.Count), 0n, 'no server-side extra items are advertised');
+        Assert.equal(GetU64(Reply, Overview.Fields.CacheSeconds), 60n);
+    }
+    for (const Page of ['TYPE:BOOSTS', 'PAGE:COULD_BE_ANYTHING', 'PAGE:UNKNOWN']) {
+        const Reply = Parse(Overview.Build(OverviewInput(Page)).Body).Fields;
+        Assert.equal(GetField(Reply, Overview.Fields.Available).Data1, 0, Page);
+    }
+    Assert.equal(GetField(Parse(Overview.Build().Body).Fields, Overview.Fields.Available).Data1, 0);
 });

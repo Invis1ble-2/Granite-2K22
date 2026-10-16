@@ -4,8 +4,11 @@
 'use strict';
 
 const Zlib = require('node:zlib');
-const { Builder, DateToVCDate } = require('../../Codec/FieldList');
+const { Builder, Parse, Types, DateToVCDate } = require('../../Codec/FieldList');
 const { Crc32 } = require('../../Core/Crc32');
+const Overview = require('./GetOverview');
+const { InventoryFor } = require('../../Storage/AutomaticOwnership');
+const Wire2K22 = require('./Wire2K22');
 
 const Fields = Object.freeze({
     Date: 0x31de3808,
@@ -17,7 +20,20 @@ const Fields = Object.freeze({
 });
 const ChunkSize = 512;
 
-function Build(Input, Context = {}) {
+function Build(Input = {}, Context = {}) {
+    const CatalogReply = Context.StoreCatalog2K22?.GetReplyForPage(Overview.RequestedPage(Input));
+    if (CatalogReply) {
+        // FUN_1405B3050 reads inventory even when the item-cache version is unchanged.
+        // Rebuild only the envelope: the shared catalog packet must remain account-free.
+        const Reply = new Builder();
+        for (const Field of Parse(CatalogReply.Body).Fields) {
+            if (Field.Type === Types.Binary) Reply.AddBinary(Field.Crc, Field.value);
+            else Reply.Record(Field.Crc, Field.Type, Field.Data1, Field.Data2);
+        }
+        Wire2K22.AppendInventory(Reply, InventoryFor(Context));
+        Reply.Fields.sort((A, B) => A.Crc - B.Crc);
+        return Reply.Build();
+    }
     const Reply = new Builder().AddVCDate(Fields.Date, DateToVCDate());
     const Updates = Context.VcPrices instanceof Map ? [...Context.VcPrices] : [];
     for (let Offset = 0; Offset < Updates.length; Offset += ChunkSize) {
@@ -41,5 +57,5 @@ module.exports = {
     GetItems: Build,
     Fields,
     EndpointIds: [0x25e937ad],
-    Status: 'EXACT_2K19_PRICE_UPDATE_PROTOCOL_NATIVE_CATALOG_FALLBACK',
+    Status: '2K22_NATIVE_STORE_ITEMS_WITH_2K19_PRICE_UPDATE_FALLBACK',
 };

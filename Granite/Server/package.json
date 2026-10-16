@@ -12,6 +12,6 @@
   },
   "scripts": {
     "start": "node Source/Server.js",
-    "test": "node --test Tests/"
+    "test": "node --test"
   }
 }

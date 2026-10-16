@@ -5,6 +5,7 @@
 
 const Fs = require('node:fs');
 const Path = require('node:path');
+const StoreSnapshot = require('./StoreResponseSnapshot');
 const { TryParse, Serializable } = require('../Codec/FieldList');
 
 let Sequence = 0;
@@ -46,9 +47,27 @@ function Save(Directory, Req, Body) {
     return Base;
 }
 
+function IsStoreInventoryRequest(Req) {
+    return /^\/nba\/2k19\/StoreV4\/v4\/(get_owned_items|get_items)(?:\?|$)/i.test(Req?.url || '');
+}
+
+function SaveStoreSnapshot(Base, Req, Body, Declared) {
+    const Snapshot = StoreSnapshot.Save(Path.dirname(Base), Body, Declared);
+    const Sidecar = {
+        CapturedAt: new Date().toISOString(),
+        RequestId: Req?.headers?.['vc-request-id'] || '',
+        BodyBytes: Body.length,
+        DeclaredFieldListBytes: Declared || null,
+        ResponseBody: Snapshot,
+        Parse: { Status: 'snapshot', Reason: 'Use Capture.ReadResponse(sidecarPath) to restore and verify the complete response.' },
+    };
+    Fs.writeFileSync(`${Base}.response.json`, `${JSON.stringify(Sidecar, null, 2)}\n`, 'utf8');
+}
+
 function SaveResponse(Base, Req, Res) {
     const Body = Buffer.isBuffer(Res?.Body) ? Res.Body : Buffer.alloc(0);
     const Declared = Number(Res?.FieldListSize || Body.length || 0);
+    if (IsStoreInventoryRequest(Req)) return SaveStoreSnapshot(Base, Req, Body, Declared);
     const Parsed = Body.length ? TryParse(Body, { FieldListSize: Declared || undefined }) : null;
     const Sidecar = {
         CapturedAt: new Date().toISOString(),
@@ -65,4 +84,4 @@ function SaveResponse(Base, Req, Res) {
     Fs.writeFileSync(`${Base}.response.json`, `${JSON.stringify(Sidecar, null, 2)}\n`, 'utf8');
 }
 
-module.exports = { Save, SaveResponse };
+module.exports = { Save, SaveResponse, ReadResponse: StoreSnapshot.ReadResponse };

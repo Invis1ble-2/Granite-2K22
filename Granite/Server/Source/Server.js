@@ -18,6 +18,9 @@ const { LoadAutomaticItems } = require('./Storage/AutomaticOwnership');
 const { LoadCatalogPrices } = require('./Storage/StoreCatalog');
 const { LoadCareerOveralls, SaveCareerOveralls, RecordOverall } = require('./Storage/CareerOverall');
 const { LoadCareerGrind, SaveCareerGrind } = require('./Storage/CareerGrind');
+const GatoradeStore = require('./Storage/GatoradeBoosts');
+const WalletStore = require('./Storage/Wallets');
+const Gatorade = require('./Services/MyCareer/Gatorade');
 const { CareerKey } = require('./Services/MyCareer/Attributes/Constants');
 const { CreateCelestialIdentity } = require('./Security/CelestialIdentity');
 const Login = require('./Services/Session/Login');
@@ -61,6 +64,8 @@ const StoreOverview = require('./Services/Store/GetOverview');
 const StoreOwned = require('./Services/Store/GetOwnedItems');
 const StorePurchase = require('./Services/Store/Purchase');
 const Cdn = require('./Services/Cdn/File');
+const { ManifestAssetStore } = require('./Services/Cdn/ManifestAssetStore');
+const StoreCatalog2K22Storage = require('./Storage/StoreCatalog2K22');
 const MyTeamSessionData = require('./Services/MyTeam/GameSetup/SessionData');
 const BlacktopFriends = require('./Services/Blacktop/PlayWithFriends');
 const MyTeamCollection = require('./Services/MyTeam/Collection/Actions');
@@ -107,6 +112,8 @@ function LoadConfig(File = Path.resolve(__dirname, '../Config.json')) {
             process.env.GRANITE_CAREER_OVERALL || Raw.CareerOverall || 'Storage/Career/Overall.json',
         ),
         CareerGrind: Resolve(process.env.GRANITE_CAREER_GRIND || Raw.CareerGrind || 'Storage/Career/GrindPoints.json'),
+        WalletsFile: Resolve(process.env.GRANITE_WALLETS_FILE || Raw.WalletsFile || 'Storage/Inventory/Wallets.json'),
+        GatoradeBoostsFile: Resolve(Raw.GatoradeBoostsFile || 'Storage/Inventory/GatoradeBoosts.json'),
         CareerBadgesFile: Resolve(Raw.CareerBadgesFile || 'Storage/Career/BadgePoints.json'),
         InstantMaxProgression:
             process.env.GRANITE_INSTANT_MAX_PROGRESSION === undefined
@@ -122,6 +129,16 @@ function LoadConfig(File = Path.resolve(__dirname, '../Config.json')) {
                 ? Raw.VirtualCurrencyStatic !== false
                 : !['0', 'false', 'no', 'off'].includes(String(process.env.GRANITE_VC_STATIC).trim().toLowerCase()),
         CdnDirectory: Resolve(process.env.GRANITE_CDN_DIR || Raw.CdnDirectory || 'Storage/Cdn'),
+        StoreAssetManifest:
+            process.env.GRANITE_2K22_MANIFEST || Raw.NBA2K22Manifest
+                ? Path.resolve(Root, process.env.GRANITE_2K22_MANIFEST || Raw.NBA2K22Manifest)
+                : null,
+        StoreCatalog2K22File:
+            process.env.GRANITE_2K22_STORE_CATALOG || Raw.NBA2K22StoreCatalog
+                ? Resolve(process.env.GRANITE_2K22_STORE_CATALOG || Raw.NBA2K22StoreCatalog)
+                : process.env.GRANITE_2K22_MANIFEST || Raw.NBA2K22Manifest
+                  ? Resolve('Storage/Inventory/StoreCatalog2K22.json')
+                  : null,
         EndpointTable: Resolve(
             process.env.GRANITE_ENDPOINT_TABLE || Raw.EndpointTable || 'Storage/Session/Login/Endpoints2K19.json',
         ),
@@ -347,6 +364,21 @@ function Send(Res, Req, Reply, CaptureBase = null) {
 }
 
 function CreateHandler(Config, Dependencies = {}) {
+    const ManifestAssets = Config.StoreAssetManifest ? new ManifestAssetStore(Config.StoreAssetManifest) : null;
+    let StoreCatalog2K22Instance = Dependencies.StoreCatalog2K22 || null;
+    if (!StoreCatalog2K22Instance && Config.StoreCatalog2K22File) {
+        if (!Fs.existsSync(Config.StoreCatalog2K22File)) {
+            Logger.Error(`2K22 store catalog configured but missing: ${Config.StoreCatalog2K22File}`);
+        } else {
+            try {
+                StoreCatalog2K22Instance = StoreCatalog2K22Storage.LoadFile(Config.StoreCatalog2K22File);
+                Logger.Info(`2K22 store catalog loaded: ${Config.StoreCatalog2K22File}`);
+            } catch (Failure) {
+                Logger.Error(`2K22 store catalog load failed: ${Failure.message}`);
+                throw Failure;
+            }
+        }
+    }
     const Sessions = Dependencies.Sessions || new SessionStore(Config.SessionDirectory);
     const Content = Dependencies.content || new ContentStore(Config.UserContentDirectory);
     const CareerAttributesFile =
@@ -358,7 +390,8 @@ function CreateHandler(Config, Dependencies = {}) {
         LoadAttributeProfiles(
             Config.AttributeProfiles || Path.resolve(__dirname, '../Storage/Career/AttributeProfiles.json'),
         );
-    const Wallets = Dependencies.Wallets || new Map();
+    const WalletsFile = Config.WalletsFile || Path.resolve(__dirname, '../Storage/Inventory/Wallets.json');
+    const Wallets = Dependencies.Wallets || WalletStore.Load(WalletsFile);
     const VcPrices = Dependencies.VcPrices || new Map();
     const Purchases = Dependencies.Purchases || new Map();
     const OwnedItemsFile =
@@ -411,6 +444,9 @@ function CreateHandler(Config, Dependencies = {}) {
             Logger.Error(`career grind points unavailable (${Failure.message})`);
         }
     }
+    const GatoradeBoostsFile = Config.GatoradeBoostsFile || Path.resolve(__dirname, '../Storage/Inventory/GatoradeBoosts.json');
+    // Fail closed on a corrupt ledger rather than silently resetting paid uses.
+    const GatoradeBoosts = Dependencies.GatoradeBoosts || GatoradeStore.Load(GatoradeBoostsFile);
     const CelestialIdentity = Dependencies.CelestialIdentity || CreateCelestialIdentity(LoadCelestialOptions(Config));
     const RequireVerifiedIdentity =
         Config.RequireVerifiedIdentity === true || process.env.CELESTIAL_REQUIRE_VERIFIED_IDENTITY === '1';
@@ -440,12 +476,20 @@ function CreateHandler(Config, Dependencies = {}) {
             AttributeProfiles,
             BuildProfiles: AttributeProfiles,
             Wallets,
+            SaveWallets: Dependencies.SaveWallets || (() => {
+                if (!Dependencies.Wallets) WalletStore.Save(WalletsFile, Wallets);
+            }),
             VcPrices,
             Purchases,
             ProAmTeams,
             OwnedItems,
             AutomaticOwnedItems,
             StoreCatalogPrices,
+            GatoradeBoosts,
+            SaveGatoradeBoosts: Dependencies.SaveGatoradeBoosts || (() => {
+                if (!Dependencies.GatoradeBoosts) GatoradeStore.Save(GatoradeBoostsFile, GatoradeBoosts);
+            }),
+            StoreCatalog2K22: StoreCatalog2K22Instance,
             Matchmaking: MatchmakingData,
             SaveAttributeProfiles: () => SaveAttributeProfiles(Config.AttributeProfiles, AttributeProfiles),
             SaveCareers: () => SaveCareers(CareerAttributesFile, Careers),
@@ -513,7 +557,18 @@ function CreateHandler(Config, Dependencies = {}) {
             }
         }
 
-        const CdnData = Req.method === 'GET' ? Cdn.Read(Req.url || '/', Config.CdnDirectory) : null;
+        const IsCdnRequest = Req.method === 'GET' || Req.method === 'HEAD';
+        let CdnData = IsCdnRequest ? Cdn.Read(Req.url || '/', Config.CdnDirectory) : null;
+        if (!CdnData && IsCdnRequest && ManifestAssets) {
+            const Relative = Cdn.Normalise(Req.url || '/');
+            if (Relative && Cdn.ManifestAssetPath(Relative)) {
+                try {
+                    CdnData = await ManifestAssets.Read(Relative);
+                } catch (Failure) {
+                    Logger.Error(`2K22 manifest asset read failed for ${Relative}: ${Failure.message}`);
+                }
+            }
+        }
         if (CdnData) {
             Logger.Info(`CDN served ${Req.url} (${CdnData.length} bytes)`);
             Res.writeHead(200, {
@@ -521,10 +576,10 @@ function CreateHandler(Config, Dependencies = {}) {
                 'Content-Length': String(CdnData.length),
                 Connection: 'close',
             });
-            Res.end(CdnData);
+            Res.end(Req.method === 'HEAD' ? undefined : CdnData);
             return;
         }
-        if (Req.method === 'GET' && Cdn.Normalise(Req.url || '/')) {
+        if (IsCdnRequest && Cdn.Normalise(Req.url || '/')) {
             Logger.Error(`CDN file missing: ${Req.url}`);
             Res.writeHead(404, { 'Content-Length': '0', Connection: 'close' });
             Res.end();
@@ -623,6 +678,7 @@ function CreateHandler(Config, Dependencies = {}) {
         else if (Route === 'virtualcurrency/spend_consumable_purchase')
             Reply = VCPurchase.BuildConsumable(Input, Context);
         else if (Route === 'virtualcurrency/purchase') Reply = VCPurchase.Build(Input, Context);
+        else if (Route === 'mycareerv3/decreaseboosts') Reply = Gatorade.Decrease(Input, Context);
         else if (Route === 'world/connect') Reply = WorldConnect.Build(Input, Context);
         else if (Route.startsWith('gambling/') || FullUrl.includes('/gambling/')) {
             let Pathname = Req.url || '/';

@@ -87,3 +87,29 @@ Test('login supplies the exact NBA2K19 F32 lookahead field for supported buffer 
     for (const Value of ['0', '-1', '50', '18.5', 'NaN', 'Infinity'])
         Assert.throws(() => Login.BuildParameterBlob({ GRANITE_LOCKSTEP_BUFFER_FRAMES: Value }), /1\.\.49/);
 });
+
+Test('2K22 catalog endpoint alias is opt-in, unique and never rewrites the endpoint table', T => {
+    const Root = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'granite-login-catalog-'));
+    T.after(() => Fs.rmSync(Root, { recursive: true, force: true }));
+    const File = Path.join(Root, 'endpoints.json');
+    Fs.copyFileSync(Path.resolve(__dirname, '../Storage/Session/Login/Endpoints2K19.json'), File);
+    const Before = Fs.readFileSync(File);
+    const Decode = Enabled => Parse(Zlib.gunzipSync(Login.BuildEndpointBlob(File, Enabled))).Fields;
+    Assert.equal(Decode(false).filter(F => F.Crc === 0xc493acfe && F.Data1 === 0xcd58a443).length, 0);
+    const Fields = Decode(true);
+    const At = Fields.findIndex(F => F.Crc === 0xc493acfe && F.Data1 === 0xcd58a443);
+    Assert.ok(At >= 0);
+    Assert.equal(Fields.length, 518 * 14);
+    Assert.match(Fields.slice(At, At + 14).find(F => F.Crc === 0x12bbf3ab).value, /StoreV4\/v4\/get_items$/);
+    Assert.deepEqual(Fs.readFileSync(File), Before);
+    const Document = JSON.parse(Before);
+    Document.Endpoints.push({ ...Document.Endpoints.find(E => E.EndpointId === '0x25E937AD'), EndpointId: '0xCD58A443' });
+    Fs.writeFileSync(File, JSON.stringify(Document));
+    Assert.equal(Decode(true).filter(F => F.Crc === 0xc493acfe && F.Data1 === 0xcd58a443).length, 1);
+    const Body = new Builder().AddU64(Login.Crcs.UserId, 42n).Build().Body;
+    const Reply = Login.Build({ Body, Parsed: Parse(Body) }, {
+        Sessions: new SessionStore(Path.join(Root, 'sessions')), EndpointFile: File, StoreCatalog2K22: {},
+    });
+    const Services = GetField(Parse(Reply.Body).Fields, Login.Crcs.Services);
+    Assert.ok(Parse(Zlib.gunzipSync(Services.value)).Fields.some(F => F.Crc === 0xc493acfe && F.Data1 === 0xcd58a443));
+});

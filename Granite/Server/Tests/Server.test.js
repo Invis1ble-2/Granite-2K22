@@ -80,6 +80,7 @@ Test('HTTPS dispatcher serves the NBA 2K19 MyCareer attribute routes', async (T)
         CaptureDirectory: Path.join(Root, 'captures'),
         UserContentDirectory: Path.join(Root, 'content'),
         SessionDirectory: Path.join(Root, 'sessions'),
+        WalletsFile: Path.join(Root, 'Wallets.json'),
         CdnDirectory: Path.join(Root, 'cdn'),
         EndpointTable: Path.resolve(__dirname, '../Storage/Session/Login/Endpoints2K19.json'),
         MaximumBodyBytes: 1024 * 1024,
