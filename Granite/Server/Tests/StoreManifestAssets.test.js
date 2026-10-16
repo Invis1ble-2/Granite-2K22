@@ -45,7 +45,6 @@ Test('HTTP dispatcher serves a case-insensitive 2K22 thumbnail for GET and HEAD'
         CdnDirectory: Path.join(Root, 'cdn'),
         StoreAssetManifest: Fixture.Manifest,
         MaximumBodyBytes: 1024,
-        AutomaticOwnershipCatalog: Path.join(Root, 'missing-catalog.json'),
         CareerAttributes: Path.join(Root, 'missing-careers.json'),
         AttributeProfiles: Path.join(Root, 'missing-profiles.json'),
         CareerOverall: Path.join(Root, 'missing-overalls.json'),

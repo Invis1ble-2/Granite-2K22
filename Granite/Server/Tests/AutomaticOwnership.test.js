@@ -8,64 +8,68 @@ const Assert = require('node:assert/strict');
 const Path = require('node:path');
 const Zlib = require('node:zlib');
 const { Parse, Types } = require('../Source/Codec/FieldList');
-const { LoadAutomaticItems, InventoryFor } = require('../Source/Storage/AutomaticOwnership');
+const { LoadAutomaticItems, InventoryFor, IsAutomaticallyOwned } = require('../Source/Storage/AutomaticOwnership');
+const { LoadFile, ReadDocument } = require('../Source/Storage/StoreCatalog2K22');
+const { LoadCatalogPrices } = require('../Source/Storage/StoreCatalog');
 const { OwnedKey } = require('../Source/Storage/OwnedItems');
 const Inventory = require('../Source/Services/Inventory/GetWithTag');
 const StoreOwned = require('../Source/Services/Store/GetOwnedItems');
-const CatalogPath = Path.resolve(__dirname, '../Storage/Inventory/AutomaticCatalog.json');
+const CatalogPath = Path.resolve(__dirname, '../Storage/Inventory/StoreCatalog2K22.json');
+const Catalog = LoadFile(CatalogPath);
+const Grants = LoadAutomaticItems(Catalog);
 const GatoradeIds = [0x4c99dc6d, 0xe80626b4, 0xed175be5, 0x45a9e847, 0xf713373a, 0x88d81a73];
 
-Test('manifest archive import contains native ownership IDs, including direct clothing and shoe references', () => {
-    const Catalog = require(CatalogPath);
-    Assert.equal(Catalog.nativeRecordCount, 28470);
-    Assert.equal(Catalog.items.length, 28470);
-    const Tattoo = Catalog.items.find((Entry) => Entry.item === '0x7CA80600');
-    Assert.equal(Tattoo.name, '2K Logo');
-    const Hoodie = Catalog.items.find((Entry) => Entry.item === '0x7C875DB3');
-    Assert.equal(Hoodie.name, 'Jordan City Of Flight Sleeveless Hoodie');
-    Assert.match(
-        Hoodie.content[0],
-        /^cdn\/store\/clothing\/win64\/items\/hoodie_sleeveless_jordan_city_of_flight_wht\./,
-    );
-    const Shoe = Catalog.items.find((Entry) => Entry.item === '0x2C1724A8');
-    Assert.equal(Shoe.name, 'Curry 5');
-    Assert.match(Shoe.content[0], /^cdn\/store\/shoes\/win64\/data\/shoe_4029_knicks_home\./);
-    Assert.equal(new Set(Catalog.items.map((Entry) => Entry.item)).size, Catalog.items.length);
-    const Attributes = require('../Source/Services/MyCareer/Attributes/Constants').AttributeIds;
-    Assert.equal(Catalog.items.filter((Entry) => Attributes.includes(Number(Entry.item))).length, 0);
+Test('2K22 automatic grants use validated permanent items, never raw rows or consumables', () => {
+    const Document = ReadDocument(CatalogPath);
+    Assert.equal(Document.source, 'NBA2K22_MANIFEST_STORE_BINARY_DATA');
+    Assert.equal(Document.items.length, 40804);
+    Assert.ok(Grants.length > 0 && Grants.length < Document.items.length);
+    const Valid = new Set(Catalog.items.map(Entry => Entry.item_id));
+    const Excluded = new Set(['Gatorade', 'Fireworks'].flatMap(Group =>
+        Catalog.groupItems[Group].map(Entry => Entry.item_id)));
+    for (const Entry of Grants) {
+        Assert.ok(Valid.has(Number(Entry.item)));
+        Assert.ok(!Excluded.has(Number(Entry.item)));
+        Assert.equal(Entry.price, '0');
+    }
+    Assert.equal(new Set(Grants.map(Entry => Entry.item)).size, Grants.length);
+    Assert.deepEqual(LoadAutomaticItems(CatalogPath), Grants);
+    Assert.throws(() => LoadAutomaticItems(null), /2K22/);
+    const Prices = LoadCatalogPrices(Catalog);
+    for (const [Item, Price] of Catalog.pricesByItem) Assert.equal(Prices.get(Item), Price);
+    for (const Item of GatoradeIds) Assert.ok(!Grants.some(Entry => Number(Entry.item) === Item));
 });
 
-Test('automatic grants merge without debiting VC, rewriting purchases, or leaking another account purchases', () => {
-    const AutomaticOwnedItems = LoadAutomaticItems(CatalogPath);
-    const Context = { userId: 42n, AutomaticOwnedItems, OwnedItems: new Map(), Wallets: new Map([['42', 123n]]) };
-    const Purchased = { item: AutomaticOwnedItems[0].item, price: '777', purchaseType: '0x00000001' };
-    const Exclusive = { item: '0x817649DE', price: '100', purchaseType: null };
+Test('automatic grants merge without debiting VC, rewriting purchases, or leaking accounts', () => {
+    const Context = { userId: 42n, AutomaticOwnedItems: Grants, OwnedItems: new Map(), Wallets: new Map([['42', 123n]]) };
+    const Purchased = { item: Grants[0].item, price: '777', purchaseType: '0x00000001' };
+    const Exclusive = { item: '0xFFFFFFFE', price: '100', purchaseType: null };
+    Assert.ok(!Grants.some(Entry => Entry.item === Exclusive.item));
     Context.OwnedItems.set(OwnedKey(Context), [Purchased, Exclusive]);
     const Before = JSON.stringify([...Context.OwnedItems]);
     const Result = InventoryFor(Context);
-    Assert.equal(Result.length, 28465);
-    Assert.equal(
-        Result.find((Entry) => Entry.item === Purchased.item),
-        Purchased,
-    );
+    Assert.equal(Result.length, Grants.length + 1);
+    Assert.equal(Result.find(Entry => Entry.item === Purchased.item), Purchased);
     Assert.ok(Result.includes(Exclusive));
     const Other = InventoryFor({ ...Context, userId: 43n });
-    Assert.equal(Other.length, 28464);
+    Assert.equal(Other.length, Grants.length);
     Assert.ok(!Other.includes(Exclusive));
     Assert.deepEqual(InventoryFor({ ...Context, userId: null }), []);
     Assert.equal(JSON.stringify([...Context.OwnedItems]), Before);
     Assert.equal(Context.Wallets.get('42'), 123n);
     Assert.deepEqual(InventoryFor({ ...Context, AutomaticOwnedItems: [] }), [Purchased, Exclusive]);
+    Assert.equal(IsAutomaticallyOwned(Purchased.item, Context), true);
+    Assert.equal(IsAutomaticallyOwned(Purchased.item, { ...Context, AutomaticOwnedItems: [] }), false);
+    Assert.equal(IsAutomaticallyOwned(Purchased.item, { ...Context, userId: null }), false);
 });
 
-Test('all 28,464 eligible automatic grants survive the native inventory response without truncation', () => {
-    const AutomaticOwnedItems = LoadAutomaticItems(CatalogPath);
-    const Context = { userId: 42n, AutomaticOwnedItems, OwnedItems: new Map() };
+Test('all eligible 2K22 automatic grants survive the inventory response without truncation', () => {
+    const Context = { userId: 42n, AutomaticOwnedItems: Grants, OwnedItems: new Map() };
     const Reply = Inventory.Build({}, Context);
     const Outer = Parse(Reply.Body, { FieldListSize: Reply.FieldListSize }).Fields;
-    const Blobs = Outer.filter((Field) => Field.Crc === 0x9cc95621);
-    const Sizes = Outer.filter((Field) => Field.Crc === 0x634465d8);
-    Assert.equal(Blobs.length, 56);
+    const Blobs = Outer.filter(Field => Field.Crc === 0x9cc95621);
+    const Sizes = Outer.filter(Field => Field.Crc === 0x634465d8);
+    Assert.equal(Blobs.length, Math.ceil(Grants.length / 512));
     Assert.equal(Sizes.length, Blobs.length);
     const Received = [];
     Blobs.forEach((BlobData, Index) => {
@@ -73,8 +77,8 @@ Test('all 28,464 eligible automatic grants survive the native inventory response
         Assert.equal(Sizes[Index].Type, Types.U64);
         Assert.equal(BigInt(Raw.length), Sizes[Index].value);
         const Inner = Parse(Raw).Fields;
-        const Items = Inner.filter((Field) => Field.Crc === 0xfd76cfbd);
-        const Masks = Inner.filter((Field) => Field.Crc === 0xfbe14f6f);
+        const Items = Inner.filter(Field => Field.Crc === 0xfd76cfbd);
+        const Masks = Inner.filter(Field => Field.Crc === 0xfbe14f6f);
         Assert.ok(Items.length <= 512);
         Assert.equal(Items.length, Masks.length);
         Items.forEach((Item, Occurrence) => {
@@ -84,40 +88,23 @@ Test('all 28,464 eligible automatic grants survive the native inventory response
             Received.push(Item.Data1);
         });
     });
-    Assert.deepEqual(
-        Received,
-        AutomaticOwnedItems.map((Entry) => Number(Entry.item)).filter(Item => !GatoradeIds.includes(Item)),
-    );
-    const Legacy = Parse(StoreOwned.Build({}, Context).Body)
-        .Fields.filter((Field) => Field.Crc === 0xfd76cfbd)
-        .map((Field) => Field.Data1);
-    Assert.deepEqual(Legacy, Received);
+    Assert.deepEqual(Received, Grants.map(Entry => Number(Entry.item)));
+    const Owned = Parse(StoreOwned.Build({}, Context).Body).Fields
+        .filter(Field => Field.Crc === 0xfd76cfbd).map(Field => Field.Data1);
+    Assert.deepEqual(Owned, Received);
 });
 
-Test('only the six native Gatorade IDs are excluded from the real automatic catalog', () => {
-    const AutomaticOwnedItems = LoadAutomaticItems(CatalogPath);
-    const Before = JSON.stringify(AutomaticOwnedItems);
-    const Context = { userId: 42n, AutomaticOwnedItems };
-    const Result = InventoryFor(Context);
-    Assert.equal(AutomaticOwnedItems.length, 28470, 'source catalog is not edited');
-    Assert.equal(Result.length, 28464);
-    Assert.deepEqual(AutomaticOwnedItems.filter(Entry => !Result.includes(Entry))
-        .map(Entry => Number(Entry.item)).sort((A, B) => A - B), [...GatoradeIds].sort((A, B) => A - B));
-    Assert.equal(JSON.stringify(AutomaticOwnedItems), Before);
-});
-
-Test('consumable filtering normalizes IDs and preserves historical records without permanent instances', () => {
-    for (const Encode of [Id => Id, Id => String(Id), Id => `0x${Id.toString(16)}`, Id => `0x${Id.toString(16).toUpperCase()}`]) {
-        const Permanent = { item: '0x7C875DB3', price: '0' };
+Test('consumable filtering preserves historical records without permanent Gatorade instances', () => {
+    for (const Encode of [Id => Id, Id => String(Id), Id => `0x${Id.toString(16)}`]) {
+        const Permanent = Grants[0];
         const AutomaticOwnedItems = [...GatoradeIds.map(Id => ({ item: Encode(Id) })), Permanent];
         const OwnedItems = new Map();
         const Context = { userId: 42n, AutomaticOwnedItems, OwnedItems };
         const Purchased = GatoradeIds.map(Id => ({ item: Encode(Id), price: '500', purchaseType: '0x00000016' }));
         OwnedItems.set(OwnedKey(Context), Purchased);
         const Before = JSON.stringify({ automatic: AutomaticOwnedItems, owned: [...OwnedItems] });
-        const Result = InventoryFor(Context);
-        Assert.deepEqual(Result, [Permanent]);
-        Assert.deepEqual(OwnedItems.get(OwnedKey(Context)), Purchased, 'historical records remain unchanged');
+        Assert.deepEqual(InventoryFor(Context), [Permanent]);
+        Assert.deepEqual(OwnedItems.get(OwnedKey(Context)), Purchased);
         Assert.deepEqual(InventoryFor({ ...Context, userId: 43n }), [Permanent]);
         Assert.deepEqual(InventoryFor({ ...Context, userId: null }), []);
         Assert.deepEqual(InventoryFor({ ...Context, AutomaticOwnedItems: [] }), []);

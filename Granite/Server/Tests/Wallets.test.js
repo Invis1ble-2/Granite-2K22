@@ -96,7 +96,6 @@ Test('HTTP server loads persisted wallets after handler reconstruction and saves
         UserContentDirectory: Path.join(Root, 'Content'),
         OwnedItemsFile: Path.join(Root, 'Inventory', 'OwnedItems.json'),
         AutomaticOwnership: false,
-        AutomaticOwnershipCatalog: Path.join(Root, 'missing-catalog.json'),
         AttributeProfiles: Path.join(Root, 'Career', 'Profiles.json'),
         CareerAttributes: Path.join(Root, 'Career', 'Attributes.json'),
         CareerOverall: Path.join(Root, 'Career', 'Overall.json'),

@@ -30,7 +30,7 @@
     <ClCompile><WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck><PreprocessorDefinitions>_DEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp20</LanguageStandard><RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary></ClCompile>
     <Link><SubSystem>Windows</SubSystem><AdditionalDependencies>winhttp.lib;dbghelp.lib;%(AdditionalDependencies)</AdditionalDependencies><GenerateDebugInformation>true</GenerateDebugInformation></Link>
   </ItemDefinitionGroup>
-  <ItemGroup><ClCompile Include="Module.cpp" /><ClInclude Include="ModuleConfig.h" /><ClInclude Include="ParkRosterTrace.h" /><ClInclude Include="SoloParkNative.h" /><ClInclude Include="AnimationUnlock.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="Module.cpp" /><ClInclude Include="ModuleConfig.h" /><ClInclude Include="ParkRosterTrace.h" /><ClInclude Include="SoloParkNative.h" /><ClInclude Include="AnimationUnlock.h" /><ClInclude Include="ContentSeasons.h" /></ItemGroup>
   <ItemGroup><None Include="Granite.ini" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

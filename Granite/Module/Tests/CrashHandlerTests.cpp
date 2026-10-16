@@ -90,11 +90,16 @@ int Child(const std::wstring& Scenario)
     CloseHandle(LogFile);
 
     CrashHandler::Install(Sink, ReportDirectory().c_str(), Log.c_str(), Self);
-    const wchar_t Tail[] = L"@ redirect nba2k19-svc.2ksports.com:21140 -> test (log tail marker)\n";
+    if (CrashHandler::LogTotal != 0) return 92; // successful setup must be silent
+    const wchar_t Tail[] = L"@ redirect nba2k22-svc.2ksports.com:21140 -> test (log tail marker)\n";
     CrashHandler::RecordLogLine(Tail, wcslen(Tail));
     Sleep(300);
 
-    if (Scenario == L"gamefilter-after") SetUnhandledExceptionFilter(GameLikeFilter);
+    if (Scenario == L"gamefilter-after")
+    {
+        SetUnhandledExceptionFilter(GameLikeFilter);
+        if (CrashHandler::ChainedFilter != GameLikeFilter) return 93;
+    }
 
     if (Scenario == L"av" || Scenario == L"gamefilter-after" || Scenario == L"gamefilter-before")
     {
@@ -147,10 +152,11 @@ std::wstring FindReport(DWORD Pid, const wchar_t* Kind, const wchar_t* Suffix)
     return ReportDirectory() + L"\\" + Name;
 }
 
-int Failures = 0;
+int Failures = 0, Checks = 0;
 
 void Check(bool Condition, const std::wstring& Scenario, const char* What)
 {
+    ++Checks;
     wprintf(L"  %s %s: %S\n", Condition ? L"PASS" : L"FAIL", Scenario.c_str(), What);
     if (!Condition) ++Failures;
 }
@@ -170,6 +176,17 @@ std::string WaitForWatcher(const std::wstring& Path, const char* Marker)
         Sleep(200);
     }
     return Text;
+}
+
+void CheckReport(const std::string& Text, const std::wstring& Scenario)
+{
+    Check(Contains(Text, "Granite NBA 2K22"), Scenario, "report identifies NBA 2K22");
+    Check(!Contains(Text, "NBA2K19") && !Contains(Text, "NBA 2K19") &&
+          !Contains(Text, "VCASSERT wrappers") && !Contains(Text, "Close messages received"), Scenario,
+          "no obsolete game-specific diagnostics");
+    Check(!Contains(Text, "[crash] SetUnhandledExceptionFilter(") &&
+          !Contains(Text, "exit watcher running as rundll32") && !Contains(Text, "recorder armed:"), Scenario,
+          "removed startup messages stay absent");
 }
 
 void Run(const std::wstring& Scenario)
@@ -210,6 +227,7 @@ void Run(const std::wstring& Scenario)
             Sleep(200);
         }
         const std::string Text = ReadAll(External);
+        CheckReport(Text, Scenario);
         Check(Code == 0xC0000409, Scenario, "process ended with 0xC0000409");
         Check(!External.empty(), Scenario, "watcher wrote the external report");
         Check(Contains(Text, "0xC0000409") && Contains(Text, "fail-fast"), Scenario,
@@ -225,6 +243,7 @@ void Run(const std::wstring& Scenario)
     {
         const std::wstring Report = FindReport(Pid, L"exit", L".txt");
         const std::string Text = WaitForWatcher(Report, "Exit watcher");
+        CheckReport(Text, Scenario);
         Check(!Report.empty(), Scenario, "exit record written");
         Check(Contains(Text, "ExitProcess / RtlExitUserProcess"), Scenario, "trigger is ExitProcess");
         Check(Contains(Text, "Requested by:") && Contains(Text, "CrashHandlerTests.exe+"), Scenario,
@@ -236,6 +255,7 @@ void Run(const std::wstring& Scenario)
 
     const std::wstring Report = FindReport(Pid, L"crash", L".txt");
     const std::string Text = WaitForWatcher(Report, "Exit watcher");
+    CheckReport(Text, Scenario);
     Check(!Report.empty(), Scenario, "crash report written");
     Check(Contains(Text, "Call stack of the faulting thread") && Contains(Text, "CrashHandlerTests.exe+"), Scenario,
           "call stack resolves into the crashing module");
@@ -256,9 +276,6 @@ void Run(const std::wstring& Scenario)
         Check(GetFileAttributesW(Flag.c_str()) != INVALID_FILE_ATTRIBUTES, Scenario,
               "game-style filter still ran (chained)");
         Check(Code == 0, Scenario, "game-style filter's TerminateProcess(0) exit code preserved");
-        if (Scenario == L"gamefilter-after")
-            Check(Contains(Text, "[crash] SetUnhandledExceptionFilter("), Scenario,
-                  "late SetUnhandledExceptionFilter was intercepted");
     }
     else if (Scenario == L"stackoverflow")
     {
@@ -315,6 +332,6 @@ int wmain(int argc, wchar_t** argv)
                                     L"exit0", L"terminate3", L"cpp", L"handled-then-exit", L"breakpoint"})
         Run(Scenario);
 
-    wprintf(L"\n%d failure(s)\n", Failures);
+    wprintf(L"\n%d checks, %d failure(s)\n", Checks, Failures);
     return Failures;
 }

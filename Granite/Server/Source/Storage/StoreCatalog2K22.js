@@ -187,6 +187,8 @@ class StoreCatalog2K22 {
 
         this.items = [];
         this.pricesByItem = new Map();
+        // Includes consumables for the VC purchase path; GetPrice retains its store-only rules.
+        this.catalogPricesByItem = new Map();
         this.groupItems = Object.fromEntries(Object.keys(Groups).map(Name => [Name, []]));
         const ItemsByPage = new Map(StoreDefinitions.map(Store => [Store.Page, []]));
         const CellCrcs = new Map(StoreDefinitions.flatMap(Store => Store.Cells.map(Cell => [Cell.Tag, Crc32(Cell.Tag)])));
@@ -216,6 +218,7 @@ class StoreCatalog2K22 {
             }
             Item.tag_crcs = [...Tags];
 
+            this.catalogPricesByItem.set(Entry.id, BigInt(Raw.price));
             if (GroupName !== 'Gatorade') this.pricesByItem.set(Entry.id, BigInt(Raw.price));
             this.items.push(Item);
             this.groupItems[GroupName].push(Item);
@@ -256,15 +259,18 @@ class StoreCatalog2K22 {
     }
 }
 
+function ReadDocument(Source) {
+    const File = !Fs.existsSync(Source) && Source.endsWith('.json') ? `${Source}.gz` : Source;
+    const Data = Fs.readFileSync(File);
+    return JSON.parse((File.endsWith('.gz') ? Zlib.gunzipSync(Data) : Data).toString('utf8'));
+}
+
 function LoadCatalog2K22(Source) {
-    let Document = Source;
-    if (typeof Source === 'string') {
-        Document = JSON.parse(Fs.readFileSync(Source, 'utf8'));
-    }
-    return new StoreCatalog2K22(Document);
+    return new StoreCatalog2K22(typeof Source === 'string' ? ReadDocument(Source) : Source);
 }
 
 module.exports = {
+    ReadDocument,
     StoreTags,
     StoreTagCrcs,
     StoreCatalog2K22,

@@ -277,9 +277,9 @@ Test('legacy and unknown clients retain the original ownership envelope', () => 
 
 Test('Gatorade remains on sale but automatic ownership is excluded consistently across store replies', () => {
     const Ids = [0x4c99dc6d, 0xe80626b4, 0xed175be5, 0x45a9e847, 0xf713373a, 0x88d81a73];
-    const Catalog = new StoreCatalog2K22(JSON.parse(Fs.readFileSync(
-        Path.join(__dirname, '../Storage/Inventory/StoreCatalog2K22.json'), 'utf8')));
-    const AutomaticOwnedItems = LoadAutomaticItems(Path.join(__dirname, '../Storage/Inventory/AutomaticCatalog.json'));
+    const Catalog = require('../Source/Storage/StoreCatalog2K22').LoadFile(
+        Path.join(__dirname, '../Storage/Inventory/StoreCatalog2K22.json'));
+    const AutomaticOwnedItems = LoadAutomaticItems(Catalog);
     const Context = { userId: 42n, StoreCatalog2K22: Catalog, AutomaticOwnedItems, OwnedItems: new Map(),
         SaveOwnedItems() { Assert.fail('inventory reads must not save purchases'); } };
     const Input = StoreRequest('PAGE:TKWORLD_GATORADE_STORE');

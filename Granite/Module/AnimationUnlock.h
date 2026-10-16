@@ -128,9 +128,10 @@ inline void InstallHooks(HMODULE Executable)
             L"; status=" + std::to_wstring(Status));
         return;
     }
-    Log(LogLevel::Info, L"ANIM22 enabled: shop-all=" + std::to_wstring(ModuleConfig::EnableAnimationShopAll) +
-        L" requirements-bypass=" + std::to_wstring(ModuleConfig::EnableAnimationRequirementBypass) +
-        L" unlock-all=" + std::to_wstring(ModuleConfig::EnableAnimationUnlockAll));
+    if (ModuleConfig::LogAnimationUnlock)
+        Log(LogLevel::Info, L"ANIM22 enabled: shop-all=" + std::to_wstring(ModuleConfig::EnableAnimationShopAll) +
+            L" requirements-bypass=" + std::to_wstring(ModuleConfig::EnableAnimationRequirementBypass) +
+            L" unlock-all=" + std::to_wstring(ModuleConfig::EnableAnimationUnlockAll));
 }
 inline DWORD WINAPI WaitAndInstall(void* Context)
 {
@@ -165,7 +166,8 @@ inline void Install(HMODULE Executable)
     size_t FailedRva = 0;
     if (CheckSignatures(Executable, FailedRva)) { InstallHooks(Executable); return; }
     // Packed .text becomes available after injection; do not delay WinHTTP/other hooks.
-    Log(LogLevel::Info, L"ANIM22 waiting for native signatures (up to 30 seconds)");
+    if (ModuleConfig::LogAnimationUnlock)
+        Log(LogLevel::Info, L"ANIM22 waiting for native signatures (up to 30 seconds)");
     if (HANDLE Thread = CreateThread(nullptr, 0, WaitAndInstall, Executable, 0, nullptr)) CloseHandle(Thread);
     else
     {

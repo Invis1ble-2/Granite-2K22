@@ -101,7 +101,7 @@ function LoadConfig(File = Path.resolve(__dirname, '../Config.json')) {
             process.env.GRANITE_USER_CONTENT_DIR || Raw.UserContentDirectory || 'Storage/UserContent',
         ),
         SessionDirectory: Resolve(process.env.GRANITE_SESSION_DIR || Raw.SessionDirectory || 'Storage/Sessions'),
-        AutomaticOwnershipCatalog: Resolve(Raw.AutomaticOwnershipCatalog || 'Storage/Inventory/AutomaticCatalog.json'),
+        AutomaticOwnership: Raw.AutomaticOwnership === true,
         AttributeProfiles: Resolve(
             process.env.GRANITE_ATTRIBUTE_PROFILES || Raw.AttributeProfiles || 'Storage/Career/AttributeProfiles.json',
         ),
@@ -367,7 +367,8 @@ function CreateHandler(Config, Dependencies = {}) {
     const ManifestAssets = Config.StoreAssetManifest ? new ManifestAssetStore(Config.StoreAssetManifest) : null;
     let StoreCatalog2K22Instance = Dependencies.StoreCatalog2K22 || null;
     if (!StoreCatalog2K22Instance && Config.StoreCatalog2K22File) {
-        if (!Fs.existsSync(Config.StoreCatalog2K22File)) {
+        if (!Fs.existsSync(Config.StoreCatalog2K22File) &&
+            !(Config.StoreCatalog2K22File.endsWith('.json') && Fs.existsSync(`${Config.StoreCatalog2K22File}.gz`))) {
             Logger.Error(`2K22 store catalog configured but missing: ${Config.StoreCatalog2K22File}`);
         } else {
             try {
@@ -399,23 +400,13 @@ function CreateHandler(Config, Dependencies = {}) {
         process.env.GRANITE_OWNED_ITEMS ||
         Path.resolve(__dirname, '../Storage/Inventory/OwnedItems.json');
     const OwnedItems = Dependencies.OwnedItems || LoadOwnedItems(OwnedItemsFile);
-    const AutomaticOwnedItems =
-        Dependencies.AutomaticOwnedItems ||
-        (Config.AutomaticOwnership === true ? LoadAutomaticItems(Config.AutomaticOwnershipCatalog) : []);
+    const AutomaticOwnedItems = Config.AutomaticOwnership === true
+        ? Dependencies.AutomaticOwnedItems || LoadAutomaticItems(StoreCatalog2K22Instance)
+        : [];
     if (AutomaticOwnedItems.length)
-        Logger.Info(`automatic ownership enabled: ${AutomaticOwnedItems.length} catalog items for signed-in accounts`);
-    let StoreCatalogPrices = Dependencies.StoreCatalogPrices || null;
-    if (!StoreCatalogPrices) {
-        try {
-            StoreCatalogPrices = LoadCatalogPrices(Config.AutomaticOwnershipCatalog);
-            Logger.Info(`store catalog prices loaded: ${StoreCatalogPrices.size} items`);
-        } catch (Failure) {
-            StoreCatalogPrices = new Map();
-            Logger.Error(
-                `store catalog prices unavailable (${Failure.message}); consumable carts use ITEM%d_EXPECTED_PRICE`,
-            );
-        }
-    }
+        Logger.Info(`2K22 automatic ownership enabled: ${AutomaticOwnedItems.length} permanent items for signed-in accounts`);
+    const StoreCatalogPrices = Dependencies.StoreCatalogPrices ||
+        (StoreCatalog2K22Instance ? LoadCatalogPrices(StoreCatalog2K22Instance) : new Map());
     const ProAmTeams = Dependencies.ProAmTeams || new Map();
     const MatchmakingData =
         Dependencies.Matchmaking ||

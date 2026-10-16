@@ -9,7 +9,6 @@
     "OwnedItemsFile": "Storage/Inventory/OwnedItems.json",
     "WalletsFile": "Storage/Inventory/Wallets.json",
     "AutomaticOwnership": true,
-    "AutomaticOwnershipCatalog": "Storage/Inventory/AutomaticCatalog.json",
     "AttributeProfiles": "Storage/Career/AttributeProfiles.json",
     "VirtualCurrencyStatic": false,
     "InstantMaxProgression": true,

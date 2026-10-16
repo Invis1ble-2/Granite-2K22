@@ -11,5 +11,7 @@ Granite/Server/Storage/Cdn/
 Granite/Server/Storage/Sessions/
 Granite/Server/Storage/UserContent/
 Granite/Server/Storage/Inventory/OwnedItems.json
+Granite/Server/Storage/Inventory/GatoradeBoosts.json
+Granite/Server/Storage/Inventory/Wallets.json
 __pycache__/
 AGENTS.md

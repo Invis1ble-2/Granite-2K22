@@ -3,31 +3,32 @@
 
 'use strict';
 
-const Fs = require('node:fs');
+const { LoadFile } = require('./StoreCatalog2K22');
 const { OwnedKey, ListOwnedItems } = require('./OwnedItems');
-
 const { ProductFor: GatoradeProduct } = require('./GatoradeBoosts');
-function LoadAutomaticItems(File) {
-    const Document = JSON.parse(Fs.readFileSync(File, 'utf8'));
-    if (
-        Document.version !== 1 ||
-        Document.source !== 'NBA2K19_MANIFEST_STORE_BINARY_DATA' ||
-        !Array.isArray(Document.items)
-    )
-        throw new Error('automatic ownership requires an exported NBA2K19 item catalog');
+
+// Explicit permanent categories only: never grant consumable or unknown categories.
+const PermanentGroups = Object.freeze([
+    'Clothing', 'Accessories', 'Shoes', 'Mascots', 'Tattoos', 'Headphones',
+    'MyCourt', 'Wheelz', 'Football', 'DJStation', 'Equipment',
+]);
+
+function LoadAutomaticItems(Source) {
+    const Catalog = typeof Source === 'string' ? LoadFile(Source) : Source;
+    if (!Catalog?.groupItems) throw new Error('automatic ownership requires a loaded 2K22 store catalog');
     const Unique = new Map();
-    for (const Entry of Document.items) {
-        const Item = Number(Entry.item);
-        if (!Number.isInteger(Item) || Item <= 0 || Item >= 0xffffffff)
-            throw new Error(`invalid automatic ownership item: ${Entry.item}`);
-        Unique.set(Item, {
-            item: `0x${Item.toString(16).toUpperCase().padStart(8, '0')}`,
-            purchaseType: null,
-            price: '0',
-            at: new Date(0).toISOString(),
-        });
+    for (const Group of PermanentGroups) {
+        for (const Entry of Catalog.groupItems[Group] || []) {
+            const Item = Entry.item_id;
+            if (GatoradeProduct(Item)) continue;
+            Unique.set(Item, {
+                item: `0x${Item.toString(16).toUpperCase().padStart(8, '0')}`,
+                purchaseType: null,
+                price: '0',
+                at: new Date(0).toISOString(),
+            });
+        }
     }
-    if (!Unique.size) throw new Error('automatic ownership catalog is empty');
     return [...Unique.values()];
 }
 
@@ -48,4 +49,9 @@ function InventoryFor(Context = {}) {
     return [...Merged.values()];
 }
 
-module.exports = { LoadAutomaticItems, InventoryFor };
+function IsAutomaticallyOwned(Item, Context = {}) {
+    return Boolean(OwnedKey(Context)) && (Context.AutomaticOwnedItems || [])
+        .some(Entry => Number(Entry.item) === (Number(Item) >>> 0));
+}
+
+module.exports = { LoadAutomaticItems, InventoryFor, IsAutomaticallyOwned };

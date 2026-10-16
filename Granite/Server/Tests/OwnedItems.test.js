@@ -252,8 +252,8 @@ Test('Wheelz get_prices advertises a flat 100 VC per requested item', () => {
     Assert.equal(Context.VcPrices.get(WheelzItem >>> 0).price, 100n);
 });
 
-const { LoadCatalogPrices } = require('../Source/Storage/StoreCatalog');
-const CatalogPrices = LoadCatalogPrices(Path.join(__dirname, '..', 'Storage', 'Inventory', 'AutomaticCatalog.json'));
+// Captured legacy requests below retain their fixture prices, not a runtime 2K19 catalog.
+const CatalogPrices = new Map([[0x14077e98, 750n], [WheelzItem >>> 0, 200n], [WheelzItem2 >>> 0, 2000n]]);
 
 Test('a captured tattoo cart is charged its native store price, not a flat 100 VC', () => {
     const Body = Fs.readFileSync(Path.join(__dirname, 'Fixtures', 'TattooPurchase', 'Cart36.bin'));

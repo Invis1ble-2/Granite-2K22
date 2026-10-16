@@ -34,10 +34,7 @@ bool EqualOrdinalIgnoreCase(const std::wstring& Left, const std::wstring& Right)
 
 bool IsSupportedGameExecutable(const std::wstring& Filename)
 {
-    return EqualOrdinalIgnoreCase(Filename, L"NBA2K19.exe") ||
-           EqualOrdinalIgnoreCase(Filename, L"NBA2K20.exe") ||
-           EqualOrdinalIgnoreCase(Filename, L"NBA2K21.exe") ||
-           EqualOrdinalIgnoreCase(Filename, L"NBA2K22.exe");
+    return EqualOrdinalIgnoreCase(Filename, L"NBA2K22.exe");
 }
 constexpr wchar_t ModuleName[] = L"Module.dll";
 constexpr DWORD InitialLoadWaitMs = 30'000;
@@ -776,7 +773,7 @@ int wmain(int argc, wchar_t* argv[])
             if (Automatic)
             {
                 Log(LogLevel::Info,
-                    L"No PID specified. Waiting for a supported NBA2K game process (NBA2K19/20/21/22); press Ctrl+C to cancel.");
+                    L"No PID specified. Waiting for NBA2K22 game process; press Ctrl+C to cancel.");
                 do
                 {
                     ProcessId = FindGameProcessId();
@@ -868,7 +865,7 @@ int InjectIntoProcess(DWORD ProcessId)
         if (!IsSupportedGameExecutable(TargetImagePath.filename().wstring()))
         {
             Log(LogLevel::Error,
-                L"PID " + std::to_wstring(ProcessId) + L" is not a supported NBA2K executable (NBA2K19/20/21/22): " + TargetImagePath.wstring());
+                L"PID " + std::to_wstring(ProcessId) + L" is not a supported NBA2K22 executable: " + TargetImagePath.wstring());
             return static_cast<int>(ExitCode::ValidationError);
         }
 
@@ -881,7 +878,7 @@ int InjectIntoProcess(DWORD ProcessId)
         if (TargetMachine != IMAGE_FILE_MACHINE_AMD64)
         {
             std::wostringstream Message;
-            Message << L"NBA2K19 target is not x64 (machine 0x" << std::hex << std::uppercase << TargetMachine << L").";
+            Message << L"NBA2K22 target is not x64 (machine 0x" << std::hex << std::uppercase << TargetMachine << L").";
             Log(LogLevel::Error, Message.str());
             return static_cast<int>(ExitCode::ValidationError);
         }
@@ -892,17 +889,9 @@ int InjectIntoProcess(DWORD ProcessId)
 
         std::vector<RemoteModule> Modules;
         const std::wstring ImageName = TargetImagePath.filename().wstring();
-        if (EqualOrdinalIgnoreCase(ImageName, L"NBA2K22.exe"))
-        {
-            const auto Ready = WaitForNativeCode(Process.Get(), ProcessId, ImageName, ModulePath, Modules);
-            if (Ready == NativeReadiness::Exited) return static_cast<int>(ExitCode::TargetExited);
-            if (Ready != NativeReadiness::Ready) return static_cast<int>(ExitCode::ModuleInspectionError);
-        }
-        else if (!EnumerateRemoteModules(ProcessId, Modules, Error))
-        {
-            Log(LogLevel::Error, L"Could not enumerate target modules: " + DescribeWindowsError(Error));
-            return static_cast<int>(ExitCode::ModuleInspectionError);
-        }
+        const auto Ready = WaitForNativeCode(Process.Get(), ProcessId, ImageName, ModulePath, Modules);
+        if (Ready == NativeReadiness::Exited) return static_cast<int>(ExitCode::TargetExited);
+        if (Ready != NativeReadiness::Ready) return static_cast<int>(ExitCode::ModuleInspectionError);
 
         const std::wstring RequestedModulePath = NormalizePathForComparison(ModulePath);
         for (const RemoteModule& Module : Modules)

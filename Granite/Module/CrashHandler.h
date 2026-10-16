@@ -23,14 +23,6 @@ namespace CrashHandler
 {
 
 inline constexpr unsigned __int64 IdaImageBase = 0x140000000ull;
-inline constexpr DWORD VerifiedTimeDateStamp = 0x5C534BB5;
-inline constexpr DWORD VerifiedSizeOfImage = 0x061D4000;
-inline constexpr unsigned __int64 GameFilterStart = 0x14093F500ull;
-inline constexpr unsigned __int64 GameFilterEnd = 0x14093FC9Full;
-inline constexpr unsigned __int64 AssertWrapperA = 0x1418CAFE0ull;
-inline constexpr unsigned __int64 AssertWrapperB = 0x1418CB150ull;
-inline constexpr unsigned char AssertWrapperPrefix[15] = {0x4C, 0x8B, 0xDC, 0x49, 0x89, 0x5B, 0x08, 0x49,
-                                                          0x89, 0x6B, 0x10, 0x49, 0x89, 0x73, 0x18};
 
 struct SpinLock
 {
@@ -97,23 +89,6 @@ inline void CopyAnsi(char* Out, size_t OutSize, const char* Source) noexcept
     Out[Written] = 0;
 }
 
-inline void CopyWide(wchar_t* Out, size_t OutCount, const wchar_t* Source) noexcept
-{
-    if (!OutCount) return;
-    Out[0] = 0;
-    if (!Source) return;
-    size_t Written = 0;
-    ULONG_PTR At = reinterpret_cast<ULONG_PTR>(Source);
-    while (Written + 1 < OutCount)
-    {
-        wchar_t C = 0;
-        if (!Read(&C, At, sizeof(C)) || !C) break;
-        Out[Written++] = C;
-        At += sizeof(C);
-    }
-    Out[Written] = 0;
-}
-
 inline void Utf8(const wchar_t* Wide, int WideLength, char* Out, int OutSize) noexcept
 {
     if (OutSize <= 0) return;
@@ -130,7 +105,6 @@ inline wchar_t SelfPath[MAX_PATH * 2] = {};
 inline ULONG_PTR ExeBase = 0;
 inline ULONG_PTR ExeSize = 0;
 inline DWORD ExeTimeDateStamp = 0;
-inline bool VerifiedBuild = false;
 inline DWORD InstallTick = 0;
 inline bool FullDump = false;
 inline volatile LONG Installed = 0;
@@ -279,155 +253,6 @@ inline void RecordLogLine(const wchar_t* Text, size_t Length) noexcept
     LogNext = (Slot + 1) % LogLines;
     ++LogTotal;
     LogLock.Unlock();
-}
-
-struct AssertEntry
-{
-    DWORD Tick, Thread;
-    int Line;
-    long long Result;
-    ULONG_PTR Caller;
-    char Condition[96], Channel[48], Subchannel[64], Function[192], File[224];
-    wchar_t Message[240];
-};
-inline constexpr int AssertSlots = 32;
-inline AssertEntry Asserts[AssertSlots];
-inline LONG AssertNext = 0;
-inline LONG AssertTotal = 0;
-inline SpinLock AssertLock;
-
-using AssertFn = __int64(__fastcall*)(const char*, const char*, const char*, const char*, const char*, int,
-                                      const wchar_t*, void*);
-inline AssertFn AssertOriginalA = nullptr;
-inline AssertFn AssertOriginalB = nullptr;
-
-inline LONG BeginAssert(const char* Condition, const char* Channel, const char* Subchannel, const char* Function,
-                        const char* File, int Line, const wchar_t* Message, ULONG_PTR Caller) noexcept
-{
-    AssertEntry Entry{};
-    Entry.Tick = GetTickCount();
-    Entry.Thread = GetCurrentThreadId();
-    Entry.Line = Line;
-    Entry.Result = -1;
-    Entry.Caller = Caller;
-    CopyAnsi(Entry.Condition, sizeof(Entry.Condition), Condition);
-    CopyAnsi(Entry.Channel, sizeof(Entry.Channel), Channel);
-    CopyAnsi(Entry.Subchannel, sizeof(Entry.Subchannel), Subchannel);
-    CopyAnsi(Entry.Function, sizeof(Entry.Function), Function);
-    CopyAnsi(Entry.File, sizeof(Entry.File), File);
-    CopyWide(Entry.Message, _countof(Entry.Message), Message);
-    AssertLock.Lock();
-    const LONG Slot = AssertNext;
-    Asserts[Slot] = Entry;
-    AssertNext = (Slot + 1) % AssertSlots;
-    ++AssertTotal;
-    AssertLock.Unlock();
-    return Slot;
-}
-
-inline void EndAssert(LONG Slot, DWORD Thread, __int64 Result) noexcept
-{
-    AssertLock.Lock();
-    if (Asserts[Slot].Thread == Thread && Asserts[Slot].Result == -1) Asserts[Slot].Result = Result;
-    AssertLock.Unlock();
-}
-
-inline __int64 __fastcall AssertHookA(const char* Condition, const char* Channel, const char* Subchannel,
-                                      const char* Function, const char* File, int Line, const wchar_t* Message,
-                                      void* Arguments)
-{
-    const LONG Slot = BeginAssert(Condition, Channel, Subchannel, Function, File, Line, Message,
-                                  reinterpret_cast<ULONG_PTR>(_ReturnAddress()));
-    const __int64 Result = AssertOriginalA(Condition, Channel, Subchannel, Function, File, Line, Message, Arguments);
-    EndAssert(Slot, GetCurrentThreadId(), Result);
-    return Result;
-}
-
-inline __int64 __fastcall AssertHookB(const char* Condition, const char* Channel, const char* Subchannel,
-                                      const char* Function, const char* File, int Line, const wchar_t* Message,
-                                      void* Arguments)
-{
-    const LONG Slot = BeginAssert(Condition, Channel, Subchannel, Function, File, Line, Message,
-                                  reinterpret_cast<ULONG_PTR>(_ReturnAddress()));
-    const __int64 Result = AssertOriginalB(Condition, Channel, Subchannel, Function, File, Line, Message, Arguments);
-    EndAssert(Slot, GetCurrentThreadId(), Result);
-    return Result;
-}
-
-inline constexpr unsigned __int64 GameWindowProc = 0x14196AD40ull;
-inline constexpr unsigned char GameWindowProcPrefix[15] = {0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74,
-                                                           0x24, 0x18, 0x48, 0x89, 0x7C, 0x24, 0x20};
-struct CloseEntry
-{
-    DWORD Tick, Thread, SendFlags, ForegroundProcess;
-    UINT Message;
-    WPARAM WParam;
-    LPARAM LParam;
-    ULONG_PTR Caller;
-};
-inline constexpr int CloseSlots = 16;
-inline CloseEntry Closes[CloseSlots];
-inline LONG CloseNext = 0;
-inline LONG CloseTotal = 0;
-inline SpinLock CloseLock;
-
-using WindowProcFn = LRESULT(__fastcall*)(HWND, UINT, WPARAM, LPARAM);
-inline WindowProcFn WindowProcOriginal = nullptr;
-
-inline const char* CloseMessageName(UINT Message, WPARAM WParam) noexcept
-{
-    switch (Message)
-    {
-    case WM_DESTROY: return "WM_DESTROY";
-    case WM_CLOSE: return "WM_CLOSE";
-    case WM_QUERYENDSESSION: return "WM_QUERYENDSESSION";
-    case WM_ENDSESSION: return "WM_ENDSESSION";
-    case WM_SYSCOMMAND: return (WParam & 0xFFF0) == SC_CLOSE ? "WM_SYSCOMMAND SC_CLOSE" : nullptr;
-    case WM_NCLBUTTONDOWN: return WParam == HTCLOSE ? "WM_NCLBUTTONDOWN HTCLOSE (title bar close button)" : nullptr;
-    case WM_SYSKEYDOWN: return WParam == VK_F4 ? "WM_SYSKEYDOWN VK_F4" : nullptr;
-    default: return nullptr;
-    }
-}
-
-inline const char* SendFlagsText(DWORD Flags) noexcept
-{
-    if ((Flags & ISMEX_SEND) && (Flags & ISMEX_REPLIED)) return "sent from another thread/process, already replied";
-    if (Flags & ISMEX_SEND) return "sent from another thread/process";
-    if (Flags & ISMEX_NOTIFY) return "SendNotifyMessage from another thread/process";
-    if (Flags & ISMEX_CALLBACK) return "SendMessageCallback from another thread/process";
-    return "posted, or sent by this window's own thread";
-}
-
-inline LRESULT __fastcall WindowProcHook(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
-{
-    if (const char* Name = CloseMessageName(Message, WParam))
-    {
-        CloseEntry Entry{};
-        Entry.Tick = GetTickCount();
-        Entry.Thread = GetCurrentThreadId();
-        Entry.SendFlags = InSendMessageEx(nullptr);
-        if (HWND Foreground = GetForegroundWindow()) GetWindowThreadProcessId(Foreground, &Entry.ForegroundProcess);
-        Entry.Message = Message;
-        Entry.WParam = WParam;
-        Entry.LParam = LParam;
-        Entry.Caller = reinterpret_cast<ULONG_PTR>(_ReturnAddress());
-        CloseLock.Lock();
-        Closes[CloseNext] = Entry;
-        CloseNext = (CloseNext + 1) % CloseSlots;
-        ++CloseTotal;
-        CloseLock.Unlock();
-
-        char Where[512] = {};
-        Describe(Entry.Caller, Where, sizeof(Where));
-        wchar_t Line[900];
-        swprintf_s(
-            Line,
-            L"[crash] window message %S wParam=0x%llX lParam=0x%llX: %S; foreground process %lu (this process %lu); window procedure called from %S",
-            Name, static_cast<unsigned long long>(WParam), static_cast<unsigned long long>(LParam),
-            SendFlagsText(Entry.SendFlags), Entry.ForegroundProcess, GetCurrentProcessId(), Where);
-        Say(Line);
-    }
-    return WindowProcOriginal(Window, Message, WParam, LParam);
 }
 
 inline constexpr int FrameSlots = 32;
@@ -778,7 +603,7 @@ inline void PutExceptionDetail(const EXCEPTION_RECORD& Record) noexcept
     {
         ModuleEntry Module{};
         if (FindModule(reinterpret_cast<ULONG_PTR>(Record.ExceptionAddress), Module) && Module.Base == ExeBase)
-            Put("Reason:            int 3 inside NBA2K19.exe -- the game's VCASSERT pattern is `if (assert(...)) __debugbreak();`; see the game asserts below\r\n");
+            Put("Reason:            breakpoint instruction inside the main executable; inspect the call stack and code bytes below\r\n");
     }
     else if (Code == EXCEPTION_STACK_OVERFLOW)
     {
@@ -856,7 +681,7 @@ inline void PutRegisters(const CONTEXT& C) noexcept
     PutValue("R15", static_cast<ULONG_PTR>(C.R15));
     Put("  EFLAGS = 0x%08lX  CS=%04X SS=%04X DS=%04X ES=%04X FS=%04X GS=%04X  MXCSR=0x%08lX\r\n", C.EFlags, C.SegCs,
         C.SegSs, C.SegDs, C.SegEs, C.SegFs, C.SegGs, C.MxCsr);
-    Put("  DR0=%llX DR1=%llX DR2=%llX DR3=%llX DR6=%llX DR7=%llX (build probes use the debug registers)\r\n",
+    Put("  DR0=%llX DR1=%llX DR2=%llX DR3=%llX DR6=%llX DR7=%llX\r\n",
         static_cast<unsigned long long>(C.Dr0), static_cast<unsigned long long>(C.Dr1),
         static_cast<unsigned long long>(C.Dr2), static_cast<unsigned long long>(C.Dr3),
         static_cast<unsigned long long>(C.Dr6), static_cast<unsigned long long>(C.Dr7));
@@ -874,49 +699,6 @@ inline void PutRegisters(const CONTEXT& C) noexcept
     {
         Put("  code bytes at RIP: unreadable (RIP points at unmapped memory -- a call through a bad pointer or a smashed return address)\r\n");
     }
-}
-
-inline void PutAsserts() noexcept
-{
-    const DWORD Now = GetTickCount();
-    const bool Locked = AssertLock.LockFor(200000);
-    Put("\r\n== Game asserts (VCASSERT wrappers sub_1418CAFE0/sub_1418CB150), most recent first; %ld total ==\r\n",
-        AssertTotal);
-    if (!VerifiedBuild) Put("  not recorded: NBA2K19.exe is not the verified build\r\n");
-    const LONG Total = AssertTotal < AssertSlots ? AssertTotal : AssertSlots;
-    for (LONG I = 0; I < Total; ++I)
-    {
-        const AssertEntry& A = Asserts[(AssertNext - 1 - I + AssertSlots) % AssertSlots];
-        char Message[512] = {};
-        Utf8(A.Message, -1, Message, sizeof(Message));
-        char Where[512] = {};
-        Describe(A.Caller, Where, sizeof(Where));
-        Put("  [%lu ms before report] thread %lu %s/%s %s  %s:%d  cond \"%s\"  msg \"%s\"  result %lld  called from %s\r\n",
-            Now - A.Tick, A.Thread, A.Channel, A.Subchannel, A.Function, A.File, A.Line, A.Condition, Message, A.Result,
-            Where);
-    }
-    if (Locked) AssertLock.Unlock();
-}
-
-inline void PutCloseMessages() noexcept
-{
-    const DWORD Now = GetTickCount();
-    const bool Locked = CloseLock.LockFor(200000);
-    Put("\r\n== Close messages received by the game window (sub_14196AD40), most recent first; %ld total ==\r\n",
-        CloseTotal);
-    if (!WindowProcOriginal) Put("  not recorded: the window procedure hook is not armed\r\n");
-    const LONG Total = CloseTotal < CloseSlots ? CloseTotal : CloseSlots;
-    for (LONG I = 0; I < Total; ++I)
-    {
-        const CloseEntry& C = Closes[(CloseNext - 1 - I + CloseSlots) % CloseSlots];
-        char Where[512] = {};
-        Describe(C.Caller, Where, sizeof(Where));
-        Put("  [%lu ms before report] thread %lu %s wParam=0x%llX lParam=0x%llX  %s (InSendMessageEx 0x%08lX)  foreground process %lu  called from %s\r\n",
-            Now - C.Tick, C.Thread, CloseMessageName(C.Message, C.WParam), static_cast<unsigned long long>(C.WParam),
-            static_cast<unsigned long long>(C.LParam), SendFlagsText(C.SendFlags), C.SendFlags, C.ForegroundProcess,
-            Where);
-    }
-    if (Locked) CloseLock.Unlock();
 }
 
 inline void PutRecentExceptions() noexcept
@@ -972,9 +754,8 @@ inline void PutEnvironment() noexcept
     char ExeUtf8[MAX_PATH * 3]{};
     GetModuleFileNameW(nullptr, Exe, MAX_PATH);
     Utf8(Exe, -1, ExeUtf8, sizeof(ExeUtf8));
-    Put("  executable %s base 0x%llX size 0x%llX TimeDateStamp 0x%08lX (%s build)\r\n", ExeUtf8,
-        static_cast<unsigned long long>(ExeBase), static_cast<unsigned long long>(ExeSize), ExeTimeDateStamp,
-        VerifiedBuild ? "verified 5C534BB5" : "UNVERIFIED");
+    Put("  executable %s base 0x%llX size 0x%llX TimeDateStamp 0x%08lX\r\n", ExeUtf8,
+        static_cast<unsigned long long>(ExeBase), static_cast<unsigned long long>(ExeSize), ExeTimeDateStamp);
     char Self[MAX_PATH * 3]{};
     Utf8(SelfPath, -1, Self, sizeof(Self));
     Put("  granite module %s\r\n", Self);
@@ -1005,7 +786,6 @@ inline void PutEnvironment() noexcept
                 Put("  Windows %lu.%lu build %lu\r\n", Version.dwMajorVersion, Version.dwMinorVersion,
                     Version.dwBuildNumber);
         }
-    Put("  game's own crash files (written by its filter after this report): %%APPDATA%%\\2K Sports\\NBA 2K19\\CrashReport.txt / CrashReport.dmp\r\n");
 }
 
 inline void PutModules() noexcept
@@ -1026,7 +806,7 @@ inline void PutSymbols(const CONTEXT& Context) noexcept
 {
     ULONG_PTR Frames[64]{};
     const int Count = UnwindFrames(Context, Frames, nullptr, 64);
-    Put("\r\n== Call stack symbols (DbgHelp; NBA2K19.exe has no PDB, use the IDA addresses above) ==\r\n");
+    Put("\r\n== Call stack symbols (DbgHelp; use module offsets / IDA addresses when symbols are unavailable) ==\r\n");
     const HANDLE Process = GetCurrentProcess();
     wchar_t searchPath[MAX_PATH * 4]{};
     wchar_t SelfDirectory[MAX_PATH * 2]{};
@@ -1104,7 +884,7 @@ inline void WriteFull(Request& Request) noexcept
     OpenReport(L"crash", Path, _countof(Path));
     SYSTEMTIME Now{};
     GetLocalTime(&Now);
-    Put("Granite NBA 2K19 crash report\r\n");
+    Put("Granite NBA 2K22 crash report\r\n");
     Put("Time:              %04u-%02u-%02u %02u:%02u:%02u.%03u local\r\n", Now.wYear, Now.wMonth, Now.wDay, Now.wHour,
         Now.wMinute, Now.wSecond, Now.wMilliseconds);
     Put("Process / thread:  %lu / %lu\r\n", GetCurrentProcessId(), Request.Thread);
@@ -1114,9 +894,8 @@ inline void WriteFull(Request& Request) noexcept
         Put("Exit code:         0x%08X (%u) %s\r\n", Request.ExitCode, Request.ExitCode,
             ExceptionName(Request.ExitCode));
         PutAddressLine("Requested by:      ", Request.Caller);
-        const ULONG_PTR Ida = Request.Caller - ExeBase + IdaImageBase;
-        if (ExeBase && Request.Caller >= ExeBase && Ida >= GameFilterStart && Ida < GameFilterEnd)
-            Put("                   (inside the game's TopLevelExceptionFilter: the game caught a crash and is ending the process)\r\n");
+        if (InsideGameFilter)
+            Put("                   (inside the chained exception filter: ending the process after an unhandled exception)\r\n");
         if (AnyFatalSeen)
             Put("                   (last error-class first-chance exception %lu ms before this exit; see below)\r\n",
                 GetTickCount() - static_cast<DWORD>(LastFatalTick));
@@ -1126,8 +905,6 @@ inline void WriteFull(Request& Request) noexcept
     PutRegisters(Request.Context);
     PutStackFrames(Request.Context);
     Flush();
-    PutAsserts();
-    PutCloseMessages();
     PutRecentExceptions();
     Flush();
     PutStackScan(static_cast<ULONG_PTR>(Request.Context.Rsp));
@@ -1178,7 +955,7 @@ inline void WriteExit(Request& Request) noexcept
     OpenReport(L"exit", Path, _countof(Path));
     SYSTEMTIME Now{};
     GetLocalTime(&Now);
-    Put("Granite NBA 2K19 process exit record\r\n");
+    Put("Granite NBA 2K22 process exit record\r\n");
     Put("Time:              %04u-%02u-%02u %02u:%02u:%02u.%03u local\r\n", Now.wYear, Now.wMonth, Now.wDay, Now.wHour,
         Now.wMinute, Now.wSecond, Now.wMilliseconds);
     Put("Process / thread:  %lu / %lu\r\n", GetCurrentProcessId(), Request.Thread);
@@ -1186,9 +963,7 @@ inline void WriteExit(Request& Request) noexcept
     Put("Exit code:         0x%08X (%u)\r\n", Request.ExitCode, Request.ExitCode);
     PutAddressLine("Requested by:      ", Request.Caller);
     Put("No error-class exception was seen in the preceding 60 seconds and the exit code is 0, so no minidump was written.\r\n");
-    PutCloseMessages();
     PutStackFrames(Request.Context);
-    PutAsserts();
     PutLogTail();
     Put("\r\n== End of record ==\r\n");
     CloseReport();
@@ -1260,14 +1035,6 @@ inline LPTOP_LEVEL_EXCEPTION_FILTER WINAPI SetFilterHook(LPTOP_LEVEL_EXCEPTION_F
     const LPTOP_LEVEL_EXCEPTION_FILTER Previous = ChainedFilter;
     ChainedFilter = Filter;
     SetFilterOriginal(UnhandledFilter);
-    wchar_t Line[640];
-    char Where[512];
-    Describe(reinterpret_cast<ULONG_PTR>(_ReturnAddress()), Where, sizeof(Where));
-    char FilterWhere[512];
-    Describe(reinterpret_cast<ULONG_PTR>(Filter), FilterWhere, sizeof(FilterWhere));
-    swprintf_s(Line, L"[crash] SetUnhandledExceptionFilter(%S) from %S: chained behind the Granite recorder",
-               FilterWhere, Where);
-    Say(Line);
     return Previous;
 }
 
@@ -1275,10 +1042,8 @@ inline void OnSelfExit(Trigger Trigger, UINT Code, ULONG_PTR Caller) noexcept
 {
     CONTEXT Context{};
     RtlCaptureContext(&Context);
-    const ULONG_PTR Ida = ExeBase && Caller >= ExeBase ? Caller - ExeBase + IdaImageBase : 0;
-    const bool FromGameFilter = InsideGameFilter || (Ida >= GameFilterStart && Ida < GameFilterEnd);
     const bool RecentFatal = AnyFatalSeen && GetTickCount() - static_cast<DWORD>(LastFatalTick) < 60000;
-    const bool Full = Code != 0 || FromGameFilter || RecentFatal;
+    const bool Full = Code != 0 || InsideGameFilter || RecentFatal;
     Submit(Trigger, nullptr, &Context, Code, Caller, Full);
 }
 
@@ -1353,19 +1118,18 @@ inline void StartWatcher() noexcept
     if (!Started)
         Started = CreateProcessW(Rundll, Command, nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &Startup,
                                  &Process);
-    wchar_t Line[128];
     if (Started)
     {
-        swprintf_s(Line, L"[crash] exit watcher running as rundll32 pid %lu", Process.dwProcessId);
         CloseHandle(Process.hThread);
         CloseHandle(Process.hProcess);
     }
     else
     {
+        wchar_t Line[128];
         swprintf_s(Line, L"[crash] exit watcher could not start (%lu); a __fastfail exit will leave no report",
                    GetLastError());
+        Say(Line);
     }
-    Say(Line);
 }
 
 inline bool FindReportFor(DWORD Pid, wchar_t* PathOut, size_t PathCount, bool& IsCrash) noexcept
@@ -1480,7 +1244,7 @@ inline void WatchMain(const wchar_t* CommandLine) noexcept
         swprintf_s(Path, L"%s\\granite-crash-%04u%02u%02u-%02u%02u%02u-%lu-external.txt", Directory, Now.wYear,
                    Now.wMonth, Now.wDay, Now.wHour, Now.wMinute, Now.wSecond, Pid);
         Out = CreateFileW(Path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        Put("Granite NBA 2K19 external exit report (written by the watcher process)\r\n");
+        Put("Granite NBA 2K22 external exit report (written by the watcher process)\r\n");
         Put("Process:           %lu\r\n", Pid);
         Put("Exit code:         0x%08lX (%lu) %s\r\n", Code, Code, ExceptionName(Code));
         Put("Meaning:           the game ended without passing through any Granite exception filter or exit hook.\r\n");
@@ -1500,19 +1264,14 @@ inline void WatchMain(const wchar_t* CommandLine) noexcept
         wchar_t Base[MAX_PATH]{};
         if (GetEnvironmentVariableW(L"LOCALAPPDATA", Base, MAX_PATH))
         {
-            swprintf_s(Pattern, L"%s\\CrashDumps\\NBA2K19*", Base);
-            ListNewer(Pattern, Created);
-        }
-        if (GetEnvironmentVariableW(L"APPDATA", Base, MAX_PATH))
-        {
-            swprintf_s(Pattern, L"%s\\2K Sports\\NBA 2K19\\CrashReport*", Base);
+            swprintf_s(Pattern, L"%s\\CrashDumps\\NBA2K22*", Base);
             ListNewer(Pattern, Created);
         }
         if (GetEnvironmentVariableW(L"ProgramData", Base, MAX_PATH))
         {
-            swprintf_s(Pattern, L"%s\\Microsoft\\Windows\\WER\\ReportArchive\\*NBA2K19*", Base);
+            swprintf_s(Pattern, L"%s\\Microsoft\\Windows\\WER\\ReportArchive\\*NBA2K22*", Base);
             ListNewer(Pattern, Created);
-            swprintf_s(Pattern, L"%s\\Microsoft\\Windows\\WER\\ReportQueue\\*NBA2K19*", Base);
+            swprintf_s(Pattern, L"%s\\Microsoft\\Windows\\WER\\ReportQueue\\*NBA2K22*", Base);
             ListNewer(Pattern, Created);
         }
         if (LogPath[0])
@@ -1555,8 +1314,6 @@ inline void Install(void (*InSink)(const wchar_t*), const wchar_t* InDirectory, 
     {
         ExeSize = Nt.OptionalHeader.SizeOfImage;
         ExeTimeDateStamp = Nt.FileHeader.TimeDateStamp;
-        VerifiedBuild =
-            ExeTimeDateStamp == VerifiedTimeDateStamp && Nt.OptionalHeader.SizeOfImage == VerifiedSizeOfImage;
     }
     RefreshModules();
 
@@ -1595,48 +1352,18 @@ inline void Install(void (*InSink)(const wchar_t*), const wchar_t* InDirectory, 
         HookApi(L"kernelbase.dll", "RaiseFailFastException", reinterpret_cast<LPVOID>(&FailFastHook),
                 reinterpret_cast<LPVOID*>(&FailFastOriginal));
 
-    const char* AssertStatus = "skipped (unverified NBA2K19.exe build)";
-    const char* WindowProc = "skipped (unverified NBA2K19.exe build)";
-    if (VerifiedBuild)
-    {
-        const auto At = [](unsigned __int64 Va) { return reinterpret_cast<LPVOID>(ExeBase + (Va - IdaImageBase)); };
-        unsigned char A[sizeof(AssertWrapperPrefix)]{}, B[sizeof(AssertWrapperPrefix)]{};
-        const bool MatchA = Read(A, reinterpret_cast<ULONG_PTR>(At(AssertWrapperA)), sizeof(A)) &&
-                            !memcmp(A, AssertWrapperPrefix, sizeof(A));
-        const bool MatchB = Read(B, reinterpret_cast<ULONG_PTR>(At(AssertWrapperB)), sizeof(B)) &&
-                            !memcmp(B, AssertWrapperPrefix, sizeof(B));
-        bool OkA = false, OkB = false;
-        if (MatchA && MH_CreateHook(At(AssertWrapperA), reinterpret_cast<LPVOID>(&AssertHookA),
-                                    reinterpret_cast<LPVOID*>(&AssertOriginalA)) == MH_OK)
-            OkA = MH_EnableHook(At(AssertWrapperA)) == MH_OK;
-        if (MatchB && MH_CreateHook(At(AssertWrapperB), reinterpret_cast<LPVOID>(&AssertHookB),
-                                    reinterpret_cast<LPVOID*>(&AssertOriginalB)) == MH_OK)
-            OkB = MH_EnableHook(At(AssertWrapperB)) == MH_OK;
-        AssertStatus = OkA && OkB ? "ok" : (MatchA && MatchB) ? "FAILED" : "skipped (entry bytes differ)";
-
-        unsigned char W[sizeof(GameWindowProcPrefix)]{};
-        const bool MatchW = Read(W, reinterpret_cast<ULONG_PTR>(At(GameWindowProc)), sizeof(W)) &&
-                            !memcmp(W, GameWindowProcPrefix, sizeof(W));
-        bool OkW = false;
-        if (MatchW && MH_CreateHook(At(GameWindowProc), reinterpret_cast<LPVOID>(&WindowProcHook),
-                                    reinterpret_cast<LPVOID*>(&WindowProcOriginal)) == MH_OK)
-            OkW = MH_EnableHook(At(GameWindowProc)) == MH_OK;
-        if (!OkW) WindowProcOriginal = nullptr;
-        WindowProc = OkW ? "ok" : MatchW ? "FAILED" : "skipped (entry bytes differ)";
-    }
-
     if (HANDLE Maintainer = CreateThread(nullptr, 0, MaintainerThread, nullptr, 0, nullptr)) CloseHandle(Maintainer);
     StartWatcher();
 
-    wchar_t Line[900];
-    swprintf_s(
-        Line,
-        L"[crash] recorder armed: writer thread %lu, first-chance observer, unhandled filter (chained: %s); "
-        L"hooks SetUnhandledExceptionFilter=%S TerminateProcess=%S RtlExitUserProcess=%S RaiseFailFastException=%S "
-        L"VCASSERT=%S window procedure close messages=%S; exe TimeDateStamp 0x%08lX %s; reports in %s",
-        WriterThreadId, ChainedFilter ? L"yes" : L"none yet", SetFilter, TerminateStatus, ExitStatus, FailFastStatus,
-        AssertStatus, WindowProc, ExeTimeDateStamp, VerifiedBuild ? L"(verified)" : L"(unverified)", Directory);
-    Say(Line);
+    if (strcmp(SetFilter, "ok") != 0 || strcmp(TerminateStatus, "ok") != 0 ||
+        strcmp(ExitStatus, "ok") != 0 || strcmp(FailFastStatus, "ok") != 0)
+    {
+        wchar_t Line[320];
+        swprintf_s(Line, L"[crash] API hooks incomplete: SetUnhandledExceptionFilter=%S TerminateProcess=%S "
+                   L"RtlExitUserProcess=%S RaiseFailFastException=%S",
+                   SetFilter, TerminateStatus, ExitStatus, FailFastStatus);
+        Say(Line);
+    }
 }
 
 }

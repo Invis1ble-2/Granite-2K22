@@ -6,7 +6,8 @@
 const { Builder, GetFields, GetField, Types } = require('../../Codec/FieldList');
 const { Crc32 } = require('../../Core/Crc32');
 const { ItemCrc, PurchaseType } = require('../VirtualCurrency/Purchase');
-const { OwnedKey, ListOwnedItems, RememberOwnedItem } = require('../../Storage/OwnedItems');
+const { OwnedKey, RememberOwnedItem } = require('../../Storage/OwnedItems');
+const { InventoryFor } = require('../../Storage/AutomaticOwnership');
 const { BalanceFor, SetBalance } = require('../VirtualCurrency/Balance');
 const Wire2K22 = require('./Wire2K22');
 const Logger = require('../../Core/Logger');
@@ -32,7 +33,7 @@ function Build(Input, Context = {}) {
     if (HasNativeCatalog && !(Context.OwnedItems instanceof Map))
         return new Builder().AddU32(Result, Crc32('FAILURE')).Build();
     const AccountKey = OwnedKey(Context);
-    const ExistingOwned = new Set(ListOwnedItems(Context.OwnedItems, AccountKey).map(Entry => Number(Entry.item) >>> 0));
+    const ExistingOwned = new Set(InventoryFor(Context).map(Entry => Number(Entry.item) >>> 0));
     let Total = 0n;
     if (HasNativeCatalog) {
         const SeenItems = new Set();

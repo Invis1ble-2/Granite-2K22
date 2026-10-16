@@ -8,6 +8,7 @@ const { Crc32 } = require('../../Core/Crc32');
 const { AttributeIds, AttributesFor, AsBigInt, CareerKey } = require('../MyCareer/Attributes/Constants');
 const { BalanceFor, SetBalance } = require('./Balance');
 const { OwnedKey, RememberOwnedItem } = require('../../Storage/OwnedItems');
+const { IsAutomaticallyOwned } = require('../../Storage/AutomaticOwnership');
 const { TransactionFields, TransactionModes } = require('./GetPrices');
 const Gatorade = require('../MyCareer/Gatorade');
 const SkillBoosts = require('./SkillBoosts2K22');
@@ -49,6 +50,7 @@ function NativeCatalogPrice(Item, Context = {}) {
 function PriceFor(Item, Index, Fields, Context = {}) {
     const Skill = SkillBoosts.ProductFor(Item);
     if (Skill) return Skill.price;
+    if (IsAutomaticallyOwned(Item, Context)) return 0n;
     const TypeField = GetField(Fields, PurchaseType, Index);
     if (TypeField && TypeField.Data1 >>> 0 === ConsumablePurchaseType) {
         const Native = NativeCatalogPrice(Item, Context);
@@ -73,6 +75,7 @@ function PricesFor(Items, Fields, Context = {}) {
 
 function CatalogPriceFor(Item, Context = {}) {
     const Native = NativeCatalogPrice(Item, Context);
+    if (IsAutomaticallyOwned(Item, Context)) return 0n;
     if (Native !== null) return Native;
     const Catalog = Context.VcPrices;
     if (Catalog instanceof Map && Catalog.has(Item >>> 0)) {
@@ -212,6 +215,7 @@ function Build(Input, Context = {}) {
             for (let Index = 0; Index < Items.length; Index++) {
                 if (AttributeForItem(Items[Index], Context) !== null) continue;
                 if (GatoradePlan?.Prices.has(Index)) continue;
+                if (IsAutomaticallyOwned(Items[Index], Context)) continue;
                 const TypeField = GetField(Fields, PurchaseType, Index);
                 RememberOwnedItem(Context.OwnedItems, Key, {
                     item: Items[Index] >>> 0,
@@ -220,7 +224,7 @@ function Build(Input, Context = {}) {
                 });
                 StoredAny = true;
             }
-            if ((!GatoradePlan || StoredAny) && typeof Context.SaveOwnedItems === 'function') Context.SaveOwnedItems();
+            if (StoredAny && typeof Context.SaveOwnedItems === 'function') Context.SaveOwnedItems();
         }
     }
     if (Changes.length && Context.Careers instanceof Map) {

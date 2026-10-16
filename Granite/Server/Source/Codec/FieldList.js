@@ -196,10 +196,7 @@ function GetString8(Fields, Crc, Index = 0) {
 }
 
 function DateToVCDate(Value) {
-    if (Value === undefined || Value === null) {
-        // 锁定服务端时间到 2022-07-11 12:00:00 UTC，防止 2K22 客户端按服务端下发时间判定赛季过期
-        return 212524300800000n;
-    }
+    if (Value === undefined || Value === null) return BigInt(Date.now()) + JulianUnixEpochMs;
     const DateValue = Value instanceof Date ? Value : new Date(Value);
     if (!Number.isFinite(DateValue.getTime())) throw new TypeError(`invalid date: ${Value}`);
     return BigInt(DateValue.getTime()) + JulianUnixEpochMs;

@@ -3,24 +3,13 @@
 
 'use strict';
 
-const Fs = require('node:fs');
+const { LoadFile } = require('./StoreCatalog2K22');
 
-function LoadCatalogPrices(File) {
-    const Document = JSON.parse(Fs.readFileSync(File, 'utf8'));
-    if (
-        Document.version !== 1 ||
-        Document.source !== 'NBA2K19_MANIFEST_STORE_BINARY_DATA' ||
-        !Array.isArray(Document.items)
-    )
-        throw new Error('store prices require an exported NBA2K19 item catalog');
-    const Prices = new Map();
-    for (const Entry of Document.items) {
-        const Item = Number(Entry.item) >>> 0;
-        const Price = Number(Entry.finalPrice ?? Entry.price);
-        if (!Item || !Number.isSafeInteger(Price) || Price <= 0) continue;
-        Prices.set(Item, BigInt(Price));
-    }
-    return Prices;
+function LoadCatalogPrices(Source) {
+    const Catalog = typeof Source === 'string' ? LoadFile(Source) : Source;
+    if (!(Catalog?.catalogPricesByItem instanceof Map))
+        throw new Error('store prices require a loaded 2K22 store catalog');
+    return new Map(Catalog.catalogPricesByItem);
 }
 
 module.exports = { LoadCatalogPrices };

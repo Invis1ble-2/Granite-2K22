@@ -665,6 +665,7 @@ DWORD WINAPI CareerPriceWatchdog(void*)
 #include "ParkRosterTrace.h"
 #include "SoloParkNative.h"
 #include "AnimationUnlock.h"
+#include "ContentSeasons.h"
 
 DWORD WINAPI Initialise(void*)
 {
@@ -672,7 +673,7 @@ DWORD WINAPI Initialise(void*)
     const bool ConfigSaved = ModuleConfig::Load(Directory);
     EnsureConsole();
     OpenLogFile();
-    Log(LogLevel::Info, L"Granite module 0x00010206 initialized; configuration: " + Directory + L"\\Granite.ini");
+    Log(LogLevel::Info, L"Granite module 0x00010209 initialized; configuration: " + Directory + L"\\Granite.ini");
     if (!ConfigSaved) Log(LogLevel::Error, L"Granite.ini could not be created or accessed; missing settings use defaults");
     if (ModuleConfig::EnableCrashHandler)
         CrashHandler::Install([](const wchar_t* Text) { Log(LogLevel::Info, Text); },
@@ -708,6 +709,7 @@ DWORD WINAPI Initialise(void*)
     MH_STATUS MhStatus = MH_Initialize();
     if (MhStatus == MH_OK || MhStatus == MH_ERROR_ALREADY_INITIALIZED)
     {
+        ContentSeasons::Install(Executable);
         ParkRosterTrace::Install(Executable);
         SoloParkNative::Install(Executable);
         AnimationUnlock::Install(Executable);
@@ -766,7 +768,7 @@ DWORD WINAPI Initialise(void*)
 
 extern "C" __declspec(dllexport) unsigned int GraniteModuleVersion()
 {
-    return 0x00010206;
+    return 0x00010209;
 }
 
 extern "C" __declspec(dllexport) void CALLBACK GraniteCrashWatchW(HWND, HINSTANCE, LPWSTR CommandLine, int)

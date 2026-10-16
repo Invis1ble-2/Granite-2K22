@@ -97,7 +97,8 @@ Test('Beats clothing never substitutes unrelated clothes or unlocks unavailable 
     Assert.ok(!Value.items.some(Row => Row.item_id === 2));
 });
 Test('retail catalog: all stores are tagged and brand-isolated without losing general shop coverage', () => {
-    const Document = require('../Storage/Inventory/StoreCatalog2K22.json');
+    const Document = require('../Source/Storage/StoreCatalog2K22').ReadDocument(
+        require('node:path').join(__dirname, '../Storage/Inventory/StoreCatalog2K22.json'));
     const Value = new StoreCatalog2K22(Document);
     Assert.equal(Document.resourceValidationVersion, 1);
     Assert.equal(Document.items.length, 40804, 'retain native rows for provenance, filter only sale views');
@@ -155,7 +156,8 @@ Test('retail catalog: all stores are tagged and brand-isolated without losing ge
 });
 
 Test('retail layout removes empty Nike/Puma accessories and BAPE without removing stocked cells', () => {
-    const Value = new StoreCatalog2K22(require('../Storage/Inventory/StoreCatalog2K22.json'));
+    const Value = require('../Source/Storage/StoreCatalog2K22').LoadFile(
+        require('node:path').join(__dirname, '../Storage/Inventory/StoreCatalog2K22.json'));
     const Document = Layout.LayoutDocument(Value);
     for (const Brand of ['NIKE', 'PUMA']) {
         Assert.deepEqual(Document[`${Brand}_STORE`].flat(2).map(Cell => Cell.tag),

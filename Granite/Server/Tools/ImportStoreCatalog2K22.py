@@ -2,6 +2,7 @@
 # Licensed under the PolyForm Noncommercial License 1.0.0. See LICENSE.md.
 
 import argparse
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -429,7 +430,14 @@ def Main(Manifest, Output, IncludeRaw):
 
     Output.parent.mkdir(parents=True, exist_ok=True)
     Temporary = Output.with_name(Output.name + '.tmp')
-    Temporary.write_text(json.dumps(Result, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    if not IncludeRaw:
+        for Item in Result['items']:
+            Item.pop('recordIndex', None)
+            Item['rawWords'] = {'0x194': Item['rawWords']['0x194']}
+    Data = json.dumps(Result, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    if Output.suffix == '.gz':
+        Data = gzip.compress(Data, compresslevel=9, mtime=0)
+    Temporary.write_bytes(Data)
     Temporary.replace(Output)
     print(
         f'Parsed {Result["nativeRecordCount"]} NBA2K22 store records '
@@ -443,7 +451,7 @@ if __name__ == '__main__':
     Parser = argparse.ArgumentParser(
         description='Read the NBA 2K22 manifest shard layout and decode store_binary_data.iff')
     Parser.add_argument('manifest', type=Path, help='NBA 2K22 manifest file')
-    Parser.add_argument('output', type=Path, help='output JSON path (must be outside game directory)')
+    Parser.add_argument('output', type=Path, help='output .json or .json.gz path (must be outside game directory)')
     Parser.add_argument('--include-raw', action='store_true',
                         help='include each full 0x1A0 record as hex in the output')
     Arguments = Parser.parse_args()

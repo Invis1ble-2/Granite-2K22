@@ -24,6 +24,8 @@ namespace ModuleConfig
     inline bool LogParkRosterTrace = false;
     inline bool LogAttributePrice = false;
     inline bool LogBadgeBudget = false;
+    inline bool LogContentSeasons = false;
+    inline bool LogAnimationUnlock = false;
 
     // UTF-16LE lets the Windows profile API read comments and Unicode paths.
     // CREATE_NEW preserves existing settings, including concurrent creation.
@@ -55,7 +57,9 @@ namespace ModuleConfig
             L"; Solo park validation and generated roster messages\r\nLogSoloPark = 0\r\n\r\n"
             L"; Native roster messages and memory dumps\r\nLogParkRosterTrace = 0\r\n\r\n"
             L"; Attribute price synchronization and watchdog messages\r\nLogAttributePrice = 0\r\n\r\n"
-            L"; Badge budget buffering and reporting messages\r\nLogBadgeBudget = 0\r\n";
+            L"; Badge budget buffering and reporting messages\r\nLogBadgeBudget = 0\r\n\r\n"
+            L"; Content-season reference setup status (not a feature toggle)\r\nLogContentSeasons = 0\r\n\r\n"
+            L"; Animation hook setup status (not a feature toggle)\r\nLogAnimationUnlock = 0\r\n";
         constexpr DWORD Size = static_cast<DWORD>(sizeof(Defaults) - sizeof(wchar_t));
         DWORD Written = 0;
         const bool Saved = WriteFile(File, Defaults, Size, &Written, nullptr) && Written == Size;
@@ -101,6 +105,8 @@ namespace ModuleConfig
         LogParkRosterTrace  = ReadToggle(L"Logging", L"LogParkRosterTrace", false, Ini);
         LogAttributePrice   = ReadToggle(L"Logging", L"LogAttributePrice", false, Ini);
         LogBadgeBudget      = ReadToggle(L"Logging", L"LogBadgeBudget", false, Ini);
+        LogContentSeasons   = ReadToggle(L"Logging", L"LogContentSeasons", false, Ini);
+        LogAnimationUnlock  = ReadToggle(L"Logging", L"LogAnimationUnlock", false, Ini);
         return Saved;
     }
 }
