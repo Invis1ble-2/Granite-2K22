@@ -19,6 +19,7 @@ const Groups = Object.freeze(Object.fromEntries([
     ['Football', 25, 'Football', false],
     ['DJStation', 26, 'DJ Station', false],
     ['Equipment', 28, 'Basketballs', true],
+    ['PlayerPanels', 27, 'Player Panels', true], // Local CustomPlayerPanels.iff resources; not a store page.
 ].map(([Name, ItemType, Title, RequiresContent]) => [Name, Object.freeze({
     ItemType, Title, RequiresContent,
     // Gatorade uses an EXE-local layout with this exact tag (FUN_1405b2180).

@@ -11,6 +11,7 @@ const { ProductFor: GatoradeProduct } = require('./GatoradeBoosts');
 const PermanentGroups = Object.freeze([
     'Clothing', 'Accessories', 'Shoes', 'Mascots', 'Tattoos', 'Headphones',
     'MyCourt', 'Wheelz', 'Football', 'DJStation', 'Equipment',
+    'PlayerPanels',
 ]);
 
 function LoadAutomaticItems(Source) {

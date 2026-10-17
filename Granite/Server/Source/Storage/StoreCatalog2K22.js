@@ -3,6 +3,7 @@
 'use strict';
 
 const Fs = require('node:fs');
+const Path = require('node:path');
 const Zlib = require('node:zlib');
 const { createHash } = require('node:crypto');
 const { Builder } = require('../Codec/FieldList');
@@ -23,6 +24,40 @@ const Fields = Object.freeze({
 
 const StoreTags = Object.freeze(Object.fromEntries(Object.entries(Groups).map(([Name, Group]) => [Name, Group.Tag])));
 const StoreTagCrcs = Object.freeze(Object.fromEntries(Object.entries(StoreTags).map(([Name, Tag]) => [Name, Crc32(Tag)])));
+
+const ExpectedPanelIffSha256 = 'c08a11348607d6b65ff42add0e6bea686176539d8fbd22230f3bf12ee648e0d7';
+
+function LoadVerifiedPanelResources(ManifestSha256) {
+    const File = Path.resolve(__dirname, '../../../..', 'NBA2K22_PlayerPanelResources.tsv');
+    let Text;
+    try {
+        Text = Fs.readFileSync(File, 'utf8');
+    } catch {
+        return new Map();
+    }
+    const SourceManifestSha256 = Text.match(/^# source_manifest_sha256=([a-f0-9]{64})$/im)?.[1];
+    const PanelIffSha256 = Text.match(/^# customplayerpanels_iff_sha256=([a-f0-9]{64})$/im)?.[1];
+    if (SourceManifestSha256?.toLowerCase() !== String(ManifestSha256 || '').toLowerCase() ||
+        PanelIffSha256?.toLowerCase() !== ExpectedPanelIffSha256) return new Map();
+
+    const Lines = Text.split(/\r?\n/).filter(Line => Line && !Line.startsWith('#'));
+    const Header = Lines.shift()?.split('\t') || [];
+    const ItemIndex = Header.indexOf('item_id');
+    const ContentIndex = Header.indexOf('content_key');
+    const StatusIndex = Header.indexOf('resource_status');
+    if (ItemIndex < 0 || ContentIndex < 0 || StatusIndex < 0) return new Map();
+
+    const Resources = new Map();
+    for (const Line of Lines) {
+        const Columns = Line.split('\t');
+        const Item = Number(Columns[ItemIndex]);
+        const ContentKey = Columns[ContentIndex];
+        if (Columns[StatusIndex] !== 'texture_and_dds_present' || !Number.isSafeInteger(Item) ||
+            Item <= 0 || Item >= 0xffffffff || !/^t_player_panel_[a-z0-9_]+$/i.test(ContentKey || '')) continue;
+        Resources.set(Item, ContentKey);
+    }
+    return Resources;
+}
 
 function VerifyDiscount(originPrice, finalPrice) {
     if (finalPrice === originPrice) {
@@ -116,6 +151,8 @@ class StoreCatalog2K22 {
         if (Version === 0n) Version = 1n;
         this.version = Version;
 
+        const VerifiedPanelResources = LoadVerifiedPanelResources(Document.manifestSha256);
+
         const Seen = new Map();
         const RawSeen = new Map();
         const Conflicted = new Set();
@@ -133,6 +170,8 @@ class StoreCatalog2K22 {
             if (RawItem.availability !== 0) continue;
             const GroupName = GroupByType.get(RawItem.itemType);
             if (!GroupName) continue;
+            const IsVerifiedLocalPanel = GroupName === 'PlayerPanels' &&
+                VerifiedPanelResources.get(Id) === RawItem.content?.[0];
             if (Document.resourceValidationVersion === 1) {
                 const Resources = RawItem.resources;
                 const Wearable = [2, 4, 5].includes(RawItem.itemType);
@@ -141,8 +180,9 @@ class StoreCatalog2K22 {
                     (Wearable && typeof Resources.content !== 'boolean')) {
                     throw new Error(`missing resource validation for 2K22 item ${RawId}`);
                 }
-                // Keep usable nameless OR thumbnail-less items, never require both labels.
-                if (Resources.content === false || (!Resources.name && !Resources.thumbnail)) continue;
+                // Panel cards use verified local IFF textures, not CDN name/thumbnail/content flags.
+                if (!IsVerifiedLocalPanel &&
+                    (Resources.content === false || (!Resources.name && !Resources.thumbnail))) continue;
             }
 
             if (
@@ -218,8 +258,10 @@ class StoreCatalog2K22 {
             }
             Item.tag_crcs = [...Tags];
 
-            this.catalogPricesByItem.set(Entry.id, BigInt(Raw.price));
-            if (GroupName !== 'Gatorade') this.pricesByItem.set(Entry.id, BigInt(Raw.price));
+            if (GroupName !== 'PlayerPanels') {
+                this.catalogPricesByItem.set(Entry.id, BigInt(Raw.price));
+                if (GroupName !== 'Gatorade') this.pricesByItem.set(Entry.id, BigInt(Raw.price));
+            }
             this.items.push(Item);
             this.groupItems[GroupName].push(Item);
         }

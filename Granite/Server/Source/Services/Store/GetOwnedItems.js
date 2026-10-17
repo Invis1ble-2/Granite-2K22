@@ -8,17 +8,24 @@ const { Crc32 } = require('../../Core/Crc32');
 const { ItemCrc, PurchaseType } = require('../VirtualCurrency/Purchase');
 const { InventoryFor } = require('../../Storage/AutomaticOwnership');
 const Wire2K22 = require('./Wire2K22');
+const { RequestedPage } = require('./GetOverview');
 
 const Result = Crc32('RESULT');
 const Success = Crc32('SUCCESS');
 
 function Build(Input, Context = {}) {
     const Reply = new Builder();
-    const Owned = InventoryFor(Context);
-    // NBA2K22 FUN_14059B340 (0x14059B485–0x14059B4E8) consumes the
-    // compressed inventory only, not the duplicate legacy item/type fields.
+    const AllOwned = InventoryFor(Context);
     const Agent = Input?.headers?.['user-agent'];
     const Native2K22 = typeof Agent === 'string' && /^VISUAL_CONCEPTS_WIN64\/22(?:\.|$)/i.test(Agent);
+    // K22 FUN_1413AC4B0 (0x1413AC61D–0x1413AC637) requests CATEGORY:ICON.
+    // Closet and other requests share this route and must retain their full inventory.
+    const PanelRequest = Native2K22 && RequestedPage(Input) === 'CATEGORY:ICON';
+    const PanelIds = new Set((Context.StoreCatalog2K22?.groupItems?.PlayerPanels || [])
+        .map(Entry => Number(Entry.item_id) >>> 0));
+    const Owned = PanelRequest
+        ? AllOwned.filter(Entry => PanelIds.has(Number(Entry.item) >>> 0))
+        : AllOwned;
     if (!Native2K22) {
         for (const Entry of Owned) {
             Reply.AddStringCrc(ItemCrc, Number(Entry.item));
