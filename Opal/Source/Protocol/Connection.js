@@ -357,9 +357,9 @@ function OnTravelRequest(Client, FrameData, Bytes) {
             SessionId,
             ServerType,
             WorldKey,
+            ActivityKey: Destination.ActivityKey,
             url: Url,
             ConnectionId: FrameData.Buffer.slice(8, 16),
-            Generation: require('./PlayerBody').GenerationForConnection(Client),
         });
         Client.Send(Built.Frame);
         Log.Info(`${Client.Identifier} is travelling to ${Destination.Name} @ ${Log.Clock()}`);
@@ -542,8 +542,17 @@ function OnConnect(Client, FrameData, Bytes) {
                 `and activity ${Hex(ActivityKey)}; court objects will be published`,
         );
     }
+    // Connect precedes scene readiness. Keep Ante-Up's first court publication
+    // behind a validated PLAYER handshake, without re-arming on repeat Connect.
+    const AwaitStageHandshake = Activity.Name === 'stage' &&
+        (Client.ActivityName !== 'stage' || Client.CourtProtocolPending);
     Client.ActivityName = Activity.Name;
-    Client.CourtProtocolPending = Activity.Name === 'neighborhood' && !Client.ProtocolGeneration;
+    Client.CourtProtocolPending = AwaitStageHandshake ||
+        (Activity.Name === 'neighborhood' && !Client.ProtocolGeneration);
+    if (AwaitStageHandshake) {
+        Client.CourtsPublished = false;
+        Client.CourtsMoveRefreshed = false;
+    }
     Client.ActivityKey = Activity.ActivityKey !== null ? Activity.ActivityKey : Client.ActivityKey;
     Client.RoomScope = Activity.Name === 'mycourt' ? MyCourt.RoomScopeFor(Client) : null;
     Client.Advance(State.Active);

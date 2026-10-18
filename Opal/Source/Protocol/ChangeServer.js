@@ -15,21 +15,17 @@ const SubOpcode = 0x86073f8c;
 const SpectatorSubOpcode = 0xb0bf29b0;
 
 const RouteWindowLength = 1024;
+// NBA2K22.exe.unpacked.exe, FUN_1416871F0; offsets are relative to the body.
 const Offset = Object.freeze({
     SubOpcode: 0,
     SessionId: 4,
-    ServerType: 28,
-    WorldKey: 176,
-    TicketLength: 224,
-    Url: 226,
+    ServerType: 0x1c,
+    ActivityKey: 0x28,
+    WorldKey: 0x48,
+    TicketLength: 0xb2,
+    Url: 0xb4,
 });
-// NBA2K22.exe.unpacked.exe, FUN_1416871F0; offsets are relative to the body.
-const Offset2K22 = Object.freeze({ ...Offset, WorldKey: 0x48, TicketLength: 0xb2, Url: 0xb4 });
 const BodyLength = Offset.Url + RouteWindowLength;
-
-function OffsetFor(Generation = '2K19') {
-    return Generation === '2K22' ? Offset2K22 : Offset;
-}
 
 function BuildTicket(SessionId, ServerType, WorldKey) {
     return new FieldList.Builder()
@@ -46,30 +42,32 @@ function Build({
     SessionId,
     ServerType,
     WorldKey,
+    ActivityKey = null,
     url: Url,
     ConnectionId = null,
     SubOpcode: SubOpcodeValue = SubOpcode,
-    Generation = '2K19',
 }) {
     const Index = Worlds.AssertRoutable(WorldKey);
-    const Layout = OffsetFor(Generation);
-    const Length = Layout.Url + RouteWindowLength;
-    const Body = Buffer.alloc(Length);
-    Body.writeUInt32BE(SubOpcodeValue >>> 0, Layout.SubOpcode);
-    Body.writeBigUInt64BE(BigInt.asUintN(64, BigInt(SessionId)), Layout.SessionId);
-    Body.writeUInt32BE(ServerType >>> 0, Layout.ServerType);
-    Body.writeUInt32BE(WorldKey >>> 0, Layout.WorldKey);
+    const Body = Buffer.alloc(BodyLength);
+    Body.writeUInt32BE(SubOpcodeValue >>> 0, Offset.SubOpcode);
+    Body.writeBigUInt64BE(BigInt.asUintN(64, BigInt(SessionId)), Offset.SessionId);
+    Body.writeUInt32BE(ServerType >>> 0, Offset.ServerType);
+    Body.writeUInt32BE(WorldKey >>> 0, Offset.WorldKey);
+    if (SubOpcodeValue === SubOpcode && ActivityKey !== null) {
+        // FUN_1416871F0: body+0x28 becomes Connect field 0x4b7ad8c3 via parameters+0x244.
+        Body.writeUInt32BE(ActivityKey >>> 0, Offset.ActivityKey);
+    }
 
     const Address = Buffer.from(String(Url) + '\0', 'utf8');
     const Ticket = BuildTicket(SessionId, ServerType, WorldKey);
-    const TicketOffset = Layout.Url + Address.length;
-    if (TicketOffset + Ticket.length > Length) {
+    const TicketOffset = Offset.Url + Address.length;
+    if (TicketOffset + Ticket.length > BodyLength) {
         throw new Error(
-            `change server route data exceeds the packet (${TicketOffset + Ticket.length} of ${Length})`,
+            `change server route data exceeds the packet (${TicketOffset + Ticket.length} of ${BodyLength})`,
         );
     }
-    Body.writeUInt16BE(Ticket.length, Layout.TicketLength);
-    Address.copy(Body, Layout.Url);
+    Body.writeUInt16BE(Ticket.length, Offset.TicketLength);
+    Address.copy(Body, Offset.Url);
     Ticket.copy(Body, TicketOffset);
 
     return {
@@ -97,15 +95,17 @@ function UrlFor(Socket, Port, Path = '/') {
     return `wss://${HostFor(Socket)}:${Port}${Path}`;
 }
 
-const NeverTravel = new Set([0x9d32c5b4]);
+const CommandPacket = 0xce148fb1;
 const StartConnection = 0x5bb78c48;
+const ReplaceConnection = 0x6cbd2792;
 
 function IsTravelRequest(Bytes, PacketIdValue) {
-    if (NeverTravel.has(PacketIdValue >>> 0)) return false;
+    if (PacketIdValue >>> 0 !== CommandPacket) return false;
     if (!Bytes || Bytes.length < 32) return false;
     const Command = FieldList.Scan(Bytes, 'COMMAND');
-    if (Command && Command.Type === FieldList.Type.U32 && Command.Data1 >>> 0 === StartConnection) return true;
-    return !!FieldList.Scan(Bytes, StartConnection);
+    if (!Command || Command.Type !== FieldList.Type.U32) return false;
+    const Value = Command.Data1 >>> 0;
+    return Value === StartConnection || Value === ReplaceConnection;
 }
 
 function ReadRequest(Bytes) {
@@ -153,8 +153,6 @@ module.exports = {
     RouteWindowLength,
     BodyLength,
     Offset,
-    Offset2K22,
-    OffsetFor,
     Build,
     BuildSpectator,
     BuildTicket,
@@ -165,5 +163,6 @@ module.exports = {
     IsMyCourtDestination,
     ServerTypeFor,
     StartConnection,
+    ReplaceConnection,
     Hex,
 };

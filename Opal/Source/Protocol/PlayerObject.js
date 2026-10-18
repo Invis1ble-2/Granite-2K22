@@ -362,6 +362,20 @@ function Register(Connection, Frame) {
 
     if (Shown || Seen) ScheduleRepublish(Connection);
 
+    // Only the successful handshake path releases Ante-Up courts. Shown may
+    // legitimately be zero in a single-player room, so do not use it as readiness.
+    if (Connection.ActivityName === 'stage' && Connection.CourtProtocolPending && !Connection.Closed) {
+        Connection.CourtProtocolPending = false;
+        const Published = require('./Courts').Publish(Connection);
+        if (Published > 0) {
+            const { ScheduleCourtRefresh } = require('./Connection');
+            ScheduleCourtRefresh(Connection, 4000);
+            ScheduleCourtRefresh(Connection, 20000);
+        } else {
+            Connection.CourtProtocolPending = true;
+        }
+    }
+
     return Shown;
 }
 

@@ -3,7 +3,7 @@
 
 'use strict';
 
-const StageSpots = require('./StageSpots/GamblingCourts2K19');
+const StageSpots = require('./StageSpots/GamblingCourts2K22');
 const Boulevard = require('./StageSpots/BoulevardCourts2K19');
 const { Crc32 } = require('../Core/Crc32');
 
@@ -40,21 +40,6 @@ function Place(Pos, OffsetValue) {
     return [Pos[0] + OffsetValue[0], Pos[1] + OffsetValue[1], Pos[2] + OffsetValue[2]];
 }
 
-function StageSpotAnchorsByName(OffsetValue) {
-    const ByName = {};
-    for (const C of StageSpots.GamblingCourts) {
-        const PlaceData = (A) => Place(A, OffsetValue);
-        ByName[C.name] = {
-            SpotAnchors: [
-                StageSpots.SpotAnchorsFor(C, 0).map(PlaceData),
-                StageSpots.SpotAnchorsFor(C, 1).map(PlaceData),
-            ],
-            SquadAnchors: StageSpots.StageCourtHasSquad(C) ? StageSpots.SquadAnchorFor(C).map(PlaceData) : null,
-            NoSquad: !StageSpots.StageCourtHasSquad(C),
-        };
-    }
-    return ByName;
-}
 
 function BoulevardCourts() {
     return Boulevard.BoulevardCourts.map((C, Index) => ({
@@ -78,19 +63,7 @@ function BoulevardCourts() {
 }
 
 function StageCourts() {
-    const Anchors = StageSpotAnchorsByName(Offset.stage);
-    return Table(StageMarkers, Offset.stage).map((C) => {
-        const A = Anchors[C.Name];
-        if (!A) return C;
-        return {
-            ...C,
-            SpotAnchors: A.SpotAnchors,
-            SquadAnchors: A.SquadAnchors,
-            NoSquad: A.NoSquad,
-            Guid: StageGuidFor(C.Name),
-            CourtId: StageLowFor(C.Name),
-        };
-    });
+    return StageSpots.Table().map((C) => ({...C, Guid:StageGuidFor(C.Name), CourtId:StageLowFor(C.Name)}));
 }
 
 const CourtId = {};
@@ -102,16 +75,9 @@ function TeamSizeFromName(Name) {
     throw new Error(`cannot tell the team size from the court name ${Name}`);
 }
 
-const StageMarkers = [
-    { Name: 'GAMBLING_ONE_V_ONE', CourtType: 'SHORT', Yaw: 0.0, Pos: [-2.99600005, 0.0, 2834.09106] },
-    { Name: 'GAMBLING_THREE_V_THREE_1', CourtType: 'SHORT', Yaw: 1.57079637, Pos: [-3165.97998, 0.0, 5.92000008] },
-    { Name: 'GAMBLING_THREE_V_THREE_2', CourtType: 'SHORT', Yaw: 1.57079637, Pos: [0.0, 0.0, 0.0] },
-    { Name: 'GAMBLING_THREE_V_THREE_3', CourtType: 'SHORT', Yaw: 1.57079637, Pos: [3179.63696, 0.0, 5.09800005] },
-    { Name: 'GAMBLING_THREE_V_THREE_4', CourtType: 'SHORT', Yaw: 1.57079637, Pos: [-2809.62402, 0.0, 2218.22192] },
-    { Name: 'GAMBLING_THREE_V_THREE_5', CourtType: 'SHORT', Yaw: 1.57079637, Pos: [2804.68701, 0.0, 2217.59595] },
-    { Name: 'GAMBLING_TWO_V_TWO_1', CourtType: 'NBA', Yaw: -1.57079637, Pos: [-2573.71997, 0.0, -2194.08105] },
-    { Name: 'GAMBLING_TWO_V_TWO_2', CourtType: 'NBA', Yaw: 1.57079637, Pos: [2564.73096, 0.0, -2186.95605] },
-];
+const StageMarkers = StageSpots.GamblingCourts.map((C) => ({
+    Name:C.name, CourtType:C.GeometryType, Yaw:C.Yaw, Pos:C.Pos.slice(),
+}));
 
 const CagesMarkers = [
     { Name: 'SLAMBALL_3V3_TOP_LEFT', CourtType: 'SHORT', Yaw: 0.0, Pos: [524.645874, 0.0, 52626.6367] },

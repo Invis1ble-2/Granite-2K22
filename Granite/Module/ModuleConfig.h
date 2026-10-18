@@ -9,7 +9,6 @@ namespace ModuleConfig
 {
     // Loaded once before hooks and worker threads are installed.
     inline bool EnableCrashHandler = true;
-    inline bool EnableParkRosterTrace = false;
     inline bool EnablePriceWatchdog = true;
     inline bool EnableBadgeBudgets = true;
     inline bool EnableAnimationShopAll = true;
@@ -21,7 +20,6 @@ namespace ModuleConfig
     inline bool EnableConsole = true;
 
     inline bool LogSoloPark = false;
-    inline bool LogParkRosterTrace = false;
     inline bool LogAttributePrice = false;
     inline bool LogBadgeBudget = false;
     inline bool LogContentSeasons = false;
@@ -45,7 +43,6 @@ namespace ModuleConfig
             L"; Crash reports are controlled separately from .log output.\r\n\r\n"
             L"[Features]\r\n"
             L"; Crash capture and minidumps\r\nEnableCrashHandler = 1\r\n\r\n"
-            L"; Optional native park roster diagnostics\r\nEnableParkRosterTrace = 0\r\n\r\n"
             L"; Career attribute direct prices and watchdog\r\nEnablePriceWatchdog = 1\r\n\r\n"
             L"; Career badge budget reporting\r\nEnableBadgeBudgets = 1\r\n\r\n"
             L"; Show all native animation shop candidates (season/exclusion/rule filters bypassed)\r\nEnableAnimationShopAll = 1\r\n\r\n"
@@ -55,7 +52,6 @@ namespace ModuleConfig
             L"; Write .log files in console logs\r\nEnableFileLogging = 1\r\n\r\n"
             L"; Allocate a console window and print to it\r\nEnableConsole = 1\r\n\r\n"
             L"; Solo park validation and generated roster messages\r\nLogSoloPark = 0\r\n\r\n"
-            L"; Native roster messages and memory dumps\r\nLogParkRosterTrace = 0\r\n\r\n"
             L"; Attribute price synchronization and watchdog messages\r\nLogAttributePrice = 0\r\n\r\n"
             L"; Badge budget buffering and reporting messages\r\nLogBadgeBudget = 0\r\n\r\n"
             L"; Content-season reference setup status (not a feature toggle)\r\nLogContentSeasons = 0\r\n\r\n"
@@ -90,7 +86,6 @@ namespace ModuleConfig
 
         // Features
         EnableCrashHandler    = ReadToggle(L"Features", L"EnableCrashHandler", true, Ini);
-        EnableParkRosterTrace = ReadToggle(L"Features", L"EnableParkRosterTrace", false, Ini);
         EnablePriceWatchdog   = ReadToggle(L"Features", L"EnablePriceWatchdog", true, Ini);
         EnableBadgeBudgets    = ReadToggle(L"Features", L"EnableBadgeBudgets", true, Ini);
         EnableAnimationShopAll = ReadToggle(L"Features", L"EnableAnimationShopAll", true, Ini);
@@ -102,7 +97,6 @@ namespace ModuleConfig
         EnableConsole       = ReadToggle(L"Logging", L"EnableConsole", true, Ini);
 
         LogSoloPark         = ReadToggle(L"Logging", L"LogSoloPark", false, Ini);
-        LogParkRosterTrace  = ReadToggle(L"Logging", L"LogParkRosterTrace", false, Ini);
         LogAttributePrice   = ReadToggle(L"Logging", L"LogAttributePrice", false, Ini);
         LogBadgeBudget      = ReadToggle(L"Logging", L"LogBadgeBudget", false, Ini);
         LogContentSeasons   = ReadToggle(L"Logging", L"LogContentSeasons", false, Ini);

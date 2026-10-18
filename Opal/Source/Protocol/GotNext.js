@@ -74,6 +74,7 @@ function Read(Bytes) {
 function Handle(Connection, Bytes) {
     const Grab = Read(Bytes);
     if (!Grab) return false;
+    const Slot = Grab.SlotIndex === null ? 0 : Number(Grab.SlotIndex);
 
     if (Grab.CourtKey !== null) {
         const Candidates = [Grab.CourtKey];
@@ -82,7 +83,11 @@ function Handle(Connection, Bytes) {
         }
         let Resolved = null;
         for (const Key of Candidates) {
-            const Group = GroupFor(Connection, Key) || GroupForLoose(Connection, Key);
+            // Ante-Up JOIN addresses a court plus a queue index, not an internal
+            // queue object. Select before canonicalizing, or both sides become queue 0.
+            const Group = Connection.ActivityName === 'stage' && !Grab.Leaving
+                ? QueuesFor(Connection, Key).find((G) => G.QueueIndex === Slot)
+                : GroupFor(Connection, Key) || GroupForLoose(Connection, Key);
             if (Group) {
                 Resolved = Group.ObjectId;
                 break;
@@ -104,7 +109,6 @@ function Handle(Connection, Bytes) {
             ? 'an unreadable court'
             : `court ${Grab.CourtKey.toString(16).toUpperCase().padStart(16, '0')} ` +
               `(room ${Hex(Grab.Room)}, seq ${Hex(Grab.Seq)})`;
-    const Slot = Grab.SlotIndex === null ? 0 : Number(Grab.SlotIndex);
 
     if (Grab.Leaving) {
         const Held = Connection.GotNext && GroupFor(Connection, Connection.GotNext.Court);
@@ -211,7 +215,8 @@ function QueuesFor(Connection, Court) {
 
     for (let Pass = 0; Pass < 3; Pass++) {
         for (const Raw of World.Courts) {
-            const Queues = Courts.GroupsFor(Raw, World.Room, World.SeqBase).filter((G) => G.Kind === 'gotnext');
+            const Queues = Courts.GroupsFor(Raw, World.Room, World.SeqBase)
+                .filter((G) => Raw.Queues || G.Kind === 'gotnext');
             if (!Queues.length) continue;
 
             let Hit;
@@ -227,7 +232,7 @@ function QueuesFor(Connection, Court) {
                 }
                 Hit = Pass === 1 ? Wire.some((W) => W === Id) : Wire.some((W) => Number(W & 0xffffffffn) >>> 0 === Low);
             }
-            if (Hit) return Queues.slice().sort((A, B) => A.Winding - B.Winding);
+            if (Hit) return Queues.slice().sort((A, B) => (A.QueueIndex ?? A.Winding) - (B.QueueIndex ?? B.Winding));
         }
     }
     return [];
@@ -236,6 +241,9 @@ function QueuesFor(Connection, Court) {
 function QueueFor(Connection, Court, Slot) {
     const Queues = QueuesFor(Connection, Court);
     if (!Queues.length) return GroupFor(Connection, Court) || GroupForLoose(Connection, Court);
+    if (Queues[0].QueueIndex !== undefined) {
+        return Queues.find((G) => G.ObjectId === Court) || Queues.find((G) => G.QueueIndex === (Slot >>> 0)) || null;
+    }
     return Queues[Math.min(Math.max(0, Slot >>> 0), Queues.length - 1)];
 }
 
@@ -269,6 +277,12 @@ function SpotFor(Connection, Court, Slot) {
     return Group.Anchors[Index] || Group.Anchors[0] || null;
 }
 
+function QueueFacingUnits(Group, Spot) {
+    return Group?.Facing
+        ? Math.atan2(Group.Facing[0], Group.Facing[2]) * 32768 / Math.PI
+        : Position.FacingUnitsForSpot(Spot, Group ? Group.Pos : null);
+}
+
 function Deliver(Connection, RequestBuffer = null) {
     if (!Connection.PlayerBody) {
         Log.Error(
@@ -285,7 +299,9 @@ function Deliver(Connection, RequestBuffer = null) {
         if (RequestBuffer) require('./Requests').AckCorrelated(Connection, RequestBuffer);
         return false;
     }
-    const Group = GroupFor(Connection, Connection.GotNext && Connection.GotNext.Court);
+    const Group = Connection.ActivityName === 'stage'
+        ? QueueFor(Connection, Connection.GotNext?.Court, Connection.GotNext?.Slot)
+        : GroupFor(Connection, Connection.GotNext && Connection.GotNext.Court);
     const CourtId = Group ? Courts.IdentityOf(Group) : null;
 
     const Spot = SpotFor(
@@ -294,7 +310,7 @@ function Deliver(Connection, RequestBuffer = null) {
         Connection.GotNext ? Connection.GotNext.Slot : 0,
     );
     const WriteLocation = process.env.OPAL_GOTNEXT_LOCATION === '0' ? null : Spot;
-    const Facing = WriteLocation ? Position.FacingUnitsForSpot(WriteLocation, Group ? Group.Pos : null) : null;
+    const Facing = WriteLocation ? QueueFacingUnits(Group, WriteLocation) : null;
     if (WriteLocation) Connection.GotNext.Location = WriteLocation;
     const Patch = Grant(Connection.PlayerBody, State.GotNext, CourtId, WriteLocation, Facing);
     if (!Patch.Patched) {
@@ -435,17 +451,44 @@ function GroupForLoose(Connection, Court) {
     return null;
 }
 
+// A LINE has waiting capacity independent of the match's team size. Keep its
+// occupied seats packed so joining, leaving and game handoff preserve FIFO.
+function AdvanceLine(Connection, Group) {
+    if (!Group || Group.QueueFunction !== 1) return;
+    const StateData = Slots.StateFor(Group.SlotObjectId, Group.Anchors.length);
+    const Packed = StateData.Seats.filter((Id) => Id !== 0n);
+    const Next = Array.from({length:Group.Anchors.length}, (_, I) => Packed[I] || 0n);
+    if (Next.every((Id, I) => Id === StateData.Seats[I])) return;
+    StateData.Seats = Next;
+    StateData.Revision++;
+    for (const Player of Roster.InActivity(Connection.ActivityKey)) {
+        if (!Player.GotNext || Player.GotNext.Playing || Player.Puid == null) continue;
+        const Held = QueueFor(Player, Player.GotNext.Court, Player.GotNext.Slot);
+        if (Held?.SlotObjectId !== Group.SlotObjectId) continue;
+        const Index = Next.indexOf(Player.Puid);
+        if (Index < 0 || Player.GotNext.Seat === Index) continue;
+        Player.GotNext.Seat = Index;
+        Player.GotNext.Location = Group.Anchors[Index];
+        if (Player.PlayerBody) {
+            Reapply(Player);
+            PublishPlayerState(Player);
+            Warp(Player);
+        }
+    }
+}
+
 function Seat(Connection) {
     if (!Connection.GotNext || Connection.Puid === null) return false;
 
     const Group = QueueFor(Connection, Connection.GotNext.Court, Connection.GotNext.Slot);
     if (!Group) return false;
+    AdvanceLine(Connection, Group);
 
     const SeatData = Slots.Occupy(
         Group.SlotObjectId,
         Connection.Puid,
         Group.Anchors.length,
-        MatIndexFor(Connection, Group),
+        Group.QueueFunction === 1 ? -1 : MatIndexFor(Connection, Group),
     );
     if (!SeatData) {
         Log.Error(
@@ -455,8 +498,22 @@ function Seat(Connection) {
         return false;
     }
 
+    if (Group.QueueIndex !== undefined) {
+        Connection.GotNext.Court = Group.ObjectId;
+        Connection.GotNext.Slot = Group.QueueIndex;
+    }
     Connection.GotNext.Seat = SeatData.Index;
     Connection.GotNext.Location = Group.Anchors[SeatData.Index];
+    if (SeatData.Freed.length) {
+        const World = CourtTables.For(Connection.ActivityName, Connection);
+        for (const Raw of World.Courts) {
+            for (const FreedGroup of Courts.GroupsFor(Raw, World.Room, World.SeqBase)) {
+                if (FreedGroup.QueueFunction !== 1 || !SeatData.Freed.includes(FreedGroup.SlotObjectId)) continue;
+                AdvanceLine(Connection, FreedGroup);
+                require('./CourtData').BroadcastCourtGroup(Connection, FreedGroup);
+            }
+        }
+    }
     Publish(Connection, Group);
 
     if (require('./CourtData').IsBitstreamWorld(Connection.ActivityName)) {
@@ -530,6 +587,7 @@ function HandleGameConnected(Connection, Bytes) {
                 if (Game && Found && Found.Groups.length === 2 && !Game.AwayReleased) {
                     const AwayQueue = Found.Groups[1];
                     for (const Puid of Game.Away) Slots.ReleaseFrom(AwayQueue.SlotObjectId, Puid);
+                    AdvanceLine(Connection, AwayQueue);
                     Game.AwayReleased = true;
                     Log.Info(
                         `${Connection.ActivityName} ${Group.CourtName}: opened the away line ` +
@@ -709,6 +767,7 @@ function FinishPublicGame(Connection, Found, Game, WinnerSide, Reason) {
         Slots.ReleaseFrom(Found.Groups[0].SlotObjectId, Puid);
         Slots.ReleaseFrom(Found.Groups[1].SlotObjectId, Puid);
     }
+    AdvanceLine(Connection, Found.Groups[1]);
 
     const Changed = [];
     const Placements = new Map();
@@ -847,13 +906,16 @@ function MaybeStartMatch(Connection) {
     if (require('./CourtData').GameTeams(Connection.ActivityName, Found.Raw.Name, PlayerBody.GenerationForConnection(Connection))) return false;
     if (require('./NativeSoloPark').TryStart(Connection, Found)) return true;
 
+    const Teams = [];
     for (const G of Found.Groups) {
-        const Seats = Slots.SeatsOf(G.SlotObjectId);
-        if (Seats.length < G.Anchors.length) return false;
-        if (Seats.some((S) => S === 0n)) return false;
+        const Needed = G.MatchSize ?? G.Anchors.length;
+        const Occupants = Slots.SeatsOf(G.SlotObjectId);
+        const Seats = (G.QueueFunction === 1 ? Occupants.filter((Id) => Id !== 0n) : Occupants).slice(0, Needed);
+        if (Seats.length !== Needed || Seats.some((Id) => Id === 0n)) return false;
+        Teams.push(Seats);
     }
 
-    const [Home, Away] = Found.Groups.map((G) => Slots.SeatsOf(G.SlotObjectId).slice(0, G.Anchors.length));
+    const [Home, Away] = Teams;
     if (Home.length !== Away.length || Home.length > 5) return false;
     const Ids = [...Home, ...Away];
     if (new Set(Ids.map(String)).size !== Ids.length) return false;
@@ -939,7 +1001,7 @@ function MaybeStartMatch(Connection) {
                 `granted PLAYING to start the game @ ${Log.Clock()}`,
         );
         if (Connection.ActivityName === 'stage') {
-            Log.Verbose('  2K19 teams and gambling index supplied; awaiting client game-init/synchronization evidence');
+            Log.Verbose('  2K22 teams and gambling index supplied; awaiting client game-init/synchronization evidence');
         } else if (Connection.ActivityName === 'neighborhood') {
             Log.Verbose(`  ${PlayerBody.GenerationForConnection(Connection)} neighborhood teams, USERDATA and GAME relay supplied; awaiting all game connections`);
         }
@@ -987,6 +1049,7 @@ function Vacate(Connection) {
                 for (const Raw of World.Courts) {
                     for (const Group of Courts.GroupsFor(Raw, World.Room, World.SeqBase)) {
                         if (!Freed.includes(Group.SlotObjectId)) continue;
+                        AdvanceLine(Connection, Group);
                         if (
                             CourtData.IsBitstreamWorld(Connection.ActivityName) &&
                             (Connection.ActivityName !== 'neighborhood' ||
@@ -1039,6 +1102,7 @@ function Release(Connection) {
         for (const Raw of World.Courts) {
             for (const Group of Courts.GroupsFor(Raw, World.Room, World.SeqBase)) {
                 if (!Freed.includes(Group.SlotObjectId)) continue;
+                AdvanceLine(Connection, Group);
                 if (require('./CourtData').IsBitstreamWorld(Connection.ActivityName)) {
                     require('./CourtData').BroadcastCourtGroup(Connection, Group);
                 } else {
@@ -1079,12 +1143,14 @@ function Reapply(Connection) {
         Connection.PlayerBody = Body;
         return true;
     }
-    const Group = GroupFor(Connection, Connection.GotNext.Court);
+    const Group = Connection.ActivityName === 'stage'
+        ? QueueFor(Connection, Connection.GotNext.Court, Connection.GotNext.Slot)
+        : GroupFor(Connection, Connection.GotNext.Court);
     const Location =
         process.env.OPAL_GOTNEXT_LOCATION === '0'
             ? null
             : Connection.GotNext.Location || SpotFor(Connection, Connection.GotNext.Court, Connection.GotNext.Slot);
-    const Facing = Location ? Position.FacingUnitsForSpot(Location, Group ? Group.Pos : null) : null;
+    const Facing = Location ? QueueFacingUnits(Group, Location) : null;
     const StateAt = FindState(Connection.PlayerBody, State.GotNext);
     if (StateAt >= 0) {
         let Body = Buffer.from(Connection.PlayerBody);
@@ -1129,7 +1195,9 @@ function Warp(Connection) {
     }
 
     const Group = QueueFor(Connection, Connection.GotNext.Court, Connection.GotNext.Slot);
-    const Heading = Position.FacingByteForSpot(Spot, Group ? Group.Pos : null);
+    const Heading = Group?.Facing
+        ? Math.max(0, Math.min(255, Math.round((QueueFacingUnits(Group, Spot) + 32768) / 255))) & 0xff
+        : Position.FacingByteForSpot(Spot, Group ? Group.Pos : null);
     const Scale = WireScaleFor(Connection);
     const Frame = Position.BuildWarp(Connection.Puid, {
         X: Math.round(Spot[0] / Scale),

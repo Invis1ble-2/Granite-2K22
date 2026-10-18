@@ -7,7 +7,7 @@ const Log = require('../Core/Log');
 const { Crc32 } = require('../Core/Crc32');
 const Packets = require('./Packets');
 const Boulevard = require('../Activity/StageSpots/BoulevardCourts2K19');
-const StageSpots = require('../Activity/StageSpots/GamblingCourts2K19');
+const StageSpots = require('../Activity/StageSpots/GamblingCourts2K22');
 const AnteUp = require('../../../Shared/AnteUp');
 const Zlib = require('node:zlib');
 
@@ -16,7 +16,7 @@ const DataPacket = Packets.Wire('OBJECT_DATA');
 
 const AnteUpSession = 0x003a190e;
 const GamblingAllcourtsName = { GAMBLING_ONE_V_ONE: 'GAMBLING_ONE_V_ONE_1' };
-const GamblingCourtTypeByTeam = { 1: 6, 2: 5, 3: 4 };
+const GamblingCourtTypeByTeam = StageSpots.CourtTypeByTeam;
 
 function StageLowFor(MarkerName) {
     return Crc32(GamblingAllcourtsName[MarkerName] || MarkerName) >>> 0;
@@ -375,22 +375,7 @@ function WriteVec4(Record, Offset, V) {
 }
 
 function StageGeometry(Layout, Index) {
-    const Court = Layout.StageCourt;
-    const World = Index === 2 ? StageSpots.SquadAnchorFor(Court)[0] : StageSpots.SpotAnchorsFor(Court, Index)[0];
-    const Radians = (Layout.Yaw * Math.PI) / 180.0;
-    const C = Math.cos(Radians),
-        S = Math.sin(Radians);
-    const Dx = World[0] - Layout.position[0];
-    const Dz = World[2] - Layout.position[2];
-    const Base = [C * Dx - S * Dz, 0.0, S * Dx + C * Dz];
-    const Out = 160.0 * (Base[0] < 0 ? -1 : 1);
-    return {
-        Base,
-        Exit: [Base[0] + Out, 0.0, Base[2]],
-        Count: Index === 2 ? Math.max(1, Math.min(3, StageSpots.StageSpotLayout.SquadSpots)) : Layout.size,
-        FacingLocal: [Base[0] < 0 ? 1.0 : -1.0, 0.0, 0.0],
-        StepLocal: [0.0, 0.0, 120.0],
-    };
+    return StageSpots.Geometry(Layout.StageCourt, Index);
 }
 
 function BuildSetupRecord(Layout, Index) {
@@ -404,13 +389,7 @@ function BuildSetupRecord(Layout, Index) {
     const Face0 = Geo ? Geo.FacingLocal : [Location.startsWith('NEARSIDE_') ? 1.0 : -1.0, 0.0, 0.0];
     const Base = RotateLocal(Layout, Base0, false);
     const ExitBase = RotateLocal(Layout, Exit0, false);
-    const Step =
-        Layout.StageCourt && Index === 2
-            ? (() => {
-                  const S = StageSpots.SquadStepFor(Layout.StageCourt);
-                  return S ? SnapCardinal(S) : [0.0, 0.0, 0.0];
-              })()
-            : SnapCardinal(RotateLocal(Layout, Step0, true));
+    const Step = SnapCardinal(RotateLocal(Layout, Step0, true));
     const Facing = SnapCardinal(RotateLocal(Layout, Face0, true));
 
     WriteVec4(Record, 0x00, Base);
@@ -419,6 +398,10 @@ function BuildSetupRecord(Layout, Index) {
     WriteVec4(Record, 0x30, ExitBase);
     WriteVec4(Record, 0x40, Step);
     Record.writeInt32LE(FacingAngle(Facing), 0x50);
+    if (Geo) {
+        Record.writeFloatLE(1, 0x0c);
+        Record.writeFloatLE(1, 0x3c);
+    }
 
     const FacingX = Face0[0];
     const XMin = Base0[0] - 120.0 - 75.0 * FacingX;
@@ -437,16 +420,17 @@ function BuildSetupRecord(Layout, Index) {
         Record.writeFloatLE(World[2], 0x64 + CornerIndex * 8);
     });
     Record.writeUInt32LE(Geo ? Geo.Count : Layout.size, 0x80);
-    Record[0x84] = Index === 2 ? 1 : 0;
-    Record[0x85] = Index === 0 ? 1 : 0;
-    Record.writeUInt32LE(0, 0x88);
+    Record[0x84] = Geo ? Number(Geo.SquadOnly) : Index === 2 ? 1 : 0;
+    Record[0x85] = Geo ? Number(Geo.WinnerSpot) : Index === 0 ? 1 : 0;
+    Record.writeUInt32LE(Geo ? Geo.Function : 0, 0x88);
     return Record;
 }
 
 function BuildOccupancyRecord(Layout, Index) {
     if (Index < 0 || Index >= Layout.Locations.length) throw new Error('invalid Got Next occupancy index ' + Index);
     const Record = Buffer.alloc(0x48);
-    Record.writeUInt32LE(Index === 2 ? 1 : 0, 0x38);
+    const SquadOnly = Layout.Queues ? Layout.Queues[Index].SquadOnly : Index === 2;
+    Record.writeUInt32LE(SquadOnly ? 1 : 0, 0x38);
     return Record;
 }
 
@@ -572,6 +556,7 @@ function OccupancyPayload(Layout, CourtId, OwnerId, ObjectId, SeatsByQueue, Prof
         CourtId,
         OwnerId,
         CourtType: Layout.CourtType,
+        IsHalfCourt: Layout.IsHalfCourt,
         CourtTransform: CourtTransform(Layout),
         CourtObjectId: ObjectId >>> 0,
         // FUN_14148AD80 registers graphics baskets by the court marker name CRC.
@@ -651,37 +636,17 @@ function StageSeats(MarkerCourt) {
     const Courts = require('./Courts');
     const Slots = require('./Slots');
     const World = CourtTables.For('stage');
-    const Raw = World && World.Courts.find((C) => C.Name === MarkerCourt.name);
-    const Empty = (NValue) => new Array(NValue).fill(0n);
-    if (!Raw) {
-        const HasSquad = StageSpots.StageCourtHasSquad(MarkerCourt);
-        const NValue = HasSquad ? 3 : 2;
-        return Array.from({ length: NValue }, () => Empty(MarkerCourt.TeamSize));
-    }
-    const Groups = Courts.GroupsFor(Raw, World.Room, World.SeqBase);
-    const Windings = Groups.filter((G) => G.Kind === 'gotnext');
-    const Squad = Groups.find((G) => G.Kind === 'squad');
-    const N = Windings.length + (Squad ? 1 : 0);
-    return Array.from({ length: N }, (_, Qi) => {
-        const Group = Qi < Windings.length ? Windings[Qi] : Squad;
-        if (!Group) return Empty(MarkerCourt.TeamSize);
-        const Seats = Slots.SeatsOf(Group.SlotObjectId);
-        return Seats.length ? Seats.slice(0, MarkerCourt.TeamSize) : Empty(MarkerCourt.TeamSize);
+    const Raw = World.Courts.find((C) => C.Name === MarkerCourt.name);
+    const Groups = Raw ? Courts.GroupsFor(Raw, World.Room, World.SeqBase) : [];
+    return MarkerCourt.Queues.map((Queue, Index) => {
+        const Group = Groups.find((G) => G.QueueIndex === Index);
+        const Seats = Group ? Slots.SeatsOf(Group.SlotObjectId) : [];
+        return Array.from({length:Queue.Count}, (_, I) => Seats[I] || 0n);
     });
 }
 
 function BuildStageCourtOccupancy(MarkerCourt, Profiles) {
-    const Layout = StageLayoutFor(MarkerCourt);
-    const Guid = StageGuidFor(MarkerCourt.name);
-    const Payload = OccupancyPayload(
-        Layout,
-        Guid,
-        BigInt(NextOwner++),
-        StageLowFor(MarkerCourt.name),
-        StageSeats(MarkerCourt),
-        Profiles,
-    );
-    return { Guid, Frame: BuildObjectFrame(Guid, Payload) };
+    return BuildStageCourt(MarkerCourt, Profiles, BigInt(NextOwner++));
 }
 
 function SendToActivity(Connection, Frame) {
@@ -749,19 +714,7 @@ function RepublishParkCourt(Connection, CourtKey) {
 }
 
 function StageLayoutFor(MarkerCourt) {
-    const HasSquad = StageSpots.StageCourtHasSquad(MarkerCourt);
-    return {
-        CourtType: GamblingCourtTypeByTeam[MarkerCourt.TeamSize],
-        size: MarkerCourt.TeamSize,
-        position: MarkerCourt.Pos.slice(),
-        Yaw: ((MarkerCourt.Yaw || 0) * 180.0) / Math.PI,
-        Locations: HasSquad
-            ? ['NEARSIDE_RIGHT', 'NEARSIDE_LEFT', 'NEARSIDE_CENTER']
-            : ['NEARSIDE_RIGHT', 'NEARSIDE_LEFT'],
-        StageCourt: MarkerCourt,
-        Activity: 'stage',
-        name: MarkerCourt.name,
-    };
+    return StageSpots.LayoutFor(MarkerCourt);
 }
 
 function StagePrice(Name) {
@@ -770,30 +723,11 @@ function StagePrice(Name) {
     return Price;
 }
 
-function BuildStageCourt(MarkerCourt) {
+function BuildStageCourt(MarkerCourt, Profiles, OwnerId = 0n) {
     const Layout = StageLayoutFor(MarkerCourt);
     const Guid = StageGuidFor(MarkerCourt.name);
     const Low = StageLowFor(MarkerCourt.name);
-    const SetupRecords = Layout.Locations.map((_, I) => BuildSetupRecord(Layout, I));
-    const Seats = StageSeats(MarkerCourt);
-    const SpotRecords = Layout.Locations.map((_, I) => LiveSpotRecord(Layout, I, Seats[I] || []));
-    const PostGame = PostGameLocations(Layout);
-    const Payload = BuildGotNextCourtDataPayload({
-        CourtId: Guid,
-        OwnerId: 0n,
-        CourtType: Layout.CourtType,
-        CourtTransform: CourtTransform(Layout),
-        CourtObjectId: Low,
-        Count: SetupRecords.length,
-        SpotRecords,
-        SetupRecords,
-        WinnersLocation: PostGame ? PostGame.Winners : undefined,
-        LosersLocation: PostGame ? PostGame.Losers : undefined,
-        Teams: CourtTeams.get(Guid.toString()),
-        Online: CourtTeams.has(Guid.toString()),
-        GameState: CourtTeams.has(Guid.toString()) ? (CourtTeams.get(Guid.toString()).GameReady ? 3 : 2) : 0,
-        GamblingIndex: StagePrice(MarkerCourt.name).index,
-    });
+    const Payload = OccupancyPayload(Layout, Guid, OwnerId, Low, StageSeats(MarkerCourt), Profiles, true, '2K22');
     return { Guid, Low, Frame: BuildObjectFrame(Guid, Payload) };
 }
 
@@ -829,6 +763,9 @@ function BuildSpectatorCourtFrame(Activity, Name, CourtType, Generation = '2K19'
             BigInt(NextOwner++),
             StageLowFor(MarkerCourt.name),
             StageSeats(MarkerCourt),
+            undefined,
+            true,
+            '2K22',
         );
         return BuildObjectFrame(Guid, Payload);
     }
@@ -924,7 +861,7 @@ function PublishStageCourts(Connection) {
         const { Frame } = BuildStageCourt(MarkerCourt);
         if (Connection.SendObject(Frame)) {
             Sent++;
-            Records += MarkerCourt.TeamSize >= 2 && StageSpots.StageCourtHasSquad(MarkerCourt) ? 3 : 2;
+            Records += MarkerCourt.Queues.length;
         }
     }
     Log.Info(
@@ -954,7 +891,8 @@ function RepublishStageCourt(Connection, CourtKey) {
     try {
         const Roster = require('./Roster');
         for (const Peer of Roster.Peers(Connection)) {
-            if (Peer.ActivityName === Connection.ActivityName && Peer.SendObject(Frame)) Sent++;
+            if (Peer.ActivityName === Connection.ActivityName && !Peer.CourtProtocolPending &&
+                Peer.CourtsPublished && Peer.SendObject(Frame)) Sent++;
         }
     } catch (_) {}
     return Sent > 0;

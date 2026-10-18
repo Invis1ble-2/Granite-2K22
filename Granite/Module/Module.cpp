@@ -82,7 +82,6 @@ enum class LogLevel
 void Log(LogLevel Level, const std::wstring& Message)
 {
     if (Message.starts_with(L"SOLO22") && !ModuleConfig::LogSoloPark) return;
-    if (Message.starts_with(L"PARKTRACE") && !ModuleConfig::LogParkRosterTrace) return;
     const wchar_t Symbol = Level == LogLevel::Info ? L'@' : Level == LogLevel::Verbose ? L'~' : L'!';
     const WORD Colour = Level == LogLevel::Info      ? FOREGROUND_GREEN | FOREGROUND_INTENSITY
                         : Level == LogLevel::Verbose ? FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY
@@ -662,7 +661,6 @@ DWORD WINAPI CareerPriceWatchdog(void*)
     return 0;
 }
 
-#include "ParkRosterTrace.h"
 #include "SoloParkNative.h"
 #include "AnimationUnlock.h"
 #include "ContentSeasons.h"
@@ -711,7 +709,6 @@ DWORD WINAPI Initialise(void*)
     if (MhStatus == MH_OK || MhStatus == MH_ERROR_ALREADY_INITIALIZED)
     {
         ContentSeasons::Install(Executable);
-        ParkRosterTrace::Install(Executable);
         SoloParkNative::Install(Executable);
         AnimationUnlock::Install(Executable);
         CareerProgressionSync::Install(Executable);

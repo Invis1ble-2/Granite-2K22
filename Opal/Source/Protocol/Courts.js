@@ -293,6 +293,20 @@ function SlotObjectIdFor(Court, Room, Offset) {
 }
 
 function GroupsFor(Court, Room, SeqBase) {
+    if (Court.Queues) {
+        return Court.Queues.map((Queue, Index) => {
+            const Squad = Queue.SquadOnly;
+            const Seq = Squad ? SeqBase + 0x40 + Court.Index : SeqBase + Court.Index * 2 + Index;
+            return Named({Name:`${Court.Name}#${Index}`, CourtName:Court.Name,
+                Kind:Squad?'squad':'gotnext', Seq, Winding:Index, QueueIndex:Index,
+                QueueFunction:Queue.Function, MatchSize:Court.TeamSize, Pos:Court.Pos, Yaw:Court.Yaw,
+                Facing:Queue.Facing, TeamSize:Court.TeamSize, CourtId:Court.CourtId,
+                Mode:ModeFor(Court.TeamSize), Options:{}, Anchors:Queue.Anchors,
+                RegionType:Squad?SquadRegionType:RegionType.GotNext,
+                ObjectId:ObjectIdFor(Room,Seq), SlotObjectId:SlotObjectIdFor(Court,Room,
+                    Squad?SlotObjectOffset.Squad:SlotObjectOffset.Side+Index)},Room);
+        });
+    }
     const Mode = ModeFor(Court.TeamSize);
     const Options = Calibrated({ ...SpotOptions(Mode, Court.Pos), Spots: Court.TeamSize }, Court.Spots);
 
@@ -451,6 +465,7 @@ function PublishPark(Connection) {
 function RepublishAll(Connection) {
     if (Connection.CourtProtocolPending) return 0;
     if (Connection.ActivityName === 'stage') {
+        if (!Connection.CourtsPublished) return 0;
         return require('./CourtData').RefreshStageCourts(Connection);
     }
     if (Connection.ActivityName === 'neighborhood') {
@@ -508,6 +523,7 @@ function RefreshPark(Connection) {
 
 function Republish(Connection, Court) {
     if (Connection.ActivityName === 'stage') {
+        if (Connection.CourtProtocolPending || !Connection.CourtsPublished) return false;
         return require('./CourtData').RepublishStageCourt(Connection, Court);
     }
     if (Connection.ActivityName === 'neighborhood') {

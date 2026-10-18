@@ -95,7 +95,8 @@ function Build(Opts) {
     if(Number.isInteger(Opts.ArtBinding)) Values.set(Bit.ArtBinding,U32(Opts.ArtBinding));
     if(Number.isInteger(Opts.CourtType)) {
         Values.set(Bit.CourtType,U32(Opts.CourtType));
-        Values.set(Bit.IsHalfCourt,Buffer.from([Opts.CourtType===ParkCourtType.TwoOnTwo?1:0]));
+        const HalfCourt = Opts.IsHalfCourt === undefined ? Opts.CourtType===ParkCourtType.TwoOnTwo : Opts.IsHalfCourt;
+        Values.set(Bit.IsHalfCourt,Buffer.from([HalfCourt?1:0]));
     }
     Values.set(Bit.HasWaitingArea,Buffer.from([1]));
     Values.set(Bit.GotnextCount,Buffer.from([Opts.Count||0]));
@@ -107,6 +108,11 @@ function Build(Opts) {
             const B=Buffer.from(Data||[]);if(B.length!==Width)throw new Error('invalid native queue record width');
             Values.set(Ids[Index],B);
         }
+    }
+    if (Opts.GamblingIndex !== undefined) {
+        if (!Number.isInteger(Opts.GamblingIndex) || Opts.GamblingIndex<0 || Opts.GamblingIndex>=64)
+            throw new Error('invalid native gambling price index');
+        Values.set(Bit.GamblingIndex,Buffer.from([Opts.GamblingIndex]));
     }
     const Header=Buffer.alloc(35);Header.writeBigUInt64BE(BigInt(Opts.CourtId||0));Header.writeBigUInt64BE(BigInt(Opts.OwnerId||0),8);
     const Parts=[Header];

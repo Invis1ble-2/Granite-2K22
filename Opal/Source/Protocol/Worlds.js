@@ -23,9 +23,13 @@ const Table = [
     'DYNAMIC_OUTDOOR_EVENT',
     'EVENT',
     'PRIZEWHEELBUILDING',
+    // NBA2K22.exe.unpacked.exe: 0x142C7DF50 / 0x142C7DF54, indices 16 / 17.
+    // Names are unverified; preserve the raw keys and client table order.
+    0x4c02175c,
+    0x9a268975,
 ];
 
-const Keys = Table.map((Name) => Crc(Name));
+const Keys = Table.map((Entry) => typeof Entry === 'number' ? Entry >>> 0 : Crc(Entry));
 
 const ServerType = {
     World: Crc('WORLD'),
@@ -37,6 +41,7 @@ const ActivityOverride = { BOULEVARD: 0x3cf672c2 };
 
 const Activities = Object.create(null);
 for (const Name of Table) {
+    if (typeof Name !== 'string') continue;
     Activities[Name] = ActivityOverride[Name] !== undefined ? ActivityOverride[Name] >>> 0 : Crc32(Name.toLowerCase());
 }
 
@@ -66,7 +71,9 @@ function IndexOf(WorldKey) {
 
 function NameOf(WorldKey) {
     const Index = IndexOf(WorldKey);
-    return Index < 0 ? null : Table[Index];
+    if (Index < 0) return null;
+    const Entry = Table[Index];
+    return typeof Entry === 'string' ? Entry : Hex(Entry);
 }
 
 function Label(WorldKey) {
@@ -76,7 +83,7 @@ function Label(WorldKey) {
 
 function ActivityFor(WorldKey) {
     const Name = NameOf(WorldKey);
-    return Name ? Activities[Name] : null;
+    return Name ? Activities[Name] ?? null : null;
 }
 
 function AssertRoutable(WorldKey) {

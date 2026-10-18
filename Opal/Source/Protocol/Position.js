@@ -198,7 +198,9 @@ function Note(Connection, Bytes) {
         Previous.Z !== Position.Z ||
         Previous.Heading !== Position.Heading;
 
-    if (Connection.PositionDirty && !Connection.CourtsMoveRefreshed && !Connection.Closed) {
+    const StageCourtsPending = Connection.ActivityName === 'stage' &&
+        (Connection.CourtProtocolPending || !Connection.CourtsPublished);
+    if (Connection.PositionDirty && !Connection.CourtsMoveRefreshed && !Connection.Closed && !StageCourtsPending) {
         try {
             if (require('./CourtData').IsBitstreamWorld(Connection.ActivityName)) {
                 Connection.CourtsMoveRefreshed = true;
