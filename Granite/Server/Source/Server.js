@@ -95,6 +95,9 @@ function LoadConfig(File = Path.resolve(__dirname, '../Config.json')) {
         ...Raw,
         Port: Number(process.env.GRANITE_PORT || Raw.Port || 21000),
         Host: process.env.GRANITE_HOST || Raw.Host || '0.0.0.0',
+        PublicHost: Raw.PublicHost || '127.0.0.1',
+        WorldPort: Number(process.env.OPAL_PORT || Raw.WorldPort || 20054),
+        RelayPort: Number(process.env.OPAL_RELAY_PORT || Raw.RelayPort || 28091),
         CertificateDirectory: Resolve(Raw.CertificateDirectory || 'Storage/Certificate'),
         CaptureDirectory: Resolve(process.env.GRANITE_CAPTURE_DIR || Raw.CaptureDirectory || 'Storage/Captures/Http'),
         UserContentDirectory: Resolve(
@@ -333,6 +336,7 @@ function ResolveContext(Input, Sessions, Key) {
               : Current?.careerScopeId || '0';
     return {
         SessionKey: Key,
+        HasLoginSession: Boolean(Current?.userId),
         userId: EffectiveUserId,
         RequestUserId: BodyUser,
         verified: Boolean(Current?.verified),
@@ -513,6 +517,16 @@ function CreateHandler(Config, Dependencies = {}) {
                 if (!Dependencies.CareerGrind) SaveCareerGrind(CareerGrindFile, CareerGrind);
             },
         };
+        // Reuse the current game login for park readiness. No separate player
+        // token, endpoint configuration or public certificate setup is needed.
+        const ParkPort = Number(process.env.OPAL_PORT || Config.WorldPort || 20054);
+        if (Context.HasLoginSession && Route !== 'session/login' && Route !== 'session/destroy' &&
+            Number.isInteger(ParkPort) && ParkPort > 0 && ParkPort <= 65535 &&
+            (!RequireVerifiedIdentity || Context.verified)) {
+            Res.setHeader('X-Granite-Native-Park-Session', String(Context.SessionKey));
+            Res.setHeader('X-Granite-Native-Park-Port', String(ParkPort));
+            Res.setHeader('Cache-Control', 'no-store');
+        }
         // The game does not reliably send MyCareer/Online/delete. A new
         // career save for a slot is therefore the only observable reset
         // boundary. When the client explicitly marks a new build, clear the

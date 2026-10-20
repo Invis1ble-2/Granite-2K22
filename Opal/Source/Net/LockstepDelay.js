@@ -5,7 +5,8 @@
 
 const Startup = 0xdc4ad1e0,
     Input = 0xdee061c6;
-const History = 96;
+// NBA 2K22: machine index 15 is reserved for the F0 NAK marker.
+const History = 96, MachineSlots = 15, StartupBytes = 24;
 
 function Frame(Type, Source, Body) {
     const FrameData = Buffer.alloc(16 + Body.length);
@@ -17,6 +18,7 @@ function Frame(Type, Source, Body) {
 }
 
 function Decode(Body, Counts) {
+    if (!Array.isArray(Counts) || Counts.length !== MachineSlots) throw new Error('invalid 2K22 controller map');
     const Records = [];
     let At = 0;
     while (At < Body.length) {
@@ -29,13 +31,13 @@ function Decode(Body, Counts) {
         if (Body.length - At < 2) throw new Error('invalid input batch');
         const Machine = Body[At] >>> 4,
             Count = (Body[At] & 15) + 1;
-        if (Machine >= 10 || !Counts[Machine]) throw new Error('input machine has no startup controllers');
+        if (Machine >= MachineSlots || !Counts[Machine]) throw new Error('input machine has no startup controllers');
         let FrameData = Body[At + 1];
         At += 2;
         for (let I = 0; I < Count; I++) {
             if (At >= Body.length) throw new Error('truncated input record');
             const Base = 4 + 9 * Counts[Machine];
-            const Length = Base + (Body[At] & 8 ? 10 : 0);
+            const Length = Base + (Body[At] & 8 ? MachineSlots : 0);
             if (At + Length > Body.length) throw new Error('truncated input record');
             const Bytes = Buffer.from(Body.subarray(At, At + Length));
             const Repeat = (Bytes[0] & 7) + 1;
@@ -86,8 +88,9 @@ class DelayService {
             }
             if (Source !== Sender.MachineId) throw new Error('lockstep source does not match registered machine');
             if (Type === Startup) {
-                if (Body.length !== 19 || Body[0] >= 10 || Body[8] !== 96) throw new Error('invalid mode-3 startup');
-                const Counts = Array.from(Body.subarray(9, 19));
+                if (Body.length !== StartupBytes || Body[0] >= MachineSlots || Body[8] !== History)
+                    throw new Error('invalid 2K22 mode-3 startup');
+                const Counts = Array.from(Body.subarray(9, StartupBytes));
                 const FrameRate = Body.readFloatBE(4);
                 if (!Number.isFinite(FrameRate) || FrameRate < 1 || FrameRate > 240)
                     throw new Error('invalid startup frame rate');
@@ -120,23 +123,26 @@ class DelayService {
             if (
                 Records.some((R) =>
                     R.Nak
-                        ? R.Nak.Requester !== State.Index || R.Nak.Machine !== State.Index
+                        ? R.Nak.Requester !== State.Index || R.Nak.Machine >= MachineSlots || !State.Counts[R.Nak.Machine]
                         : R.Machine !== State.Index,
                 )
             )
                 throw new Error('input machine index does not match startup');
             for (const Record of Records) {
                 if (Record.Nak) {
-                    for (const Peer of SessionClients) {
-                        const Cached = Peer.Lockstep?.Frames.get(Record.Nak.Frame);
-                        if (Cached)
-                            Output.push({
-                                Payload: Cached.Packet,
-                                Recipients: [Sender],
-                                Source: Peer,
-                                FrameIndex: Cached.Absolute,
-                                Retransmit: true,
-                            });
+                    const Peer = SessionClients.find((C) => C.Lockstep?.Index === Record.Nak.Machine);
+                    const Cached = Peer?.Lockstep.Frames.get(Record.Nak.Frame);
+                    if (Cached) {
+                        Output.push({
+                            Payload: Cached.Packet, Recipients: [Sender], Source: Peer,
+                            FrameIndex: Cached.Absolute, Retransmit: true,
+                        });
+                    } else if (Peer && Peer !== Sender) {
+                        // The target retains the authoritative history when our cache misses.
+                        Output.push({
+                            Payload: Frame(Input, Source, Buffer.from([0xf0, State.Index, Record.Nak.Machine, (Record.Nak.Frame - this.Delay) & 255])),
+                            Recipients: [Peer],
+                        });
                     }
                     continue;
                 }
@@ -170,4 +176,4 @@ class DelayService {
     }
 }
 
-module.exports = { Startup, Input, History, Frame, Decode, DelayService };
+module.exports = { Startup, Input, History, MachineSlots, StartupBytes, Frame, Decode, DelayService };

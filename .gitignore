@@ -15,3 +15,5 @@ Granite/Server/Storage/Inventory/GatoradeBoosts.json
 Granite/Server/Storage/Inventory/Wallets.json
 __pycache__/
 AGENTS.md
+Granite/Module/NativePark.ini
+Opal/NativeParkControl.json

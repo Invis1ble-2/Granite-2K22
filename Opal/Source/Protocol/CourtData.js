@@ -779,13 +779,26 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
     const Teams = ValidateTeams(Home, Away);
     if (Teams.Home.length !== Court.Entry.TeamSize) throw new Error('Roster does not match court team size');
     const { randomBytes: RandomBytes } = require('node:crypto');
+    if (Options.NativeSolo && Options.NativePark) throw new Error('conflicting native park modes');
+    if (Options.NativePark) {
+        const Mixed = Options.NativePark, Ids = [...Teams.Home, ...Teams.Away];
+        const Cpu = Ids.filter(Id => require('./NativeParkWire').IsCpu(Id));
+        const Humans = Ids.filter(Id => !Cpu.includes(Id));
+        if (Activity !== 'neighborhood' || Generation !== '2K22' || ![2, 3].includes(Teams.Home.length) ||
+            !Cpu.length || Humans.length < 2 || !Mixed.MatchId || !Array.isArray(Mixed.Humans) ||
+            Mixed.Humans.length !== Humans.length || new Set(Mixed.Humans).size !== Humans.length ||
+            Mixed.Humans.some(Id => !Humans.includes(Id)))
+            throw new Error('Mixed native park requires the exact human roster and CPU vacancies');
+        Teams.NativePark = { Humans: Humans.slice(), Cpu, MatchId: Mixed.MatchId };
+        Teams.MatchId = Mixed.MatchId;
+    }
     if (Options.NativeSolo) {
         const Solo = Options.NativeSolo;
         const Cpu = [...Teams.Home, ...Teams.Away].filter(Id => (Id & 0xfffff00000000000n) === 0x0222c00000000000n);
         const Humans = [...Teams.Home, ...Teams.Away].filter(Id => !Cpu.includes(Id));
-        if (Activity !== 'neighborhood' || Generation !== '2K22' || Teams.Home.length !== 2 ||
-            Cpu.length !== 3 || Humans.length !== 1 || Humans[0] !== Solo.Owner || !Solo.MatchId)
-            throw new Error('Native solo court requires one human and three generated CPU players in 2K22 2v2');
+        if (Activity !== 'neighborhood' || Generation !== '2K22' || ![2,3].includes(Teams.Home.length) ||
+            Cpu.length !== Teams.Home.length * 2 - 1 || Humans.length !== 1 || Humans[0] !== Solo.Owner || !Solo.MatchId)
+            throw new Error('Native solo court requires one human and native CPU fill in 2K22 2v2/3v3');
         Teams.NativeSolo = { Owner: Solo.Owner, Cpu, MatchId: Solo.MatchId };
         Teams.MatchId = Solo.MatchId;
     }
@@ -841,7 +854,8 @@ function MarkStageGameConnected(Name, Puid) {
 function MarkGameConnected(Activity, Name, Puid, Generation = '2K19') {
     const Teams = CourtTeams.get(GameCourt(Activity, Name, Generation).Guid.toString());
     if (!Teams) return { Accepted: false, Advanced: false };
-    const Expected = (Teams.NativeSolo ? [Teams.NativeSolo.Owner] : [...Teams.Home, ...Teams.Away]).map(String);
+    const Expected = (Teams.NativeSolo ? [Teams.NativeSolo.Owner] :
+        Teams.NativePark ? Teams.NativePark.Humans : [...Teams.Home, ...Teams.Away]).map(String);
     const Id = String(Puid);
     if (!Expected.includes(Id)) return { Accepted: false, Advanced: false };
     Teams.Connected ??= new Set();

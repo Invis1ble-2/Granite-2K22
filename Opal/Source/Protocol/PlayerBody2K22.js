@@ -90,10 +90,10 @@ function BuildGeneratedPlayer(Puid, Seed) {
     Puid=BigInt(Puid);
     if ((Puid & 0xfffff00000000000n)!==0x0222c00000000000n) throw new Error('native CPU id is outside its reserved range');
     if (!Number.isInteger(Seed) || Seed<0 || Seed>0xffffffff) throw new Error('native CPU seed must be uint32');
-    // FUN_14166B330 reads these two fields from raw UserGenerationSettings.
-    // This is a real PLAYER object; the client owns construction and destruction.
+    // FUN_14166B330 -> FUN_1416403A0: position 5 selects native RNG % 5;
+    // 0x693a3883 seeds generation, rather than supplying a position value.
     const Script=new (require('../Codec/FieldList').Builder)()
-        .AddU32(0xf5d65e01,Seed).AddU64(0x693a3883,0n).Build();
+        .AddU32(0xf5d65e01,5).AddU64(0x693a3883,BigInt(Seed || 1)).Build();
     const Count=Buffer.alloc(4);Count.writeUInt32LE(Script.length);
     const Header=Buffer.alloc(ValuesStart);Header.writeBigUInt64BE(Puid);Header.writeBigUInt64BE(1n,8);
     const U64=N=>{const B=Buffer.alloc(8);B.writeBigUInt64LE(N);return B;};

@@ -30,7 +30,10 @@ class Pacer {
             };
             this.Sessions.set(Key, Session);
         }
-        if (Session.NativeRate !== Source.Lockstep.FrameRate) throw new Error('lockstep frame rates disagree');
+        if (Session.NativeRate !== Source.Lockstep.FrameRate ||
+            Session.Counts.length !== Source.Lockstep.Counts.length ||
+            !Session.Counts.every((N, I) => N === Source.Lockstep.Counts[I]))
+            throw new Error('lockstep frame rates or controller maps disagree');
         const Index = Source.Lockstep.Index;
         const PreviousSource = Session.Sources.get(Index);
         if (PreviousSource && PreviousSource !== Source)

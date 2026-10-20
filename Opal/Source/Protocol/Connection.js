@@ -148,6 +148,7 @@ class Connection {
         this.Advance(State.Closed);
         Requests.Stop(this);
         WorldState.CancelPending(this);
+        require('./NativePark').Disconnect(this);
         if (Array.isArray(this.CourtRefreshTimers)) {
             for (const Timer of this.CourtRefreshTimers) clearTimeout(Timer);
             this.CourtRefreshTimers = [];
@@ -348,6 +349,7 @@ function OnTravelRequest(Client, FrameData, Bytes) {
         return;
     }
 
+    if (require('./NativePark').Stop(Client, 'participant travelling') && Client.GotNext) GotNext.Release(Client);
     const Url = ChangeServer.UrlFor(Client.Socket, Client.Port);
     const SessionId = Ask.MatchType || Destination.SessionId;
     const ServerType = ChangeServer.ServerTypeFor(Ask);
@@ -472,6 +474,13 @@ function OnConnect(Client, FrameData, Bytes) {
     }
 
     const Repeat = Client.State === State.Active;
+    if (Repeat && ((Info.WorldKey !== null && Info.WorldKey !== Client.WorldKey) ||
+        (Info.ActivityKey !== null && Info.ActivityKey !== Client.ActivityKey))) {
+        const Park = require('./NativePark');
+        const Held = Park.Stop(Client, 'participant changed activity');
+        Park.Disconnect(Client);
+        if (Held && Client.GotNext) GotNext.Release(Client);
+    }
     if (Info.Puid && Client.ClaimedPuid === null) Client.ClaimedPuid = Info.Puid;
     if (Info.WorldKey !== null) Client.WorldKey = Info.WorldKey;
     if (Info.ActivityKey !== null) Client.ActivityKey = Info.ActivityKey;

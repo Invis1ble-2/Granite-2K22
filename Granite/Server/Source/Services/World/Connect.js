@@ -13,7 +13,7 @@ function PackIpv4(Ip) {
 }
 
 function Build(Input, Context = {}) {
-    const Host = '127.0.0.1';
+    const Host = Context.PublicHost || '127.0.0.1';
     const Port = Number(Context.WorldPort || 20054);
     const Url = `wss://${Host}:${Port}`;
     const Account = GetU64(Input?.Parsed?.Fields || [], 0x693578b9) ?? Context.userId ?? 0n;

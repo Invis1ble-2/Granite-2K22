@@ -1,6 +1,7 @@
-// Native generated-player readiness and 2v2 start validation. No roster-pointer patching.
+// Native generated-player readiness and 2v2/3v3 validation. No roster-pointer patching.
 #pragma once
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <sstream>
 
@@ -12,28 +13,51 @@ using PlayingFn = uint64_t(__fastcall*)(void*);
 using CountFn = int(__fastcall*)();
 inline CountFn OriginalHomeCount = nullptr, OriginalAwayCount = nullptr;
 inline thread_local bool InitializingSolo = false;
+inline thread_local uint32_t InitializingTeamSize = 0;
 struct InitScope
 {
     bool Previous = InitializingSolo;
-    InitScope() { InitializingSolo = true; }
-    ~InitScope() { InitializingSolo = Previous; }
+    uint32_t PreviousSize = InitializingTeamSize;
+    explicit InitScope(uint32_t TeamSize = 2) { InitializingSolo = true; InitializingTeamSize = TeamSize; }
+    ~InitScope() { InitializingSolo = Previous; InitializingTeamSize = PreviousSize; }
 };
-inline int __fastcall HomeCount() { return InitializingSolo ? 2 : OriginalHomeCount(); }
-inline int __fastcall AwayCount() { return InitializingSolo ? 2 : OriginalAwayCount(); }
+struct RosterOrderScope
+{
+    uint32_t* SortFlag;
+    uint32_t Previous;
+    RosterOrderScope(uint32_t* Flag, uint32_t Value) noexcept : SortFlag(Flag), Previous(Value)
+    {
+        *SortFlag = 0;
+    }
+    ~RosterOrderScope() { *SortFlag = Previous; }
+    RosterOrderScope(const RosterOrderScope&) = delete;
+    RosterOrderScope& operator=(const RosterOrderScope&) = delete;
+};
+inline int __fastcall HomeCount() { return InitializingSolo ? static_cast<int>(InitializingTeamSize) : OriginalHomeCount(); }
+inline int __fastcall AwayCount() { return InitializingSolo ? static_cast<int>(InitializingTeamSize) : OriginalAwayCount(); }
 using LookupFn = void*(__fastcall*)(void*, uint64_t);
 // FUN_1416B4A30 writes MatchId at uint32_t[0xb6], RandomSeed at [0xd0].
 inline constexpr size_t MatchOffset = 0xb6 * sizeof(uint32_t);
 static_assert(MatchOffset == 0x2d8);
+inline constexpr size_t RosterSortOffset = 0x2bc;
+static_assert(0xcb0 + RosterSortOffset == 0xf6c);
 inline GenerateFn OriginalGenerate = nullptr;
 inline StartFn OriginalStart = nullptr;
 inline PlayingFn OriginalPlaying = nullptr;
 inline LookupFn Lookup = nullptr;
 inline constexpr uint64_t CpuMask = 0xfffff00000000000ULL;
 inline constexpr uint64_t CpuPrefix = 0x0222c00000000000ULL;
-struct Request { uint32_t Magic, Version; uint64_t Match, Owner, Cpu[3]; };
-static_assert(sizeof(Request) == 48);
+inline constexpr unsigned MaxCpu = 5;
+struct Request
+{
+    uint32_t Magic, Version;
+    uint64_t Match, Owner;
+    uint32_t TeamSize, CpuCount;
+    uint64_t Cpu[MaxCpu];
+};
+static_assert(sizeof(Request) == 72 && offsetof(Request, TeamSize) == 24 && offsetof(Request, Cpu) == 32);
 inline Request Current{};
-inline bool Created[3]{};
+inline bool Created[MaxCpu]{};
 inline std::mutex ReceiptMutex;
 inline std::wstring Root;
 
@@ -54,8 +78,11 @@ inline bool LoadRequest(Request& R)
     DWORD N = 0;
     const bool Ok = GetFileSize(File, nullptr) == sizeof(R) && ReadFile(File, &R, sizeof(R), &N, nullptr) && N == sizeof(R);
     CloseHandle(File);
-    if (!Ok || R.Magic != 0x32325053 || R.Version != 1 || !R.Match || !R.Owner) return false;
-    for (unsigned I = 0; I < 3; ++I)
+    if (!Ok || R.Magic != 0x32325053 || R.Version != 2 || !R.Match || !R.Owner ||
+        (R.Owner & CpuMask) == CpuPrefix || (R.TeamSize != 2 && R.TeamSize != 3) ||
+        R.CpuCount != R.TeamSize * 2 - 1) return false;
+    for (unsigned I = R.CpuCount; I < MaxCpu; ++I) if (R.Cpu[I]) return false;
+    for (unsigned I = 0; I < R.CpuCount; ++I)
     {
         if ((R.Cpu[I] & CpuMask) != CpuPrefix || R.Cpu[I] == R.Owner) return false;
         for (unsigned J = 0; J < I; ++J) if (R.Cpu[J] == R.Cpu[I]) return false;
@@ -69,13 +96,14 @@ inline void Select(const Request& R)
 inline void Receipt(const char* Error = nullptr, bool Started = false)
 {
     std::ostringstream Text;
-    Text << "{\"version\":1,\"module\":\"00010206\",\"installed\":true,\"pid\":" << GetCurrentProcessId()
-         << ",\"match\":\"" << std::hex << Current.Match << "\",\"created\":[";
+    Text << "{\"version\":2,\"module\":\"0001020F\",\"installed\":true,\"pid\":" << GetCurrentProcessId()
+         << ",\"match\":\"" << std::hex << Current.Match << "\",\"teamSize\":" << std::dec << Current.TeamSize
+         << ",\"cpuCount\":" << Current.CpuCount << ",\"created\":[";
     bool First = true;
-    for (unsigned I = 0; I < 3; ++I) if (Created[I])
+    for (unsigned I = 0; I < Current.CpuCount; ++I) if (Created[I])
     {
         if (!First) Text << ',';
-        Text << '\"' << Current.Cpu[I] << '\"'; First = false;
+        Text << '\"' << std::hex << Current.Cpu[I] << '\"'; First = false;
     }
     Text << "],\"started\":" << (Started ? "true" : "false") << ",\"error\":";
     if (Error) Text << '\"' << Error << '\"'; else Text << "null";
@@ -98,24 +126,44 @@ inline bool HasRoster(void* Player, uint64_t Id, bool Cpu)
 }
 inline bool Validate(void* Session, void* Info, const Request& R, bool Prepared)
 {
-    int Home = 0, Away = 0; uint64_t Ids[4]{};
-    bool Ok = At(Info, 0x118, Home) && At(Info, 0x11c, Away) && Home == 2 && Away == 2 &&
-        Read(static_cast<unsigned char*>(Info) + 0x48, Ids, 16) &&
-        Read(static_cast<unsigned char*>(Info) + 0xb0, Ids + 2, 16);
+    if ((R.TeamSize != 2 && R.TeamSize != 3) || R.CpuCount != R.TeamSize * 2 - 1) return false;
+    int Home = 0, Away = 0; uint64_t Ids[6]{};
+    const unsigned Count = R.TeamSize * 2;
+    const size_t SideBytes = R.TeamSize * sizeof(uint64_t);
+    bool Ok = At(Info, 0x118, Home) && At(Info, 0x11c, Away) &&
+        Home == static_cast<int>(R.TeamSize) && Away == static_cast<int>(R.TeamSize) &&
+        Read(static_cast<unsigned char*>(Info) + 0x48, Ids, SideBytes) &&
+        Read(static_cast<unsigned char*>(Info) + 0xb0, Ids + R.TeamSize, SideBytes);
     Log(LogLevel::Info, L"SOLO22 roster check home=" + std::to_wstring(Home) + L" away=" + std::to_wstring(Away));
-    const uint64_t Expected[] = {R.Owner, R.Cpu[0], R.Cpu[1], R.Cpu[2]};
-    for (unsigned I = 0; Ok && I < 4; ++I)
+    for (unsigned I = 0; Ok && I < Count; ++I)
     {
+        const uint64_t Expected = I ? R.Cpu[I - 1] : R.Owner;
         unsigned Matches = 0; uint32_t Source = 0;
-        for (auto Id : Ids) Matches += Id == Expected[I];
-        void* Player = Lookup ? Lookup(Session, Expected[I]) : nullptr;
-        Ok = Matches == 1 && HasRoster(Player, Expected[I], I != 0) &&
+        for (unsigned J = 0; J < Count; ++J) Matches += Ids[J] == Expected;
+        void* Player = Lookup ? Lookup(Session, Expected) : nullptr;
+        Ok = Matches == 1 && HasRoster(Player, Expected, I != 0) &&
             (!Prepared || (At(Player, 0x21f0, Source) && Source == 1));
     }
     return Ok;
 }
 inline void* __fastcall Generate(void* Session, void* ActorManager, void* Object)
 {
+    const DWORD EntryError = GetLastError();
+    NativePark::Generation G{}; uint64_t GeneratedId = 0;
+    if (At(Object, 0xa0, GeneratedId) && NativePark::ForCpu(Session, GeneratedId, G))
+    {
+        if (!G.Valid) { NativePark::Fail(G.Request, 4); SetLastError(EntryError); return nullptr; }
+        void* Player = nullptr;
+        {
+            NativePark::GenerationScope Scope(G);
+            SetLastError(EntryError);
+            Player = OriginalGenerate(Session, ActorManager, Object);
+        }
+        const DWORD Error = GetLastError();
+        NativePark::Generated(G, Player);
+        SetLastError(Error); return Player;
+    }
+    SetLastError(EntryError);
     void* Player = OriginalGenerate(Session, ActorManager, Object);
     const DWORD NativeError = GetLastError();
     try
@@ -125,7 +173,7 @@ inline void* __fastcall Generate(void* Session, void* ActorManager, void* Object
         {
             std::lock_guard<std::mutex> Lock(ReceiptMutex);
             Select(R);
-            for (unsigned I = 0; I < 3; ++I) if (Id == R.Cpu[I])
+            for (unsigned I = 0; I < R.CpuCount; ++I) if (Id == R.Cpu[I])
             {
                 Created[I] = HasRoster(Player, Id, true);
                 Receipt(Created[I] ? nullptr : "native-cpu-roster-missing");
@@ -145,6 +193,20 @@ inline void __fastcall Start(void* Session, void* Info)
     const DWORD NativeError = GetLastError();
     Request R{}; uint64_t Match = 0, Slots[10]{};
     const bool HasMatch = At(Info, MatchOffset, Match);
+    NativePark::Manifest Mixed{};
+    if (HasMatch && NativePark::ForMatch(Match, Mixed))
+    {
+        bool Ok = false;
+        try { Ok = NativePark::Validate(Session, Info, Mixed, false, Lookup); } catch (...) { Ok = false; }
+        if (!Ok)
+        {
+            NativePark::Fail(Mixed, 5);
+            Log(LogLevel::Error, L"PARK22 refused StartGame: authorization, online setup or exact roster validation failed");
+            SetLastError(NativeError); return;
+        }
+        Log(LogLevel::Info, L"PARK22 validated native mixed roster before StartGame");
+        SetLastError(NativeError); OriginalStart(Session, Info); return;
+    }
     bool Generated = false;
     if (Info && Read(static_cast<unsigned char*>(Info) + 0x48, Slots, 40) &&
         Read(static_cast<unsigned char*>(Info) + 0xb0, Slots + 5, 40))
@@ -178,46 +240,88 @@ inline void __fastcall Start(void* Session, void* Info)
     catch (...) { Ok = false; }
     if (!Ok)
     {
-        Log(LogLevel::Error, L"SOLO22 refused StartGame: expected registered 2v2 players with native rosters");
+        Log(LogLevel::Error, L"SOLO22 refused StartGame: expected complete 2v2/3v3 native rosters");
         SetLastError(NativeError); return;
     }
-    Log(LogLevel::Info, L"SOLO22 StartGame validated: one human and three native CPU rosters");
+    Log(LogLevel::Info, L"SOLO22 StartGame validated: one human and " + std::to_wstring(R.CpuCount) + L" native CPU rosters");
     SetLastError(NativeError); OriginalStart(Session, Info);
 }
 inline uint64_t __fastcall Playing(void* Session)
 {
     const DWORD NativeError = GetLastError();
     uint64_t Match = 0; Request R{};
+    uint32_t SortRoster = 0;
     void* Info = Session ? static_cast<unsigned char*>(Session) + 0xcb0 : nullptr;
+    NativePark::Manifest Mixed{};
+    if (At(Info, MatchOffset, Match) && NativePark::ForMatch(Match, Mixed))
+    {
+        bool Ok = false;
+        try { Ok = NativePark::Validate(Session, Info, Mixed, true, Lookup) && At(Info, RosterSortOffset, SortRoster); }
+        catch (...) { Ok = false; }
+        if (!Ok)
+        {
+            NativePark::Fail(Mixed, 6);
+            Log(LogLevel::Error, L"PARK22 refused InitPlayingGame: prepared mixed roster or authorization invalid");
+            SetLastError(NativeError); return 0;
+        }
+        uint64_t Result = 0;
+        SetLastError(NativeError);
+        {
+            InitScope Scope(Mixed.TeamSize);
+            RosterOrderScope Order(reinterpret_cast<uint32_t*>(static_cast<unsigned char*>(Info) + RosterSortOffset), SortRoster);
+            Result = OriginalPlaying(Session);
+        }
+        const DWORD Error = GetLastError();
+        NativePark::Started(Mixed, Result != 0);
+        Log(LogLevel::Info, L"PARK22 InitPlayingGame returned " + std::to_wstring(Result));
+        SetLastError(Error); return Result;
+    }
     bool Ours = false;
     if (At(Info, MatchOffset, Match))
     {
         std::lock_guard<std::mutex> Lock(ReceiptMutex);
         Ours = Current.Match && Match == Current.Match;
     }
-    if (!Ours) { SetLastError(NativeError); return OriginalPlaying(Session); }
+    if (!Ours)
+    {
+        uint64_t Ids[10]{}; int Home = 0, Away = 0;
+        if (At(Info, 0x118, Home) && At(Info, 0x11c, Away) && Home > 0 && Home <= 5 && Away > 0 && Away <= 5 &&
+            Read(static_cast<unsigned char*>(Info) + 0x48, Ids, static_cast<size_t>(Home) * sizeof(uint64_t)) &&
+            Read(static_cast<unsigned char*>(Info) + 0xb0, Ids + 5, static_cast<size_t>(Away) * sizeof(uint64_t)))
+            for (const auto Id : Ids) if (NativePark::IsCpu(Id))
+            {
+                Log(LogLevel::Error, L"PARK22 refused delayed generated roster without its match authorization");
+                SetLastError(NativeError); return 0;
+            }
+        SetLastError(NativeError); return OriginalPlaying(Session);
+    }
     bool Ok = false;
     try
     {
-        Ok = LoadRequest(R) && R.Match == Match && Validate(Session, Info, R, true);
+        Ok = LoadRequest(R) && R.Match == Match && Validate(Session, Info, R, true) &&
+            At(Info, RosterSortOffset, SortRoster);
         std::lock_guard<std::mutex> Lock(ReceiptMutex);
         if (!Ok) Receipt("native-playing-roster-validation-failed");
     }
     catch (...) { Ok = false; }
     if (!Ok)
     {
-        Log(LogLevel::Error, L"SOLO22 refused InitPlayingGame: prepared 2v2 roster is incomplete");
+        Log(LogLevel::Error, L"SOLO22 refused InitPlayingGame: prepared 2v2/3v3 roster is incomplete");
         SetLastError(NativeError); return 0;
     }
-    Log(LogLevel::Info, L"SOLO22 InitPlayingGame validated: four prepared native player rosters");
+    Log(LogLevel::Info, L"SOLO22 InitPlayingGame validated: " + std::to_wstring(R.TeamSize * 2) + L" prepared native player rosters");
     Log(LogLevel::Info, L"SOLO22 AI initialization counts: native=" +
-        std::to_wstring(OriginalHomeCount()) + L"/" + std::to_wstring(OriginalAwayCount()) + L" roster=2/2");
+        std::to_wstring(OriginalHomeCount()) + L"/" + std::to_wstring(OriginalAwayCount()) +
+        L" roster=" + std::to_wstring(R.TeamSize) + L"/" + std::to_wstring(R.TeamSize));
     SetLastError(NativeError);
     uint64_t Result = 0;
     {
         // AI_FillInGameDescription reads these getters before creating AI players.
         // Restrict the roster-derived counts to this validated solo initialization thread.
-        InitScope Scope;
+        InitScope Scope(R.TeamSize);
+        // Park nameplates retain court order; keep model slots in that same order.
+        RosterOrderScope Order(reinterpret_cast<uint32_t*>(
+            static_cast<unsigned char*>(Info) + RosterSortOffset), SortRoster);
         Result = OriginalPlaying(Session);
     }
     const DWORD PlayingError = GetLastError();
@@ -320,7 +424,9 @@ inline void InstallHooks(HMODULE Executable)
         Log(LogLevel::Error, Detail.str()); return;
     }
     { std::lock_guard<std::mutex> Lock(ReceiptMutex); Receipt(); }
-    Log(LogLevel::Info, L"SOLO22 enabled: native generated-player receipts and guarded 2v2 start");
+    Log(LogLevel::Info, L"SOLO22 enabled: protocol v2 native receipts and guarded 2v2/3v3 start");
+    try { NativePark::Install(Executable); }
+    catch (...) { Log(LogLevel::Error, L"PARK22 control installation failed; solo v2 remains available"); }
 }
 inline DWORD WINAPI WaitAndInstall(void* Context)
 {

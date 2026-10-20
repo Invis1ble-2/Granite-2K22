@@ -37,14 +37,26 @@ cd Opal
 npm start
 ```
 
-Every address defaults to `127.0.0.1`. To host for other players, replace it with your server's address in:
+### NBA 2K22：虚拟局域网联机
 
-- `Granite/Server/Config.json` (`PublicHost`)
-- `Granite/Server/Source/Services/World/Connect.js` (`Host`)
-- `Granite/Module/Module.cpp` (`RedirectHost`, then rebuild `Module.dll`)
-- `StartServers.bat` (`PUBLIC_IP`)
+1. 服务器电脑和朋友加入同一个虚拟局域网，记下**服务器电脑的虚拟网卡 IPv4**。
+2. 服务器只修改 `Granite/Server/Config.json` 的 `PublicHost` 为这个 IPv4；`Host` 保持 `0.0.0.0`。默认端口：`Port=21000`、`WorldPort=20054`、`RelayPort=28091`。
+3. 使用 `StartServers.bat` 启动：脚本读取上述配置，统一设置 Opal 切场景与比赛 relay 地址，替换旧的 `OPAL_PUBLIC_HOST` / `OPAL_RELAY_HOST` 环境变量。无需修改 JS、C++ 或脚本内的 IP。
+4. 每台客户端（包括服务器电脑上运行的游戏）使用新版 `Module.dll`，在 **DLL 同目录**的 `Granite.ini` 中添加/修改下面的配置。保留已有 Features/Logging 等设置，不要覆盖整份运行配置。
 
-Granite reads `Granite/Server/Config.json`. Both servers accept these environment overrides:
+```ini
+[Network]
+ServerHost = 服务器电脑的虚拟网卡IPv4
+ServerPort = 21000
+```
+
+`ServerHost` 只接受 IPv4，不含协议、端口或路径；`ServerPort` 是 Granite HTTPS 端口，不是街区端口。缺失/非法值回退为 `127.0.0.1:21000` 对应的默认字段值，下次启动游戏生效。新建 ini 会自动包含 Network；旧 ini 不会被重写。HTTP 重定向、属性价格直连和多人公园控制请求复用同一个服务器地址。
+
+仅服务器电脑运行 Granite/Opal；朋友只运行客户端。服务器防火墙应允许虚拟网卡上的 TCP `21000`、TCP `20054`、UDP `28091`（自定义端口则对应调整），无需为此公开路由器端口。此步骤只配置连接地址，不代表多人比赛已验收：请双方依次验证登录、进入同一街区、移动互见、切场景、排队开赛、结束和退出重进，且玩家 ID 必须不同。
+
+分开 `npm start` 时，Granite 仍读取 Config.json；启动 Opal 前需手动将 `OPAL_PUBLIC_HOST`、`OPAL_RELAY_HOST` 设置为同一个 PublicHost，并同步 `OPAL_PORT=WorldPort`、`OPAL_RELAY_PORT=RelayPort`。推荐使用启动脚本避免遗漏。保留默认 `127.0.0.1` 即继续本机使用。
+
+Granite reads `Granite/Server/Config.json`. Environment overrides:
 
 | Variable | Purpose |
 | --- | --- |

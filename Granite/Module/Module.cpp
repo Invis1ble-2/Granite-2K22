@@ -10,6 +10,7 @@
 
 #include <windows.h>
 #include <winhttp.h>
+#include <bcrypt.h>
 
 #include <algorithm>
 #include <atomic>
@@ -23,6 +24,7 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <memory>
+#include <vector>
 #include <intrin.h>
 
 #include "BadgeSync.h"
@@ -35,8 +37,15 @@
 
 namespace
 {
-constexpr wchar_t RedirectHost[] = L"127.0.0.1";
-constexpr INTERNET_PORT RedirectPort = 21000;
+// Set once after configuration is loaded, before hooks and workers start.
+const wchar_t* RedirectHost = L"127.0.0.1";
+INTERNET_PORT RedirectPort = 21000;
+
+namespace NativePark
+{
+inline void ResetLogin(uint64_t Generation);
+inline void ObserveResponse(HINTERNET Request, uint64_t Generation);
+}
 
 using WinHttpConnectFn = HINTERNET(WINAPI*)(HINTERNET, LPCWSTR, INTERNET_PORT, DWORD);
 using WinHttpOpenRequestFn = HINTERNET(WINAPI*)(HINTERNET, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR const*, DWORD);
@@ -55,6 +64,8 @@ std::unordered_set<HINTERNET> RedirectedConnections;
 std::unordered_set<HINTERNET> RedirectedRequests;
 std::unordered_set<HINTERNET> LoginRequests;
 std::unordered_set<HINTERNET> BadgeRequests;
+std::unordered_map<HINTERNET, uint64_t> ParkRequests;
+uint64_t ParkLoginGeneration = 1;
 // WinHTTP may retain lpOptional until response completion; keep storage until close.
 std::unordered_map<HINTERNET, std::shared_ptr<std::vector<unsigned char>>> BadgeRequestBodies;
 struct PendingBadgeRequest
@@ -240,6 +251,7 @@ HINTERNET WINAPI OpenRequestHook(HINTERNET Connection, LPCWSTR Verb, LPCWSTR Obj
                                  LPCWSTR Referrer, LPCWSTR const* AcceptTypes, DWORD Flags)
 {
     HINTERNET Request = OriginalOpenRequest(Connection, Verb, ObjectName, Version, Referrer, AcceptTypes, Flags);
+    const DWORD RequestError = GetLastError();
     if (Request && IsRedirectedConnection(Connection))
     {
         std::scoped_lock Lock(HandlesMutex);
@@ -248,6 +260,9 @@ HINTERNET WINAPI OpenRequestHook(HINTERNET Connection, LPCWSTR Verb, LPCWSTR Obj
         if (Object.find(L"/session/login") != std::wstring::npos) LoginRequests.insert(Request);
         const size_t Query = Object.find(L'?');
         const std::wstring Path = Object.substr(0, Query);
+        if (Path.ends_with(L"/session/login") || Path.ends_with(L"/session/destroy"))
+            NativePark::ResetLogin(++ParkLoginGeneration);
+        ParkRequests[Request] = ParkLoginGeneration;
         // Classify attribute requests for logging even when budget reporting is disabled.
         if (Path.ends_with(L"/mycareer/attributes/get")) BadgeRequests.insert(Request);
     }
@@ -255,6 +270,7 @@ HINTERNET WINAPI OpenRequestHook(HINTERNET Connection, LPCWSTR Verb, LPCWSTR Obj
     {
         Log(LogLevel::Info, L">> HTTP Request: " + std::wstring(Verb ? Verb : L"GET") + L" " + (ObjectName ? ObjectName : L"/"));
     }
+    SetLastError(RequestError);
     return Request;
 }
 
@@ -425,8 +441,12 @@ BOOL WINAPI WriteDataHook(HINTERNET Request, LPCVOID Buffer, DWORD Length, LPDWO
 
 BOOL WINAPI CloseHandleHook(HINTERNET Handle)
 {
+    const DWORD EntryError = GetLastError();
+    uint64_t Generation = 0;
     {
         std::scoped_lock Lock(HandlesMutex);
+        const auto It = ParkRequests.find(Handle);
+        if (It != ParkRequests.end()) { Generation = It->second; ParkRequests.erase(It); }
         RedirectedRequests.erase(Handle);
         RedirectedConnections.erase(Handle);
         LoginRequests.erase(Handle);
@@ -434,6 +454,10 @@ BOOL WINAPI CloseHandleHook(HINTERNET Handle)
         BadgeRequestBodies.erase(Handle);
         PendingBadgeRequests.erase(Handle);
     }
+    // Headers are available here even when the game used asynchronous WinHTTP.
+    // Observe only requests made through the existing Granite redirect.
+    if (Generation) NativePark::ObserveResponse(Handle, Generation);
+    SetLastError(EntryError);
     return OriginalCloseHandle(Handle);
 }
 
@@ -661,6 +685,7 @@ DWORD WINAPI CareerPriceWatchdog(void*)
     return 0;
 }
 
+#include "NativeParkControl.h"
 #include "SoloParkNative.h"
 #include "AnimationUnlock.h"
 #include "ContentSeasons.h"
@@ -670,9 +695,11 @@ DWORD WINAPI Initialise(void*)
 {
     const auto Directory = ModuleDirectory();
     const bool ConfigSaved = ModuleConfig::Load(Directory);
+    RedirectHost = ModuleConfig::ServerHost.c_str();
+    RedirectPort = ModuleConfig::ServerPort;
     EnsureConsole();
     OpenLogFile();
-    Log(LogLevel::Info, L"Granite module 0x0001020B initialized; configuration: " + Directory + L"\\Granite.ini");
+    Log(LogLevel::Info, L"Granite module 0x0001020F initialized; configuration: " + Directory + L"\\Granite.ini");
     if (!ConfigSaved) Log(LogLevel::Error, L"Granite.ini could not be created or accessed; missing settings use defaults");
     if (ModuleConfig::EnableCrashHandler)
         CrashHandler::Install([](const wchar_t* Text) { Log(LogLevel::Info, Text); },
@@ -767,7 +794,7 @@ DWORD WINAPI Initialise(void*)
 
 extern "C" __declspec(dllexport) unsigned int GraniteModuleVersion()
 {
-    return 0x0001020B;
+    return 0x0001020F;
 }
 
 extern "C" __declspec(dllexport) void CALLBACK GraniteCrashWatchW(HWND, HINSTANCE, LPWSTR CommandLine, int)

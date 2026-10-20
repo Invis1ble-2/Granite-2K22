@@ -62,7 +62,7 @@ function Build(Opts) {
                 const Blobs=Opts.Profiles[Side];
                 if(!Array.isArray(Blobs)||Blobs.length!==Teams[Side].length)throw new Error(`Missing ${Side} court USERDATA`);
                 Blobs.forEach((Blob,I)=>{
-                    if (Opts.Teams.NativeSolo?.Cpu.includes(Teams[Side][I])) {
+                    if (Opts.Teams.NativeSolo?.Cpu.includes(Teams[Side][I]) || Opts.Teams.NativePark?.Cpu.includes(Teams[Side][I])) {
                         if (!Buffer.isBuffer(Blob) || Blob.length) throw new Error('Native generated CPU must retain its own roster, without cloned USERDATA');
                         Values.set(Bit[`${Side}Userdata`][I],U32(0));return;
                     }

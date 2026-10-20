@@ -7,6 +7,10 @@
 
 namespace ModuleConfig
 {
+    // Network settings are immutable after Load, before hooks/workers start.
+    inline std::wstring ServerHost = L"127.0.0.1";
+    inline unsigned short ServerPort = 21000;
+
     // Loaded once before hooks and worker threads are installed.
     inline bool EnableCrashHandler = true;
     inline bool EnablePriceWatchdog = true;
@@ -41,6 +45,9 @@ namespace ModuleConfig
             L"\xFEFF; Granite Module settings: 1 = enabled, 0 = disabled.\r\n"
             L"; Keep beside Module.dll. Changes apply on the next game launch.\r\n"
             L"; Crash reports are controlled separately from .log output.\r\n\r\n"
+            L"[Network]\r\n"
+            L"; Server IPv4 (virtual LAN address for friends); no scheme or port\r\nServerHost = 127.0.0.1\r\n"
+            L"; Granite HTTPS port\r\nServerPort = 21000\r\n\r\n"
             L"[Features]\r\n"
             L"; Crash capture and minidumps\r\nEnableCrashHandler = 1\r\n\r\n"
             L"; Career attribute direct prices and watchdog\r\nEnablePriceWatchdog = 1\r\n\r\n"
@@ -79,10 +86,59 @@ namespace ModuleConfig
         return Default;
     }
 
+    inline std::wstring ReadNetworkValue(const wchar_t* Key, const std::wstring& Path)
+    {
+        wchar_t Buffer[64]{};
+        const DWORD Length = GetPrivateProfileStringW(L"Network", Key, L"", Buffer,
+            static_cast<DWORD>(sizeof(Buffer) / sizeof(Buffer[0])), Path.c_str());
+        if (Length >= sizeof(Buffer) / sizeof(Buffer[0]) - 1) return {};
+        const std::wstring Text(Buffer);
+        const size_t Start = Text.find_first_not_of(L" \t");
+        return Start == std::wstring::npos ? std::wstring{} :
+            Text.substr(Start, Text.find_last_not_of(L" \t") - Start + 1);
+    }
+
+    inline bool IsServerIpv4(const std::wstring& Text)
+    {
+        unsigned int Octets = 0, Value = 0, Digits = 0;
+        for (const wchar_t Ch : Text)
+        {
+            if (Ch >= L'0' && Ch <= L'9')
+            {
+                Value = Value * 10 + (Ch - L'0');
+                if (++Digits > 3 || Value > 255) return false;
+            }
+            else if (Ch == L'.' && Digits && Octets < 3)
+            {
+                ++Octets; Value = 0; Digits = 0;
+            }
+            else return false;
+        }
+        return Octets == 3 && Digits != 0 && Text != L"0.0.0.0" && Text != L"255.255.255.255";
+    }
+
+    inline void LoadNetwork(const std::wstring& Ini)
+    {
+        ServerHost = L"127.0.0.1";
+        ServerPort = 21000;
+        const std::wstring Host = ReadNetworkValue(L"ServerHost", Ini);
+        if (IsServerIpv4(Host)) ServerHost = Host;
+        const std::wstring Port = ReadNetworkValue(L"ServerPort", Ini);
+        if (Port.empty() || Port.size() > 5) return;
+        unsigned int Value = 0;
+        for (const wchar_t Ch : Port)
+        {
+            if (Ch < L'0' || Ch > L'9') return;
+            Value = Value * 10 + (Ch - L'0');
+        }
+        if (Value >= 1 && Value <= 65535) ServerPort = static_cast<unsigned short>(Value);
+    }
+
     inline bool Load(const std::wstring& ModuleDir)
     {
         const std::wstring Ini = ModuleDir + L"\\Granite.ini";
         const bool Saved = EnsureIni(Ini);
+        LoadNetwork(Ini);
 
         // Features
         EnableCrashHandler    = ReadToggle(L"Features", L"EnableCrashHandler", true, Ini);

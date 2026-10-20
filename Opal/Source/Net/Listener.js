@@ -96,6 +96,11 @@ function Attach(Client) {
 
 function Start({ port: Port = Number(process.env.OPAL_PORT) || 20054, Certificate = null } = {}) {
     const Server = Https.createServer(LoadCertificate(Certificate));
+    const NativeParkControl = require('./NativeParkControl').CreateHandler();
+    Server.on('request', (Req, Res) => {
+        if (NativeParkControl(Req, Res)) return;
+        Res.writeHead(404, { 'Content-Length': 0 }); Res.end();
+    });
 
     Server.on('upgrade', (Req, Socket) => {
         const Key = Req.headers['sec-websocket-key'];
