@@ -324,12 +324,15 @@ let Socket = null;
 let ActiveRouterValue = null;
 
 function TimingOptions(Env = process.env) {
-    const LockstepDelayFrames = Number(Env.OPAL_LOCKSTEP_DELAY_FRAMES ?? Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 6);
-    const LockstepHz = Number(Env.OPAL_LOCKSTEP_HZ || 83);
-    if (!Number.isInteger(LockstepDelayFrames) || LockstepDelayFrames < 0 || LockstepDelayFrames > 49)
-        throw new Error('OPAL_LOCKSTEP_DELAY_FRAMES must be 0 (off) or 1..49');
-    if (!Number.isInteger(LockstepHz) || LockstepHz < 0 || LockstepHz > 240)
-        throw new Error('OPAL_LOCKSTEP_HZ must be 0 (native) or 1..240');
+    const LockstepDelayFrames = Number(Env.OPAL_LOCKSTEP_DELAY_FRAMES ?? Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 12);
+    const LockstepHz = Number(Env.OPAL_LOCKSTEP_HZ ?? 120);
+    if (!Number.isInteger(LockstepDelayFrames) || LockstepDelayFrames < 1 || LockstepDelayFrames > 49)
+        throw new Error('OPAL_LOCKSTEP_DELAY_FRAMES must be 1..49 for the 120 Hz client');
+    if (Env.GRANITE_LOCKSTEP_BUFFER_FRAMES !== undefined &&
+        Number(Env.GRANITE_LOCKSTEP_BUFFER_FRAMES) !== LockstepDelayFrames)
+        throw new Error('Granite and Opal lockstep buffer frame counts must match');
+    if (!Number.isInteger(LockstepHz) || (LockstepHz !== 0 && LockstepHz !== 120))
+        throw new Error('OPAL_LOCKSTEP_HZ must be 0 (native startup rate) or 120 for the 120 Hz client');
     return { LockstepDelayFrames, LockstepHz };
 }
 
@@ -342,8 +345,9 @@ function Start({
     const { LockstepDelayFrames, LockstepHz } = TimingOptions();
     if (LockstepDelayFrames)
         Log.Info(
-            `mode-3 input scheduling: +${LockstepDelayFrames} frame offset; ` +
-                `target ${LockstepHz ? `${LockstepHz} Hz (${(1000 / LockstepHz).toFixed(2)} ms/tick)` : 'native startup rate'}; real-input cache enabled`,
+            `mode-3 input scheduling: configured buffer ${LockstepDelayFrames} frames; ` +
+                `target ${LockstepHz ? `${LockstepHz} Hz (${(1000 / LockstepHz).toFixed(2)} ms/tick)` : 'native startup rate'}; ` +
+                'effective frame offset follows native STARTUP packet period; real-input cache enabled',
         );
 
     const Udp = Dgram.createSocket('udp4');
@@ -351,8 +355,8 @@ function Start({
     const FlushTraffic = () => {
         const Line = Counts.Take();
         if (Line) Log.Verbose(`  ${Line}`);
-        const Pacing = Active.Pacer?.Summary();
-        if (Pacing) Log.Verbose(`  ${Pacing}`);
+        const Pacing = Active.Pacer?.Summary(Active.Now(), Active.Clients.values());
+        if (Pacing) Log.Info(`[${Log.Clock()}] ${Pacing}`);
     };
     const Active = new Router(
         (Packet, Client) => {
@@ -390,6 +394,16 @@ function Start({
             } else {
                 Counts.In++;
                 if (!Result.Sent && !Result.Queued) Counts.NoRecipients++;
+                const Timing = Result.Client.Lockstep;
+                if (Timing && !Result.Client.LockstepTimingLogged) {
+                    Result.Client.LockstepTimingLogged = true;
+                    Log.Info(
+                        `mode-3 timing: machine ${Timing.Index} (0x${Result.Client.MachineId.toString(16).toUpperCase()}), ` +
+                            `configured ${LockstepDelayFrames} frames, effective ${Timing.Delay} frames ` +
+                            `(${(1000 * Timing.Delay / Timing.FrameRate).toFixed(2)} ms), ` +
+                            `packet period ${Timing.SendPeriod} frames, ${Timing.FrameRate} Hz @ ${Log.Clock()}`,
+                    );
+                }
                 for (const Control of Result.P2PControls || []) {
                     const Sequence = Control.MatchSequence === null ? '' : `, match sequence ${Control.MatchSequence}`;
                     Log.Verbose(

@@ -2,10 +2,9 @@
 // Licensed under the PolyForm Noncommercial License 1.0.0. See LICENSE.md.
 'use strict';
 
-const Fs = require('node:fs');
-const Path = require('node:path');
 const Crypto = require('node:crypto');
 const Log = require('../Core/Log');
+const Settings = require('../Core/Config');
 const Wire = require('./NativeParkWire');
 const Roster = require('./Roster');
 const Slots = require('./Slots');
@@ -13,17 +12,14 @@ const CourtData = require('./CourtData');
 const PlayerObject = require('./PlayerObject');
 const Body22 = require('./PlayerBody2K22');
 const ObjectFrame = require('../Codec/ObjectFrame');
-const ConfigPath = Path.resolve(__dirname, '../..', 'NativeSoloPark.json');
 const Controls = new Map(), Waiting = new Map(), Courts = new Map(), Participants = new Map();
 const WaitMs = 10000;
 const Nonce = () => Crypto.randomBytes(8).readBigUInt64LE() || 1n;
 const KeyFor = (C, Found) => `${C.ActivityKey}:${C.RoomScope || ''}:${Found.Raw.Name}`;
 
 function Enabled(TeamSize) {
-    try {
-        const C = JSON.parse(Fs.readFileSync(ConfigPath, 'utf8'));
-        return C.Enabled === true && (TeamSize === 2 ? C.TwoOnTwo : C.ThreeOnThree) !== false;
-    } catch (_) { return false; }
+    const C = Settings.NativePark();
+    return Boolean(C && (TeamSize === 2 ? C.TwoOnTwo : C.ThreeOnThree) !== false);
 }
 function Notice(C, Why) {
     if (C.NativeParkNotice === Why) return;
@@ -222,39 +218,70 @@ function Begin(C, Found, S, Key) {
     Log.Info(`Native park ${Found.Raw.Name}: froze ${P.Members.length} human seat(s), ${P.Cpu.length} empty seat(s); awaiting v4 enhanced CPU authorization on every client`);
     return true;
 }
-function TryStart(C, Found) {
-    const Key = KeyFor(C, Found), Existing = Courts.get(Key);
-    if (Existing) { Tick(Existing); return !Existing.Done; }
-    const S = Snapshot(C, Found);
-    if (!S) { CancelWait(C); return false; }
-    if (S.Members.some(M => Participants.has(M.Connection.Id))) return false;
-    if (S.Members.some(M => !Wire.HasPool(M.Control))) {
-        CancelWait(C); Notice(C, 'all queued humans need Module 00010213 v4 readiness through their game login'); return false;
-    }
-    const First = S.Members[0].Control.Report;
-    if (S.Members.some(M => M.Control.Report.PoolCount !== First.PoolCount || !M.Control.Report.Digest.equals(First.Digest))) {
-        CancelWait(C); Notice(C, 'client template pools differ; refusing CPU fill'); return false;
-    }
-    C.NativeParkNotice = null;
+// One court clock is shared by solo and multiplayer fill, independent of module heartbeats.
+function WaitForQueue(C, Found) {
+    const Key = KeyFor(C, Found), Size = Found.Raw.TeamSize;
+    const Seats = Found.Groups.map(G => Slots.StateFor(G.SlotObjectId, Size).Seats.slice());
+    const Ids = Seats.flat().filter(Id => Id !== 0n);
+    const ByPuid = new Map(Roster.InActivity(C.ActivityKey, C.RoomScope || null).map(P => [P.Puid, P]));
+    const Members = Ids.map(Id => ({ Connection: ByPuid.get(Id) }));
+    for (const M of Members) M.Spot = M.Connection?.GotNext;
+    const S = { Seats, Members };
     let W = Waiting.get(Key);
+    if (!Ids.length || Ids.length >= Size * 2 || Ids.some(Wire.IsCpu) ||
+        Members.some(M => !M.Connection || M.Connection.Closed || !M.Spot || M.Spot.Playing)) {
+        if (W) { clearTimeout(W.Timer); Waiting.delete(Key); }
+        return false;
+    }
     if (!W || !SameQueue(W.Snapshot, S)) {
         if (W) clearTimeout(W.Timer);
         W = { Snapshot: S, Since: Date.now(), Timer: null };
         Waiting.set(Key, W);
-        const Anchor = S.Members[0].Connection;
+        const Anchor = Members[0].Connection;
         W.Timer = setTimeout(() => {
             if (Waiting.get(Key) !== W) return;
             W.Timer = null;
-            if (Anchor.Closed || !Anchor.GotNext) { Waiting.delete(Key); return; }
+            if (Anchor.Closed || Anchor.GotNext !== W.Snapshot.Members[0].Spot) {
+                Waiting.delete(Key); return;
+            }
             try { require('./GotNext').MaybeStartMatch(Anchor); }
             catch (Failure) { Waiting.delete(Key); Log.Error(`Native park delayed start withheld: ${Failure.message}`); }
         }, WaitMs);
         W.Timer.unref?.();
-        Log.Info(`Native park ${Found.Raw.Name}: waiting 10 stable seconds before filling team vacancies`);
-        return false;
+        Log.Info(`Native park ${Found.Raw.Name}: ${Ids.length} human seat(s); waiting 10 stable seconds before CPU fill`);
     }
-    if (Date.now() - W.Since < WaitMs) return false;
-    clearTimeout(W.Timer); Waiting.delete(Key);
+    return Date.now() - W.Since >= WaitMs;
+}
+function QueueChanged(C, Found) {
+    const Size = Found.Raw.TeamSize;
+    if (C.ActivityName !== 'neighborhood' || ![2, 3].includes(Size) || !Enabled(Size) ||
+        require('./PlayerBody').GenerationForConnection(C) !== '2K22' ||
+        CourtData.ParkCourtFormat(Found.Raw.Name) !== 'bitstream' || Found.Groups.length !== 2 ||
+        Found.Groups.some(G => G.Anchors.length !== Size)) return;
+    const P = Courts.get(KeyFor(C, Found));
+    if (P) Tick(P);
+    if (CourtData.GameTeams(C.ActivityName, Found.Raw.Name, '2K22')) return;
+    require('./NativeSoloPark').QueueChanged(C, Found);
+    WaitForQueue(C, Found);
+}
+function TryStart(C, Found) {
+    const Key = KeyFor(C, Found), Existing = Courts.get(Key);
+    if (Existing) { Tick(Existing); return !Existing.Done; }
+    const S = Snapshot(C, Found);
+    if (!S) return false;
+    if (S.Members.some(M => Participants.has(M.Connection.Id))) return false;
+    const Waited = WaitForQueue(C, Found);
+    if (S.Members.some(M => !Wire.HasPool(M.Control))) {
+        Notice(C, 'all queued humans need Module 00010215 v4 readiness through their game login'); return false;
+    }
+    const First = S.Members[0].Control.Report;
+    if (S.Members.some(M => M.Control.Report.PoolCount !== First.PoolCount || !M.Control.Report.Digest.equals(First.Digest))) {
+        Notice(C, 'client template pools differ; refusing CPU fill'); return false;
+    }
+    C.NativeParkNotice = null;
+    if (!Waited) return false;
+    const W = Waiting.get(Key);
+    if (W) { clearTimeout(W.Timer); Waiting.delete(Key); }
     return Begin(C, Found, S, Key);
 }
 function OnReport(Puid, R) {
@@ -316,4 +343,4 @@ function HandleUpdate(C, Bytes) {
     for (const M of P.Members) if (!M.Connection.Closed) Sent = M.Connection.SendObject(Frame) || Sent;
     return Sent;
 }
-module.exports = { TryStart, CancelWait, Stop, Disconnect, Finish, OnReport, HandleUpdate };
+module.exports = { TryStart, WaitForQueue, QueueChanged, CancelWait, Stop, Disconnect, Finish, OnReport, HandleUpdate };

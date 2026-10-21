@@ -44,6 +44,15 @@ static_assert(0xcb0 + RosterSortOffset == 0xf6c);
 inline GenerateFn OriginalGenerate = nullptr;
 inline StartFn OriginalStart = nullptr;
 inline PlayingFn OriginalPlaying = nullptr;
+inline void (*BeforeStart)(void*, void*) = nullptr;
+inline bool (*FrameTimingReady)() = nullptr;
+inline void StartPrepared(void* Session, void* Info)
+{
+    const DWORD Error = GetLastError();
+    if (BeforeStart) BeforeStart(Session, Info);
+    SetLastError(Error);
+    OriginalStart(Session, Info);
+}
 inline LookupFn Lookup = nullptr;
 inline constexpr uint64_t CpuMask = 0xfffff00000000000ULL;
 inline constexpr uint64_t CpuPrefix = 0x0222c00000000000ULL;
@@ -63,7 +72,6 @@ inline bool Created[MaxCpu]{};
 inline std::array<CpuEnhancement::Snapshot, MaxCpu> Profiles{};
 inline std::string GenerationError;
 inline std::mutex ReceiptMutex;
-inline std::wstring Root;
 inline bool NetworkManaged = false, ReceiptStarted = false;
 inline Request NetworkRequest{};
 inline uint64_t NetworkEpoch = 0;
@@ -100,21 +108,10 @@ inline bool ValidRequest(const Request& R)
 }
 inline bool LoadRequest(Request& R)
 {
-    {
-        std::lock_guard<std::mutex> Lock(ReceiptMutex);
-        if (NetworkManaged)
-        {
-            if (GetTickCount64() >= NetworkDeadline) return false;
-            R = NetworkRequest; return ValidRequest(R);
-        }
-    }
-    HANDLE File = CreateFileW((Root + L"\\SoloParkNative.request").c_str(), GENERIC_READ,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (File == INVALID_HANDLE_VALUE) return false;
-    DWORD N = 0;
-    const bool Ok = GetFileSize(File, nullptr) == sizeof(R) && ReadFile(File, &R, sizeof(R), &N, nullptr) && N == sizeof(R);
-    CloseHandle(File);
-    return Ok && ValidRequest(R);
+    std::lock_guard<std::mutex> Lock(ReceiptMutex);
+    if (!NetworkManaged || GetTickCount64() >= NetworkDeadline) return false;
+    R = NetworkRequest;
+    return ValidRequest(R);
 }
 inline void Select(const Request& R)
 {
@@ -126,7 +123,8 @@ inline std::string BuildReceipt(const char* Error = nullptr, bool Started = fals
     if (Error && GenerationError.empty()) GenerationError = Error;
     ReceiptStarted |= Started;
     std::ostringstream Text;
-    Text << "{\"version\":3,\"module\":\"00010213\",\"installed\":" << (CpuEnhancement::Ready ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
+    Text << "{\"version\":3,\"module\":\"00010215\",\"installed\":" <<
+        (CpuEnhancement::Ready && (!FrameTimingReady || FrameTimingReady()) ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
          << ",\"match\":\"" << std::hex << Current.Match << "\",\"teamSize\":" << std::dec << Current.TeamSize
          << ",\"cpuCount\":" << Current.CpuCount << ",\"created\":[";
     bool First = true;
@@ -157,15 +155,8 @@ inline std::string BuildReceipt(const char* Error = nullptr, bool Started = fals
 }
 inline void Receipt(const char* Error = nullptr, bool Started = false)
 {
-    const auto Bytes = BuildReceipt(Error, Started);
-    const auto Temp = Root + L"\\SoloParkNative.ready.tmp";
-    HANDLE File = CreateFileW(Temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
-    if (File == INVALID_HANDLE_VALUE) return;
-    DWORD N = 0;
-    const bool Ok = WriteFile(File, Bytes.data(), static_cast<DWORD>(Bytes.size()), &N, nullptr) && N == Bytes.size();
-    CloseHandle(File);
-    if (Ok) MoveFileExW(Temp.c_str(), (Root + L"\\SoloParkNative.ready.json").c_str(), MOVEFILE_REPLACE_EXISTING);
-    else DeleteFileW(Temp.c_str());
+    if (Error && GenerationError.empty()) GenerationError = Error;
+    ReceiptStarted |= Started;
 }
 inline std::string NetworkReceipt(uint64_t Instance)
 {
@@ -175,7 +166,7 @@ inline std::string NetworkReceipt(uint64_t Instance)
 inline void RevokeNetwork()
 {
     std::lock_guard<std::mutex> Lock(ReceiptMutex);
-    NetworkDeadline = 0; // Retain identity and never fall back to a stale local request.
+    NetworkDeadline = 0; // Expire the active request lease; hooks refuse the request after this point.
 }
 inline bool NetworkReply(const void* Bytes, size_t Size, uint64_t Instance)
 {
@@ -308,7 +299,7 @@ inline void __fastcall Start(void* Session, void* Info)
             SetLastError(NativeError); return;
         }
         Log(LogLevel::Info, L"PARK22 validated native mixed roster before StartGame");
-        SetLastError(NativeError); OriginalStart(Session, Info); return;
+        SetLastError(NativeError); StartPrepared(Session, Info); return;
     }
     bool Generated = false;
     if (Info && Read(static_cast<unsigned char*>(Info) + 0x48, Slots, 40) &&
@@ -331,7 +322,7 @@ inline void __fastcall Start(void* Session, void* Info)
               Receipt(Loaded ? "native-start-match-mismatch" : "native-start-request-unavailable"); }
             SetLastError(NativeError); return;
         }
-        SetLastError(NativeError); OriginalStart(Session, Info); return;
+        SetLastError(NativeError); StartPrepared(Session, Info); return;
     }
     bool Ok = false;
     try
@@ -347,7 +338,7 @@ inline void __fastcall Start(void* Session, void* Info)
         SetLastError(NativeError); return;
     }
     Log(LogLevel::Info, L"SOLO22 StartGame validated: one human and " + std::to_wstring(R.CpuCount) + L" native CPU rosters");
-    SetLastError(NativeError); OriginalStart(Session, Info);
+    SetLastError(NativeError); StartPrepared(Session, Info);
 }
 inline uint64_t __fastcall Playing(void* Session)
 {
@@ -572,8 +563,6 @@ inline void Install(HMODULE Executable)
     // Always install for the supported NBA2K22 build; no opt-in flag file.
     if (!Executable || GetModuleHandleW(L"nba2k22.exe") != Executable) return;
     if (InstallStarted.exchange(true)) return;
-    Root = ModuleDirectory();
-    DeleteFileW((Root + L"\\SoloParkNative.ready.json").c_str());
     SignatureFailure Failure{};
     if (CheckSignatures(Executable, Failure)) { InstallHooks(Executable); return; }
 

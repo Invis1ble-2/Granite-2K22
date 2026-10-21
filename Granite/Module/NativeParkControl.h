@@ -39,6 +39,7 @@ static_assert(sizeof(Report) == 120 && offsetof(Report, Digest) == 56 && offseto
 inline bool IsCpu(uint64_t Id) { return (Id & CpuMask) == CpuPrefix; }
 inline unsigned char* ExeBase = nullptr;
 inline std::atomic_bool Installed = false, OnlineHookReady = false;
+inline bool (*FrameTimingReady)() = nullptr;
 inline std::mutex StateMutex;
 struct StateData
 {
@@ -497,7 +498,8 @@ inline Report Snapshot(uint64_t Instance)
 {
     Report R; R.Instance = Instance;
     unsigned char* Entries = nullptr;
-    const bool Ready = Installed && OnlineHookReady && CpuEnhancement::Ready && Pool(R.PoolCount, R.Digest, Entries);
+    const bool Ready = Installed && OnlineHookReady && CpuEnhancement::Ready &&
+        (!FrameTimingReady || FrameTimingReady()) && Pool(R.PoolCount, R.Digest, Entries);
     if (!Ready) { R.PoolCount = 0; memset(R.Digest, 0, sizeof(R.Digest)); }
     std::lock_guard<std::mutex> Lock(StateMutex);
     R.Epoch = State.Request.Epoch; R.Match = State.Request.Match;

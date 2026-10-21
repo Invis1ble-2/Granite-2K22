@@ -92,9 +92,16 @@ class DelayService {
                     throw new Error('invalid 2K22 mode-3 startup');
                 const Counts = Array.from(Body.subarray(9, StartupBytes));
                 const FrameRate = Body.readFloatBE(4);
-                if (!Number.isFinite(FrameRate) || FrameRate < 1 || FrameRate > 240)
-                    throw new Error('invalid startup frame rate');
+                if (FrameRate !== 120)
+                    throw new Error('this relay requires 120 Hz lockstep; all players must use the matching park DLL');
                 if (!Counts[Body[0]] || Counts.some((N) => N > 9)) throw new Error('invalid startup controller map');
+                const SendPeriod = Body[1] * Body[2];
+                if (!Body[1] || Body[1] > 8 || !Body[2] || SendPeriod > 255)
+                    throw new Error('invalid mode-3 startup input scheduling');
+                // FUN_1418866B0 starts at -max(requested delay, packet period + 1), capped at 49.
+                // Mode 3 derives the same period for every machine from the complete controller map;
+                // FUN_14188A6D0 sends its two factors in startup bytes 1 and 2.
+                const Delay = Math.min(49, Math.max(this.Delay, SendPeriod + 1));
                 for (const Peer of SessionClients) {
                     if (Peer === Sender || !Peer.Lockstep) continue;
                     if (
@@ -103,6 +110,8 @@ class DelayService {
                         !Peer.Lockstep.Counts.every((N, I) => N === Counts[I])
                     )
                         throw new Error('conflicting mode-3 machine/controller map');
+                    if (Peer.Lockstep.Delay !== Delay)
+                        throw new Error(`conflicting mode-3 effective delays (${Delay} vs ${Peer.Lockstep.Delay}); reconnect with matching client timing`);
                 }
                 if (Sender.Lockstep && !Sender.Lockstep.Startup.equals(Body))
                     throw new Error('changed lockstep startup requires reconnect');
@@ -110,6 +119,8 @@ class DelayService {
                     Index: Body[0],
                     Counts: Counts,
                     FrameRate: FrameRate,
+                    SendPeriod: SendPeriod,
+                    Delay: Delay,
                     Startup: Buffer.from(Body),
                     Frames: new Map(),
                     Latest: null,
@@ -140,7 +151,7 @@ class DelayService {
                     } else if (Peer && Peer !== Sender) {
                         // The target retains the authoritative history when our cache misses.
                         Output.push({
-                            Payload: Frame(Input, Source, Buffer.from([0xf0, State.Index, Record.Nak.Machine, (Record.Nak.Frame - this.Delay) & 255])),
+                            Payload: Frame(Input, Source, Buffer.from([0xf0, State.Index, Record.Nak.Machine, (Record.Nak.Frame - Peer.Lockstep.Delay) & 255])),
                             Recipients: [Peer],
                         });
                     }
@@ -149,7 +160,7 @@ class DelayService {
                 const Bytes = Buffer.from(Record.Bytes);
                 Bytes[0] &= ~7;
                 for (let I = 0; I < Record.Repeat; I++) {
-                    const Wire = (Record.Frame + I + this.Delay) & 255;
+                    const Wire = (Record.Frame + I + State.Delay) & 255;
                     const Absolute =
                         State.Latest === null
                             ? Wire

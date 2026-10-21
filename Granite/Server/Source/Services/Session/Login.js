@@ -90,8 +90,11 @@ function BuildEndpointBlob(File, Include2K22Catalog = false) {
     return Gzip(ListBuilder.Build().Body);
 }
 
+// Must match the 120 Hz park DLL and relay STARTUP contract.
+const LockstepFrameRate = 120;
+
 function LockstepBufferFrames(Env = process.env) {
-    const Frames = Number(Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 6);
+    const Frames = Number(Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 12);
     if (!Number.isInteger(Frames) || Frames < 1 || Frames > 49)
         throw new Error('GRANITE_LOCKSTEP_BUFFER_FRAMES must be 1..49');
     return Frames;
@@ -99,8 +102,8 @@ function LockstepBufferFrames(Env = process.env) {
 
 function BuildParameterBlob(Env = process.env) {
     const BufferFrames = LockstepBufferFrames(Env);
-    const DelaySeconds = Math.fround(BufferFrames / 60);
-    if (Math.ceil(Math.fround(DelaySeconds * 60)) !== BufferFrames)
+    const DelaySeconds = Math.fround(BufferFrames / LockstepFrameRate);
+    if (Math.ceil(Math.fround(DelaySeconds * LockstepFrameRate)) !== BufferFrames)
         throw new Error('lockstep delay does not round-trip to the requested native frame count');
     return Gzip(
         new Builder()
@@ -186,7 +189,7 @@ function Build(Input, Context = {}) {
         }
     }
     Logger.Info(
-        `issued session ${Session.key}; services blob ${Endpoints.length} bytes; lockstep lookahead ${LockstepBufferFrames()} frames at native 60 Hz`,
+        `issued session ${Session.key}; services blob ${Endpoints.length} bytes; lockstep lookahead ${LockstepBufferFrames()} frames at ${LockstepFrameRate} Hz`,
     );
     return Reply.Build();
 }

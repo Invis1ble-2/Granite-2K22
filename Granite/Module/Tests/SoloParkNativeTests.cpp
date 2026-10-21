@@ -1,17 +1,38 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <cstring>
-#include <string>
-#include <mutex>
-#include <vector>
-#include <stdexcept>
+#include <winhttp.h>
+#include <bcrypt.h>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <cwctype>
+#include <intrin.h>
+#include <memory>
+#include <mutex>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 #include "../MinHook/include/MinHook.h"
-enum class LogLevel { Info, Error };
+enum class LogLevel { Info, Verbose, Error };
 void Log(LogLevel, const std::wstring&) {}
-std::wstring ModuleDirectory() { return L"Z:\\nonexistent-solo-native-test"; }
+#include "../CpuEnhancement.h"
+const wchar_t* RedirectHost=L"127.0.0.1";
+using WinHttpConnectFn=HINTERNET(WINAPI*)(HINTERNET,LPCWSTR,INTERNET_PORT,DWORD);
+using WinHttpOpenRequestFn=HINTERNET(WINAPI*)(HINTERNET,LPCWSTR,LPCWSTR,LPCWSTR,LPCWSTR,LPCWSTR const*,DWORD);
+using WinHttpCloseHandleFn=BOOL(WINAPI*)(HINTERNET);
+WinHttpConnectFn OriginalConnect=nullptr;
+WinHttpOpenRequestFn OriginalOpenRequest=nullptr;
+WinHttpCloseHandleFn OriginalCloseHandle=nullptr;
+#include "../NativeParkControl.h"
 #include "../SoloParkNative.h"
 void Check(bool Ok) { if (!Ok) throw std::runtime_error("assertion failed"); }
 unsigned char Players[4][0x446d0]{}, Containers[4][0x30]{}, Rosters[4][0x120]{}, Object[0xb0]{}, Info[0x590]{};
@@ -40,20 +61,18 @@ void* __fastcall Lookup(void* S, uint64_t Id)
 {
     Check(S == Players[0]);for (unsigned I = 0; I < 4; ++I) if (Ids[I] == Id) return Players[I];return nullptr;
 }
-void RequestFile(const SoloParkNative::Request& R)
+bool ArmRequest(const SoloParkNative::Request& R)
 {
-    HANDLE F = CreateFileW((SoloParkNative::Root + L"\\SoloParkNative.request").c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,0,nullptr);
-    Check(F != INVALID_HANDLE_VALUE);DWORD N=0;Check(WriteFile(F,&R,sizeof(R),&N,nullptr) && N == sizeof(R));CloseHandle(F);
+    SoloParkNative::NetworkEnvelope E{};E.Instance=0x1122334455667788ULL;E.Epoch=0x8877665544332211ULL;E.LeaseMs=8000;E.Data=R;
+    return SoloParkNative::NetworkReply(&E,sizeof(E),E.Instance);
 }
 int main()
 {
-    wchar_t Temp[MAX_PATH]{};GetTempPathW(MAX_PATH,Temp);
-    SoloParkNative::Root = std::wstring(Temp) + L"SoloParkNativeTests-" + std::to_wstring(GetCurrentProcessId());
-    const auto Root = SoloParkNative::Root;
     try {
-        Check(CreateDirectoryW(Root.c_str(),nullptr) != 0);
-        SoloParkNative::Request R{0x32325053,1,0x1234,Ids[0],{Ids[1],Ids[2],Ids[3]}};
-        RequestFile(R);SoloParkNative::Request Loaded{};Check(SoloParkNative::LoadRequest(Loaded));
+        SoloParkNative::Request R{};R.Magic=0x32325053;R.Version=3;R.Match=0x1234;R.Owner=Ids[0];R.TeamSize=2;R.CpuCount=3;
+        for (unsigned I=0; I<R.CpuCount; ++I) { R.Cpu[I]=Ids[I+1]; R.Seeds[I]=I+1; }
+        SoloParkNative::Request Loaded{};Check(!SoloParkNative::LoadRequest(Loaded));
+        Check(ArmRequest(R));Check(SoloParkNative::LoadRequest(Loaded));
         for (unsigned I = 0; I < 4; ++I) {
             Put(Players[I],0xf0,Ids[I]);Put(Players[I],0x2200,I ? 8U : 0U);
             Put(Players[I],0x446c0,static_cast<void*>(Containers[I]));Put(Containers[I],0x28,static_cast<void*>(Rosters[I]));
@@ -90,10 +109,8 @@ int main()
         for (auto& Player : Players) Put(Player,0x21f0,1U);
         SetLastError(73);Check(SoloParkNative::Playing(Players[0])==1 && PlayingCalls==1 && GetLastError()==94);
         PlayingResult=0;SetLastError(73);Check(SoloParkNative::Playing(Players[0])==0 && PlayingCalls==2 && GetLastError()==94);
-        HANDLE ReceiptHandle=CreateFileW((Root+L"\\SoloParkNative.ready.json").c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,0,nullptr);
-        Check(ReceiptHandle!=INVALID_HANDLE_VALUE);char ReceiptText[1024]{};DWORD ReceiptSize=0;
-        Check(ReadFile(ReceiptHandle,ReceiptText,sizeof(ReceiptText)-1,&ReceiptSize,nullptr));CloseHandle(ReceiptHandle);
-        Check(strstr(ReceiptText,"\"started\":false") && strstr(ReceiptText,"native-playing-init-failed"));
+        const auto ReceiptText=SoloParkNative::NetworkReceipt(0x1122334455667788ULL);
+        Check(strstr(ReceiptText.c_str(),"\"started\":false") && strstr(ReceiptText.c_str(),"native-playing-init-failed"));
         PlayingResult=1;
         Check(!SoloParkNative::InitializingSolo && SoloParkNative::HomeCount()==3 && SoloParkNative::AwayCount()==4);
         Put(Players[2],0x21f0,2U);SetLastError(73);Check(SoloParkNative::Playing(Players[0])==0 && PlayingCalls==2);
@@ -105,16 +122,13 @@ int main()
         SetLastError(73);SoloParkNative::Start(Players[0],Info);Check(StartCalls==1 && GetLastError()==73);
         Put(Info,0xb6*sizeof(uint32_t),R.Match);Put(Info,0x340,uint64_t(0xabcdef));Put(Containers[3],0x28,static_cast<void*>(nullptr));SoloParkNative::Start(Players[0],Info);Check(StartCalls==1);
         Put(Object,0xa0,Ids[3]);Result=nullptr;Check(SoloParkNative::Generate(Players[0],Rosters[0],Object)==nullptr && !SoloParkNative::Created[2]);
-        DeleteFileW((Root+L"\\SoloParkNative.request").c_str());SetLastError(73);
+        SoloParkNative::RevokeNetwork();SetLastError(73);
         SoloParkNative::Start(Players[0],Info);Check(StartCalls==1 && GetLastError()==73);
         Put(Info,0xb6*sizeof(uint32_t),uint64_t(0x5678));SoloParkNative::Start(Players[0],Info);Check(StartCalls==1);
         memset(Info+0x48,0,40);memset(Info+0xb0,0,40);SetLastError(73);
         SoloParkNative::Start(Players[0],Info);Check(StartCalls==2 && GetLastError()==92);
-        R.Cpu[2]=R.Cpu[0];RequestFile(R);Check(!SoloParkNative::LoadRequest(Loaded));
-        SoloParkNative::Install(nullptr); // invalid executable: no hooks or receipt installation
-        SoloParkNative::Root=Root;
-        DeleteFileW((Root+L"\\SoloParkNative.request").c_str());DeleteFileW((Root+L"\\SoloParkNative.ready.json").c_str());
-        DeleteFileW((Root+L"\\SoloParkNative.ready.tmp").c_str());RemoveDirectoryW(Root.c_str());
+        R.Cpu[2]=R.Cpu[0];Check(!ArmRequest(R));Check(!SoloParkNative::LoadRequest(Loaded));
+        SoloParkNative::Install(nullptr); // invalid executable: no hooks installed
         puts("SoloParkNative: native argument/return/error preservation, complete 2v2 validation, empty/duplicate/missing roster refusal and normal-match passthrough passed");return 0;
     } catch (const std::exception& E) { fprintf(stderr,"%s\n",E.what());return 1; }
 }

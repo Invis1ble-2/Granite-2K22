@@ -4,7 +4,7 @@
 
 namespace CpuEnhancement
 {
-inline constexpr uint32_t ModuleVersion = 0x00010213;
+inline constexpr uint32_t ModuleVersion = 0x00010215;
 inline constexpr size_t TemplateBytes = 0x560, DataBytes = 0x4f0, AttributeCount = 0x39;
 inline constexpr size_t ShapeOffsets[] = {4, 8, 0xc, 0x10, 0x14};
 inline std::atomic_bool Ready = false;
@@ -255,14 +255,13 @@ inline bool Build(Generation& G, const unsigned char* Source)
     if (!Tune(G.Data, Target, G.Seed, &Detail)) return Reject(&G.Error, "tune-" + Detail);
     if (!Capture(G.Data, G.Expected, &Detail)) return Reject(&G.Error, "template-" + Detail);
     if (G.Expected.Rating != Target) return Reject(&G.Error, "template-target-mismatch");
-    // The copied display field must reflect the actual native calculation.
-    Store(G.Data, 0x70, (Load<uint32_t>(G.Data, 0x70) & ~0xfe000U) | (Target << 13));
     return Authorized(G) || Reject(&G.Error, "build-authorization-expired");
 }
-// TK_WORLD::PLAYER embeds its server object at +0x50. Server+0x164 is
-// therefore Player+0x1b4 (dirty byte +0x1b8), not Player+0x164.
-inline constexpr size_t DisplayOffset = 0x1b4, DisplayDirtyOffset = 0x1b8;
-inline bool VerifyData(void* Player, uint64_t Id, const Snapshot& Expected, std::string* Error, void** Roster = nullptr)
+// OverallRating is the U8 at ServerObject+0x14d; TK_WORLD::PLAYER embeds it at +0x50.
+// Player+0x1b4 and PLAYERDATA+0x70 bits 13..19 are JerseyNumber, not overall.
+inline constexpr size_t DisplayOffset = 0x50 + 0x14d, DisplayDirtyOffset = 0x50 + 0x14e;
+static_assert(DisplayOffset == 0x19d && DisplayDirtyOffset == 0x19e);
+inline bool VerifyData(void* Player, uint64_t Id, const Snapshot& Expected, std::string* Error)
 {
     uint64_t Puid = 0; uint32_t Flags = 0; void* Container = nullptr; void* Data = nullptr;
     if (!Expected.Rating) return Reject(Error, "expected-profile-missing");
@@ -277,62 +276,38 @@ inline bool VerifyData(void* Player, uint64_t Id, const Snapshot& Expected, std:
         return Reject(Error, "embedded-" + Detail);
     if (!Capture(Data, Actual, &Detail) || !Compare(Actual, Expected, &Detail))
         return Reject(Error, "roster-" + Detail);
-    if (Roster) *Roster = Data;
     return true;
 }
-inline bool VerifyDisplay(void* Player, void* Data, const Snapshot& Expected, std::string* Error)
+inline bool VerifyDisplay(void* Player, const Snapshot& Expected, std::string* Error)
 {
-    uint32_t Display = 0;
+    uint8_t Display = 0;
     if (!At(Player, DisplayOffset, Display)) return Reject(Error, "display-unreadable");
     if (Display != Expected.Rating)
         return Reject(Error, "display:expected=" + std::to_string(Expected.Rating) + ":actual=" + std::to_string(Display));
-    const void* Sources[] = {static_cast<unsigned char*>(Player) + 0x2208, static_cast<unsigned char*>(Player) + 0x3100, Data};
-    const char* Names[] = {"embedded-display", "prepared-display", "roster-display"};
-    for (size_t I = 0; I < 3; ++I)
-    {
-        uint32_t Packed = 0;
-        if (!At(Sources[I], 0x70, Packed)) return Reject(Error, std::string(Names[I]) + "-unreadable");
-        const uint32_t Value = (Packed >> 13) & 0x7f;
-        if (Value != Expected.Rating)
-            return Reject(Error, std::string(Names[I]) + ":expected=" + std::to_string(Expected.Rating) + ":actual=" + std::to_string(Value));
-    }
     return true;
 }
 inline bool Verify(void* Player, uint64_t Id, const Snapshot& Expected, std::string* Error = nullptr)
 {
-    void* Data = nullptr;
-    return VerifyData(Player, Id, Expected, Error, &Data) && VerifyDisplay(Player, Data, Expected, Error);
+    return VerifyData(Player, Id, Expected, Error) && VerifyDisplay(Player, Expected, Error);
 }
 inline bool Finish(Generation& G, void* Player)
 {
     if (!G.Valid) return Reject(&G.Error, "generation-invalid");
     if (!G.Seen) return Reject(&G.Error, G.Entered ? "create-returned-null" : "create-hook-not-reached");
     if (!Authorized(G)) return Reject(&G.Error, "generation-authorization");
-    void* Data = nullptr;
-    if (!VerifyData(Player, G.Id, G.Expected, &G.Error, &Data)) return false;
-    // Native Create forces ServerObject+0x164 to 100 for descriptor flag 8.
+    if (!VerifyData(Player, G.Id, G.Expected, &G.Error)) return false;
+    // Native Create initializes OverallRating to 60 for generated CPUs.
     // Synchronize only this authorized CPU, after both real profiles match.
     auto* Base = static_cast<unsigned char*>(Player);
-    unsigned char* Sources[] = {Base + 0x2208, Base + 0x3100, static_cast<unsigned char*>(Data)};
-    uint32_t Packed[3]{};
-    for (size_t I = 0; I < 3; ++I)
-    {
-        if (!At(Sources[I], 0x70, Packed[I])) return Reject(&G.Error, "display-sync-unreadable");
-        Packed[I] = (Packed[I] & ~0xfe000U) | (G.Expected.Rating << 13);
-    }
     if (!Authorized(G)) return Reject(&G.Error, "display-sync-authorization");
     const auto Write = [&](void* Address, const void* Bytes, size_t Size)
     {
         SIZE_T N = 0;
         return WriteProcessMemory(GetCurrentProcess(), Address, Bytes, Size, &N) && N == Size;
     };
-    const unsigned char Dirty = 1;
-    if (!Write(Base + DisplayOffset, &G.Expected.Rating, sizeof(G.Expected.Rating)) ||
+    const uint8_t Rating = static_cast<uint8_t>(G.Expected.Rating), Dirty = 1;
+    if (!Write(Base + DisplayOffset, &Rating, sizeof(Rating)) ||
         !Write(Base + DisplayDirtyOffset, &Dirty, sizeof(Dirty))) return Reject(&G.Error, "display-sync-write");
-    // +0x3100 is the prepared PLAYERDATA copy made by FUN_14166ac80.
-    // Update only packed display bits, never its attributes or appearance.
-    for (size_t I = 0; I < 3; ++I)
-        if (!Write(Sources[I] + 0x70, &Packed[I], sizeof(Packed[I]))) return Reject(&G.Error, "display-sync-packed-write");
     return (Authorized(G) || Reject(&G.Error, "display-sync-authorization-expired")) &&
         Verify(Player, G.Id, G.Expected, &G.Error);
 }

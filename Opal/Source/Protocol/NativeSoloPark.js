@@ -1,7 +1,5 @@
 'use strict';
-// One client, local or session-authenticated remote control; guarded native 2v2/3v3.
-const Fs = require('node:fs');
-const Path = require('node:path');
+// All native 2v2/3v3 control uses the authenticated game session.
 const Crypto = require('node:crypto');
 const Log = require('../Core/Log');
 const Slots = require('./Slots');
@@ -10,31 +8,21 @@ const CourtData = require('./CourtData');
 const PlayerObject = require('./PlayerObject');
 const Body22 = require('./PlayerBody2K22');
 const ObjectFrame = require('../Codec/ObjectFrame');
-const ConfigPath = Path.resolve(__dirname, '../..', 'NativeSoloPark.json');
-const ProtocolVersion = 3, RequestBytes = 96, WaitMs = 10000;
-const Pending = new Map(), Waiting = new Map(), Controls = new Map();
+const Settings = require('../Core/Config');
+const ProtocolVersion = 3, RequestBytes = 96;
+const Pending = new Map(), Controls = new Map();
 const LeaseMs = 8000, HeartbeatMs = 10000;
 const Nonce = () => (Crypto.randomBytes(8).readBigUInt64LE() || 1n).toString(16);
-function Config() {
-    try {
-        const C = JSON.parse(Fs.readFileSync(ConfigPath, 'utf8'));
-        return C.Enabled === true ? C : null;
-    } catch (_) { return null; }
-}
-function ReadReceipt(Root) {
-    try { return JSON.parse(Fs.readFileSync(Path.join(Root, 'SoloParkNative.ready.json'), 'utf8')); }
-    catch (_) { return null; }
-}
-function Installed(R, Remote = false) {
-    if (!R || R.version !== ProtocolVersion || R.module !== '00010213' || R.installed !== true || !Number.isInteger(R.pid) || R.pid <= 0) return false;
-    if (Remote) return true; // Remote liveness comes from authenticated heartbeats, not a server-local PID.
-    try { process.kill(R.pid, 0); return true; } catch (_) { return false; }
+function Config() { return Settings.NativePark(); }
+function Installed(R) {
+    return Boolean(R && R.version === ProtocolVersion && R.module === '00010215' && R.installed === true &&
+        Number.isInteger(R.pid) && R.pid > 0);
 }
 function RemoteLive(C, P) {
     return Controls.get(C.Id) === P.Control && Date.now() - P.Control.SeenAt <= HeartbeatMs &&
-        P.Control.Report.instance === P.Instance && Installed(P.Control.Report, true);
+        P.Control.Report.instance === P.Instance && Installed(P.Control.Report);
 }
-function ReceiptFor(P) { return P.Remote ? P.Control.Report : ReadReceipt(P.Root); }
+function ReceiptFor(P) { return P.Control.Report; }
 // Same uint32 recipe as CpuEnhancement::Random; independent of the game's RNG.
 function ProfileForSeed(Seed) {
     let State = (Seed ^ 0x50433232) >>> 0;
@@ -53,7 +41,7 @@ function ProfileForSeed(Seed) {
         Shape: Array.from({ length: 5 }, () => (9500 + Below(1001)) / 10000) };
 }
 function IsReady(R, P) {
-    return Installed(R, P.Remote) && R.pid === P.Pid && (!P.Remote || (R.instance === P.Instance && R.epoch === P.Epoch && R.armed === true)) &&
+    return Installed(R) && R.pid === P.Pid && R.instance === P.Instance && R.epoch === P.Epoch && R.armed === true &&
         R.match === P.MatchId.toString(16) && !R.error &&
         R.teamSize === P.TeamSize && R.cpuCount === P.Cpu.length &&
         Array.isArray(R.created) && R.created.length === P.Cpu.length && new Set(R.created).size === P.Cpu.length &&
@@ -80,41 +68,35 @@ function BuildRequest(Match, Owner, Cpu, TeamSize = (Cpu.length + 1) / 2, Seeds)
     Seeds.forEach((Seed, I) => B.writeUInt32LE(Seed, 72 + I * 4));
     return B;
 }
-function WriteRequest(Root, Match, Owner, Cpu, TeamSize, Seeds) {
-    const B = BuildRequest(Match, Owner, Cpu, TeamSize, Seeds);
-    const File = Path.join(Root,'SoloParkNative.request');
-    try { Fs.writeFileSync(File+'.tmp',B);Fs.renameSync(File+'.tmp',File); }
-    catch (E) { try { Fs.unlinkSync(File+'.tmp'); } catch (_) {} throw E; }
-}
 function FrameFor(Id, Seed) {
     return ObjectFrame.Build({PacketId:PlayerObject.ObjectDataPacket,ConnectionId:null,ObjectId:Id,
         ClassCrc:PlayerObject.PlayerClass,Payload:Body22.BuildGeneratedPlayer(Id,Seed),Layout:ObjectFrame.Layout.Nineteen});
 }
-function Alone(C) {
-    const Humans = Roster.InActivity(C.ActivityKey, C.RoomScope || null);
-    return Humans.length === 1 && Humans[0] === C;
+function OnlyQueuedHuman(C, Found) {
+    return Found.Groups.every(G => Slots.SeatsOf(G.SlotObjectId).every(Id => !Id || Id === C.Puid));
 }
 function CanContinue(C, P) {
     return !C.Closed && C.ActivityKey === P.ActivityKey && (C.RoomScope || null) === P.RoomScope &&
-        C.GotNext === P.Spot && C.GotNext.Court === P.Court && Boolean(C.PlayerBody) && Alone(C);
+        C.GotNext === P.Spot && C.GotNext.Court === P.Court && Boolean(C.PlayerBody) &&
+        ((P.Phase !== 'arming' && P.Phase !== 'preloading') || OnlyQueuedHuman(C, P.Found));
 }
-function CancelWait(C) {
-    const W = Waiting.get(C.Id);
-    if (!W) return false;
-    Waiting.delete(C.Id);clearTimeout(W.Timer);
-    return true;
+function CancelWait(C) { return require('./NativePark').CancelWait(C); }
+function QueueChanged(C, Found) {
+    for (const P of Pending.values()) {
+        if (P.ActivityKey !== C.ActivityKey || P.RoomScope !== (C.RoomScope || null) ||
+            P.Found.Raw.Name !== Found.Raw.Name || (P.Phase !== 'arming' && P.Phase !== 'preloading')) continue;
+        const Owner = P.Control.Connection;
+        if (Owner.GotNext !== P.Spot || !OnlyQueuedHuman(Owner, Found)) {
+            Stop(Owner);
+            Log.Info(`Native solo ${Found.Raw.Name}: queue changed during preparation; retaining human queue seats`);
+        }
+    }
 }
 function Stop(C) {
     const Cancelled = CancelWait(C), P = Pending.get(C.Id);
     if (!P) return Cancelled;
     Pending.delete(C.Id);clearInterval(P.Timer);
     // Withdraw authorization first, before destroying players or allowing another match.
-    if (!P.Remote) try {
-        const File = Path.join(P.Root,'SoloParkNative.request');
-        const B = Fs.readFileSync(File);
-        if (B.length === RequestBytes && B.readUInt32LE(4) === ProtocolVersion && B.readBigUInt64LE(8) === P.MatchId)
-            Fs.unlinkSync(File);
-    } catch (_) {}
     const Game = CourtData.GameTeams(P.Activity,P.Found.Raw.Name,'2K22');
     if (Game?.NativeSolo?.MatchId === P.MatchId) CourtData.ClearGameTeams(P.Activity,P.Found.Raw.Name,'2K22');
     for (const Id of P.Cpu) {
@@ -177,27 +159,26 @@ function Publish(C, P) {
         P.Bodies.set(Id, Buffer.from(Frame.subarray(32)));
         if (!C.SendObject(Frame)) throw new Error('CPU PLAYER publication failed');
     }
-    Log.Info(`Native solo ${P.Found.Raw.Name}: published ${P.Cpu.length} generated PLAYER objects; awaiting client roster receipts (${P.Remote ? 'network' : 'local'})`);
+    Log.Info(`Native solo ${P.Found.Raw.Name}: published ${P.Cpu.length} generated PLAYER objects; awaiting authenticated game roster receipts`);
 }
 function Poll(C, P) {
     if (Pending.get(C.Id) !== P) return;
     try {
-        if (!CanContinue(C,P)) { Abort(C,'queue changed, client left or another human joined'); return; }
-        if (P.Remote && !RemoteLive(C, P)) { Abort(C, 'remote native control heartbeat or instance lost'); return; }
+        if (!CanContinue(C,P)) { Abort(C,'queue changed or client left'); return; }
+        if (!RemoteLive(C, P)) { Abort(C, 'native control heartbeat or instance lost'); return; }
         const R = ReceiptFor(P);
-        const Bound = !P.Remote || (R?.instance === P.Instance && R?.epoch === P.Epoch);
+        const Bound = R?.instance === P.Instance && R?.epoch === P.Epoch;
         if (Bound && R?.match === P.MatchId.toString(16) && R.pid === P.Pid && R.error) { Abort(C,R.error); return; }
-        if (!Installed(R, P.Remote) || R.pid !== P.Pid) { Abort(C,'native game process is no longer available'); return; }
+        if (!Installed(R) || R.pid !== P.Pid) { Abort(C,'native game process is no longer available'); return; }
         if (P.Phase === 'arming') {
             if (Bound && R.match === P.MatchId.toString(16) && R.armed === true) Publish(C, P);
-            else if (Date.now() - P.CreatedAt > 15000) Abort(C, 'remote solo request authorization timed out');
+            else if (Date.now() - P.CreatedAt > 15000) Abort(C, 'native request authorization timed out');
         } else if (P.Phase === 'preloading') {
             if (IsReady(R,P)) Commit(C,P);
             else if (Date.now()-P.PreloadAt > 45000) Abort(C,'native CPU generation timed out; inspect SOLO22 log');
         } else if (P.Phase === 'starting') {
             if (IsReady(R,P) && R.started === true) {
                 P.Phase = 'native-started';
-                if (!P.Remote) clearInterval(P.Timer);
                 Log.Info(`Native solo ${P.Found.Raw.Name}: client validated ${P.TeamSize * 2} prepared native rosters at InitPlayingGame; awaiting in-game play`);
             } else if (Date.now()-P.StartedAt > 30000) Abort(C,'guarded native StartGame was not confirmed');
         }
@@ -211,61 +192,37 @@ function TryStart(C, Found) {
         ![2,3].includes(TeamSize) || (TeamSize === 2 ? Opts.TwoOnTwo : Opts.ThreeOnThree) === false ||
         CourtData.ParkCourtFormat(Found.Raw.Name) !== 'bitstream' ||
         Found.Groups.length !== 2 || Found.Groups.some(G => G.Anchors.length !== TeamSize) ||
-        Pending.size || !Alone(C) ||
-        Found.Groups.some(G => Slots.SeatsOf(G.SlotObjectId).some(Id => Id && Id !== C.Puid))) {
-        CancelWait(C);return false;
+        !OnlyQueuedHuman(C, Found)) {
+        return false;
     }
     const Own = require('./GotNext').QueueFor(C,C.GotNext.Court,C.GotNext.Slot);
     if (!Own || !Found.Groups.some(G => G.SlotObjectId === Own.SlotObjectId) ||
         !Number.isInteger(C.GotNext.Seat) || C.GotNext.Seat < 0 || C.GotNext.Seat >= TeamSize ||
         Slots.SeatsOf(Own.SlotObjectId)[C.GotNext.Seat] !== C.Puid) {
-        CancelWait(C);return false;
-    }
-    const Spot = C.GotNext;
-    if (!Number.isFinite(Spot.Since)) Spot.Since = Date.now();
-    const Remaining = WaitMs - (Date.now() - Spot.Since);
-    if (Remaining > 0) {
-        if (Waiting.get(C.Id)?.Spot !== Spot) CancelWait(C);
-        if (!Waiting.has(C.Id)) {
-            const W = {Spot,Timer:null};
-            W.Timer = setTimeout(() => {
-                if (Waiting.get(C.Id) !== W) return;
-                Waiting.delete(C.Id);
-                if (C.Closed || C.GotNext !== Spot || Spot.Playing) return;
-                try { require('./GotNext').MaybeStartMatch(C); }
-                catch (E) { Log.Error(`Native solo delayed start withheld: ${E.message}`); }
-            },Remaining);
-            W.Timer.unref?.();Waiting.set(C.Id,W);
-            Log.Info(`Native solo ${Found.Raw.Name}: waiting 10 seconds before ${TeamSize}v${TeamSize} CPU fill`);
-        }
         return false;
     }
-    CancelWait(C);
+    const Spot = C.GotNext;
+    if (!require('./NativePark').WaitForQueue(C, Found)) return false;
     const Control = Controls.get(C.Id);
-    const Remote = Boolean(Control && Date.now() - Control.SeenAt <= HeartbeatMs && Installed(Control.Report, true));
-    const Receipt = Remote ? Control.Report : (typeof Opts.GameDirectory === 'string' && Opts.GameDirectory.length ? ReadReceipt(Opts.GameDirectory) : null);
-    if (!Installed(Receipt, Remote)) {
-        if (!C.NativeSoloNotice) Log.Info('Native solo withheld: Module 00010213 with solo v3 readiness is required locally or through the game login');
+    if (!Control || Date.now() - Control.SeenAt > HeartbeatMs || !Installed(Control.Report)) {
+        if (!C.NativeSoloNotice) Log.Info('Native solo withheld: authenticated game control with Module 00010215 is required');
         C.NativeSoloNotice = true; return false;
     }
+    const Receipt = Control.Report;
     C.NativeSoloNotice = false;
+    CancelWait(C);
     const MatchId = Crypto.randomBytes(8).readBigUInt64LE() || 1n;
     const Base = 0x0222c00000000000n | BigInt('0x'+Crypto.randomBytes(5).toString('hex'));
     const Cpu = Array.from({length:TeamSize * 2 - 1},(_,I) => (Base & 0xfffffffffffffff8n)+BigInt(I));
     const Seeds = Cpu.map(() => Crypto.randomBytes(4).readUInt32LE() || 1);
-    const P = {Root:Remote ? null : Opts.GameDirectory,Pid:Receipt.pid,MatchId,Cpu,Seeds,TeamSize,Spot,Court:Spot.Court,OwnSlot:Own.SlotObjectId,
+    const P = {Pid:Receipt.pid,MatchId,Cpu,Seeds,TeamSize,Spot,Court:Spot.Court,OwnSlot:Own.SlotObjectId,
         Activity:C.ActivityName,ActivityKey:C.ActivityKey,RoomScope:C.RoomScope || null,
         Found,Bodies:new Map(),Phase:'arming',CreatedAt:Date.now(),Timer:null,
-        Remote,Control,Instance:Remote ? Control.Instance : null,Epoch:Remote ? Control.Epoch : null};
+        Remote:true,Control,Instance:Control.Instance,Epoch:Control.Epoch};
     Pending.set(C.Id,P);
     try {
-        if (Remote) {
-            P.Request = BuildRequest(MatchId, C.Puid, Cpu, TeamSize, Seeds);
-            Log.Info(`Native solo ${Found.Raw.Name}: awaiting authenticated remote request authorization`);
-        } else {
-            WriteRequest(P.Root,MatchId,C.Puid,Cpu,TeamSize,Seeds);
-            Publish(C, P);
-        }
+        P.Request = BuildRequest(MatchId, C.Puid, Cpu, TeamSize, Seeds);
+        Log.Info(`Native solo ${Found.Raw.Name}: awaiting authenticated game control authorization`);
         P.Timer = setInterval(() => Poll(C,P),120);P.Timer.unref?.();
     } catch (E) { Abort(C,E.message); }
     return true;
@@ -312,7 +269,7 @@ function HandleUpdate(C, Bytes) {
 }
 function OnReport(Puid, R) {
     const Hex = Value => typeof Value === 'string' && /^[0-9a-f]{1,16}$/.test(Value);
-    if (!R || !Installed(R, true) || !Hex(R.instance) || BigInt('0x' + R.instance) === 0n ||
+    if (!R || !Installed(R) || !Hex(R.instance) || BigInt('0x' + R.instance) === 0n ||
         !Hex(R.epoch) || !Hex(R.match) || typeof R.armed !== 'boolean' || typeof R.started !== 'boolean' ||
         !Array.isArray(R.created) || R.created.length > 5 || !Array.isArray(R.profiles) || R.profiles.length > 5 ||
         (R.error !== null && (typeof R.error !== 'string' || R.error.length > 2048))) throw new Error('invalid native solo report');
@@ -344,4 +301,4 @@ function OnReport(Puid, R) {
     B.writeUInt32LE(LeaseMs, 16); P.Request.copy(B, 24);
     return B;
 }
-module.exports = {TryStart,CancelWait,Stop,Finish,Pending,FrameFor,IsReady,WriteRequest,ReadReceipt,Poll,HandleUpdate,OnReport};
+module.exports = {TryStart,CancelWait,QueueChanged,Stop,Finish,Pending,FrameFor,IsReady,Poll,HandleUpdate,OnReport};

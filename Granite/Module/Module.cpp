@@ -688,6 +688,7 @@ DWORD WINAPI CareerPriceWatchdog(void*)
 }
 
 #include "CpuEnhancement.h"
+#include "OnlineFrameRate.h"
 #include "NativeParkControl.h"
 #include "SoloParkNative.h"
 #include "AnimationUnlock.h"
@@ -702,7 +703,7 @@ DWORD WINAPI Initialise(void*)
     RedirectPort = ModuleConfig::ServerPort;
     EnsureConsole();
     OpenLogFile();
-    Log(LogLevel::Info, L"Granite module 0x00010213 initialized; configuration: " + Directory + L"\\Granite.ini");
+    Log(LogLevel::Info, L"Granite module 0x00010215 initialized; configuration: " + Directory + L"\\Granite.ini");
     if (!ConfigSaved) Log(LogLevel::Error, L"Granite.ini could not be created or accessed; missing settings use defaults");
     if (ModuleConfig::EnableCrashHandler)
         CrashHandler::Install([](const wchar_t* Text) { Log(LogLevel::Info, Text); },
@@ -738,6 +739,10 @@ DWORD WINAPI Initialise(void*)
     MH_STATUS MhStatus = MH_Initialize();
     if (MhStatus == MH_OK || MhStatus == MH_ERROR_ALREADY_INITIALIZED)
     {
+        SoloParkNative::BeforeStart = OnlineFrameRate::ObserveMatch;
+        SoloParkNative::FrameTimingReady = OnlineFrameRate::IsReady;
+        NativePark::FrameTimingReady = OnlineFrameRate::IsReady;
+        OnlineFrameRate::Install(Executable);
         ContentSeasons::Install(Executable);
         SoloParkNative::Install(Executable);
         AnimationUnlock::Install(Executable);

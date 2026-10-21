@@ -479,6 +479,18 @@ function AdvanceLine(Connection, Group) {
     }
 }
 
+function NotifyQueueChanges(Connection, SlotIds) {
+    if (Connection.ActivityName !== 'neighborhood' || !SlotIds.length) return;
+    const World = CourtTables.For(Connection.ActivityName, Connection);
+    if (!World) return;
+    const Changed = new Set(SlotIds);
+    for (const Raw of World.Courts) {
+        const Groups = Courts.GroupsFor(Raw, World.Room, World.SeqBase).filter(G => G.Kind === 'gotnext');
+        if (Groups.some(G => Changed.has(G.SlotObjectId)))
+            require('./NativePark').QueueChanged(Connection, { Raw, Groups });
+    }
+}
+
 function Seat(Connection) {
     if (!Connection.GotNext || Connection.Puid === null) return false;
 
@@ -527,6 +539,7 @@ function Seat(Connection) {
             `${SeatData.Index} of ${Group.Anchors.length}` +
             (SeatData.Freed.length ? `, releasing ${SeatData.Freed.length} held elsewhere` : ''),
     );
+    NotifyQueueChanges(Connection, [...SeatData.Freed, Group.SlotObjectId]);
     return true;
 }
 
@@ -1047,6 +1060,7 @@ function Vacate(Connection) {
 
     const Freed = Slots.Release(Connection.Puid);
     Connection.GotNext = null;
+    NotifyQueueChanges(Connection, Freed);
     if (Freed.length) {
         try {
             const CourtData = require('./CourtData');
@@ -1121,6 +1135,7 @@ function Release(Connection) {
         }
     }
     Connection.GotNext = null;
+    NotifyQueueChanges(Connection, Freed);
 
     const Frame = PlayerObject.FrameFor(Connection);
     if (!Frame || !Connection.SendObject(Frame)) return false;
