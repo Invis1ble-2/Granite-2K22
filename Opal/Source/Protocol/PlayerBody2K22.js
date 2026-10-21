@@ -9,7 +9,7 @@ Widths.push(...Array(8).fill(0), 1, 8, ...Array(5).fill(8), 1,
     ...Array(31).fill(0), ...Array(4).fill(0), 1,4,4,1,1,1,1,8,8,16,4,4,4,4,8,4,4,0);
 const ArrayFields = new Set([...Array(8)].map((_, I) => 96+I).concat([...Array(35)].map((_, I) => 112+I), [164]));
 const Field = Object.freeze({Puid:0,MachineId:1,FakePlayerFlag:91,FakePlayerData:144,
-    ServerGenerated:91,UserGenerationSettings:144,EquippedItemInfo:145,
+    ServerGenerated:91,UserGenerationSettings:144,EquippedItemInfo:145,Activity:149,
     SquadId:105,SquadInvites:Object.freeze([106,107,108,109,110]),GotNextLocation:156,GotNextFacing:157});
 const ShowField = 93;
 function IsPresent(Body, Id) { return Boolean(Body[16+(Id>>3)] & (0x80>>(Id&7))); }
@@ -52,6 +52,16 @@ function SetU64Fields(Body, Changes) {
 function SetGameState(Body, State, CourtName) {
     const U32=N=>{const B=Buffer.alloc(4);B.writeUInt32LE(N>>>0);return B;};
     return Patch(Body,new Map([[4,U32(State)],[5,U32(CourtName)]]));
+}
+// FUN_1416E913D / FUN_1416E468B: Activity is field 149, a little-endian U32.
+function SetActivity(Body, Activity) {
+    if (!Number.isInteger(Activity) || Activity<0 || Activity>0xffffffff)
+        return {Ok:false,Reason:'invalid 2K22 Activity',Body};
+    const D=Decode(Body);if(!D.Ok)return {...D,Body};
+    const At=D.Offsets.get(Field.Activity),Was=At===undefined?null:Body.readUInt32LE(At);
+    if (Was===Activity) return {Ok:true,Body,Was,Changed:false};
+    const Value=Buffer.alloc(4);Value.writeUInt32LE(Activity);
+    return {...Patch(Body,new Map([[Field.Activity,Value]])),Was,Changed:true};
 }
 function SetMachineId(Body, Id) {
     const D=Decode(Body), At=D.Ok?D.Offsets.get(0):undefined;
@@ -101,4 +111,4 @@ function BuildGeneratedPlayer(Puid, Seed) {
     return Patch(Header,new Map([[0,U64(Puid)],[1,U64(0n)],[4,None],
         [91,Buffer.from([1])],[93,Buffer.from([1])],[144,Buffer.concat([Count,Script])]])).Body;
 }
-module.exports={BitmapBytes,ValuesStart,Widths,ArrayFields,Field,ShowField,IsPresent,Decode,Trim,SetMachineId,SetShow,InspectGeneration,SetGotNextDestination,SetSquadId,SetSquadInvites,SetU64Fields,ReadU64Field,BuildGeneratedPlayer,SetGameState};
+module.exports={BitmapBytes,ValuesStart,Widths,ArrayFields,Field,ShowField,IsPresent,Decode,Trim,SetMachineId,SetShow,InspectGeneration,SetGotNextDestination,SetSquadId,SetSquadInvites,SetU64Fields,ReadU64Field,BuildGeneratedPlayer,SetGameState,SetActivity};

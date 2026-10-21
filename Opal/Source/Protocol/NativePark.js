@@ -159,6 +159,8 @@ function Tick(P) {
                 throw new Error('native module or template pool changed');
             if (P.Phase !== 'arming' && (!Wire.Matches(R, P, Control) || !(R.Flags & Wire.Flag.Armed) || (R.Created & ~P.CpuMask)))
                 throw new Error('native match authorization lost');
+            if (P.ProfileDigest && !R.ProfileDigest.equals(P.ProfileDigest))
+                throw new Error('enhanced CPU profile digest changed');
         }
         if (P.Phase === 'arming' || P.Phase === 'preloading') {
             if (!SameQueue(P.Snapshot, Snapshot(P.Anchor, P.Found))) throw new Error('court queue changed during preparation');
@@ -169,7 +171,13 @@ function Tick(P) {
             if (P.Members.every(M => Wire.Matches(M.Control.Report, P, M.Control) && (M.Control.Report.Flags & Wire.Flag.Armed))) PublishCpu(P);
         } else if (P.Phase === 'preloading') {
             if (Now - P.PreloadAt > 45000) throw new Error('native CPU generation timed out');
-            if (Reports.every(R => (R.Created & P.CpuMask) === P.CpuMask)) Commit(P);
+            if (Reports.every(R => (R.Created & P.CpuMask) === P.CpuMask)) {
+                const Digest = Reports[0].ProfileDigest;
+                if (!Digest.some(Byte => Byte !== 0) || Reports.some(R => !R.ProfileDigest.equals(Digest)))
+                    throw new Error('clients generated different enhanced CPU abilities or bodies');
+                P.ProfileDigest = Buffer.from(Digest);
+                Commit(P);
+            }
         } else {
             const Game = CourtData.GameTeams(P.ActivityName, P.Found.Raw.Name, '2K22');
             if (Game?.NativePark?.MatchId !== P.MatchId) throw new Error('frozen court game disappeared');
@@ -192,7 +200,7 @@ function Begin(C, Found, S, Key) {
         ActivityKey: C.ActivityKey, RoomScope: C.RoomScope || null, TeamSize: Found.Raw.TeamSize,
         MatchId: Nonce(), PoolCount: First.PoolCount, Digest: Buffer.from(First.Digest),
         Players: new Array(6).fill(0n), Seeds: new Array(6).fill(0), Templates: new Array(6).fill(0xffffffff),
-        HumanMask: 0, CpuMask: 0, Cpu: [], Bodies: new Map(),
+        HumanMask: 0, CpuMask: 0, Cpu: [], Bodies: new Map(), ProfileDigest: null,
         Phase: 'arming', CreatedAt: Date.now(), Timer: null, Done: false,
     };
     for (const M of S.Members) {
@@ -211,7 +219,7 @@ function Begin(C, Found, S, Key) {
     Courts.set(Key, P);
     for (const M of P.Members) Participants.set(M.Connection.Id, P);
     P.Timer = setInterval(() => Tick(P), 250); P.Timer.unref?.();
-    Log.Info(`Native park ${Found.Raw.Name}: froze ${P.Members.length} human seat(s), ${P.Cpu.length} empty seat(s); awaiting v3 authorization on every client`);
+    Log.Info(`Native park ${Found.Raw.Name}: froze ${P.Members.length} human seat(s), ${P.Cpu.length} empty seat(s); awaiting v4 enhanced CPU authorization on every client`);
     return true;
 }
 function TryStart(C, Found) {
@@ -221,7 +229,7 @@ function TryStart(C, Found) {
     if (!S) { CancelWait(C); return false; }
     if (S.Members.some(M => Participants.has(M.Connection.Id))) return false;
     if (S.Members.some(M => !Wire.HasPool(M.Control))) {
-        CancelWait(C); Notice(C, 'all queued humans need Module 0001020F v3 readiness through their game login'); return false;
+        CancelWait(C); Notice(C, 'all queued humans need Module 00010213 v4 readiness through their game login'); return false;
     }
     const First = S.Members[0].Control.Report;
     if (S.Members.some(M => M.Control.Report.PoolCount !== First.PoolCount || !M.Control.Report.Digest.equals(First.Digest))) {

@@ -19,6 +19,7 @@ const Entry = { Count: 16, Class: 17, Span: 21, Key: 23, Length: 31, Payload: 32
 
 const SpanOverhead = 16;
 
+// FUN_1416DA6A0: frame+23 carries Activity; retain the World property for existing callers.
 const Movement = { X: 16, Y: 18, Z: 20, Heading: 22, World: 23, Flags: 29 };
 
 const SentinelAxis = 10000;
@@ -27,8 +28,9 @@ function IsSentinel(P) {
     return P.X === P.Y && P.Y === P.Z && Math.abs(P.X) > SentinelAxis;
 }
 
-const FlagBits = 25;
-const FlagBytes = 4;
+// NBA 2K22 FUN_1416DD770: nine dirty bits, byte-aligned before position/heading.
+const FlagBits = 9;
+const FlagBytes = 2;
 const HasPosition = 0x80;
 const HasHeading = 0x40;
 
@@ -222,6 +224,19 @@ function Publish() {
             (Peer) => Peer.KnownPlayers && Peer.KnownPlayers.has(Connection.Id),
         );
         if (!Peers.length) continue;
+
+        const Activity = Connection.Position.World;
+        if (Activity !== undefined && Connection.PublishedPlayerActivity !== Activity && Connection.PlayerBody &&
+            require('./PlayerBody').GenerationForConnection(Connection) === '2K22') {
+            const Player = require('./PlayerObject').FrameFor(Connection);
+            if (Player) {
+                let Published = true;
+                for (const Peer of Peers) {
+                    if (!Peer.SendObject(Player)) Published = false;
+                }
+                if (Published) Connection.PublishedPlayerActivity = Activity;
+            }
+        }
 
         const Snapshotted = new Set();
         if (!Connection.CreatedFor) Connection.CreatedFor = new Map();

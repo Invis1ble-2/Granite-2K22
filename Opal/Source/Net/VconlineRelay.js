@@ -23,9 +23,12 @@ const Routing = Object.freeze({
 });
 
 const MaxPacket = 0x7ff;
-const ConnectLength = 28;
-const ConnectReplyLength = 16;
-const DisconnectLength = 12;
+// NBA 2K22: packed routing header followed by an opaque BE uint32 session field.
+// FUN_1420BA7E0 / FUN_1420BB3D0; do not use the old four-byte prefix layout.
+const PrefixLength = 8;
+const ConnectLength = 32;
+const ConnectReplyLength = 20;
+const DisconnectLength = 16;
 const IdleMs = 70_000;
 
 const P2PControlType = Object.freeze({
@@ -93,7 +96,7 @@ function BuildHeader(TypeCode, RoutingValue, Length, RelayId) {
     if (!Number.isInteger(TypeCode) || TypeCode < 0 || TypeCode > 7) throw new Error('relay type is out of range');
     if (!Number.isInteger(RoutingValue) || RoutingValue < 0 || RoutingValue > 3)
         throw new Error('relay routing is out of range');
-    if (!Number.isInteger(Length) || Length < 4 || Length > MaxPacket) {
+    if (!Number.isInteger(Length) || Length < PrefixLength || Length > MaxPacket) {
         throw new Error(`relay packet length ${Length} is out of range`);
     }
     if (!Number.isInteger(RelayId) || RelayId < 0 || RelayId > 0xffff) {
@@ -105,8 +108,8 @@ function BuildHeader(TypeCode, RoutingValue, Length, RelayId) {
 }
 
 function ParseHeader(Packet) {
-    if (!Buffer.isBuffer(Packet) || Packet.length < 4) {
-        throw new Error('relay datagram is shorter than its four-byte header');
+    if (!Buffer.isBuffer(Packet) || Packet.length < PrefixLength) {
+        throw new Error('2K22 relay datagram is shorter than its eight-byte prefix');
     }
     const Word = Packet.readUInt32BE(0);
     const Header = {
@@ -115,6 +118,7 @@ function ParseHeader(Packet) {
         Routing: (Word >>> 27) & 3,
         Length: (Word >>> 16) & MaxPacket,
         RelayId: Word & 0xffff,
+        SessionField: Packet.readUInt32BE(4),
     };
     if (Header.Length !== Packet.length) {
         throw new Error(`relay header declares ${Header.Length} bytes but ${Packet.length} arrived`);
@@ -122,20 +126,22 @@ function ParseHeader(Packet) {
     return Header;
 }
 
-function BuildConnectReply(RelayId, MachineId, Status = 0) {
+function BuildConnectReply(RelayId, MachineId, Status = 0, SessionField = 0) {
     const Reply = Buffer.alloc(ConnectReplyLength);
     Reply.writeUInt32BE(BuildHeader(Type.ConnectReply, Routing.Delivered, ConnectReplyLength, RelayId), 0);
-    Reply.writeUInt32BE(Status >>> 0, 4);
-    Reply.writeBigUInt64BE(BigInt.asUintN(64, BigInt(MachineId)), 8);
+    Reply.writeUInt32BE(SessionField >>> 0, 4);
+    Reply.writeUInt32BE(Status >>> 0, 8);
+    Reply.writeBigUInt64BE(BigInt.asUintN(64, BigInt(MachineId)), 12);
     return Reply;
 }
 
-function BuildDelivery(TypeCode, RelayId, Payload) {
+function BuildDelivery(TypeCode, RelayId, Payload, SessionField = 0) {
     const Body = Buffer.from(Payload || []);
-    const Length = 4 + Body.length;
+    const Length = PrefixLength + Body.length;
     const Packet = Buffer.alloc(Length);
     Packet.writeUInt32BE(BuildHeader(TypeCode, Routing.Delivered, Length, RelayId), 0);
-    Body.copy(Packet, 4);
+    Packet.writeUInt32BE(SessionField >>> 0, 4);
+    Body.copy(Packet, PrefixLength);
     return Packet;
 }
 
@@ -167,7 +173,10 @@ class Router {
         let Sent = 0;
         for (const Delivery of Deliveries) {
             for (const Recipient of Delivery.Recipients) {
-                this.Send(BuildDelivery(Delivery.Type ?? FallbackType, Recipient.RelayId, Delivery.Payload), Recipient);
+                this.Send(
+                    BuildDelivery(Delivery.Type ?? FallbackType, Recipient.RelayId, Delivery.Payload, Recipient.SessionField),
+                    Recipient,
+                );
                 Recipient.Sent++;
                 Sent++;
             }
@@ -190,8 +199,8 @@ class Router {
             if (Header.Routing !== Routing.Delivered || Packet.length !== ConnectLength) {
                 throw new Error(`invalid ${Packet.length}-byte relay connect datagram`);
             }
-            const Token = Buffer.from(Packet.subarray(4, 20));
-            const MachineId = Packet.readBigUInt64BE(20);
+            const Token = Buffer.from(Packet.subarray(PrefixLength, 24));
+            const MachineId = Packet.readBigUInt64BE(24);
             if (!MachineId || Token.equals(Buffer.alloc(16)))
                 throw new Error('relay connect requires machine id and nonzero token');
             const SessionKey = `${Header.RelayId}:${Token.toString('hex')}`;
@@ -202,6 +211,8 @@ class Router {
                 Address: Remote.address,
                 Port: Remote.port,
                 RelayId: Header.RelayId,
+                // Preserve the native field without assuming it is the relay id or a protocol version.
+                SessionField: Header.SessionField,
                 MachineId: MachineId,
                 SessionKey: SessionKey,
                 Token: Token,
@@ -212,7 +223,7 @@ class Router {
             };
             this.Clients.set(Key, Client);
             this.Pacer?.Prune(this.Clients.values());
-            this.Send(BuildConnectReply(Header.RelayId, MachineId), Client);
+            this.Send(BuildConnectReply(Header.RelayId, MachineId, 0, Client.SessionField), Client);
             const SessionClientsValue = Array.from(this.Clients.values()).filter(
                 (Candidate) => Candidate.SessionKey === SessionKey,
             );
@@ -238,7 +249,7 @@ class Router {
             if (Header.Routing !== Routing.Delivered || Packet.length !== DisconnectLength) {
                 throw new Error(`invalid ${Packet.length}-byte relay disconnect datagram`);
             }
-            const MachineId = Packet.readBigUInt64BE(4);
+            const MachineId = Packet.readBigUInt64BE(PrefixLength);
             if (MachineId !== Sender.MachineId) throw new Error('relay disconnect machine id does not match');
             this.Clients.delete(Key);
             this.Pacer?.Prune(this.Clients.values());
@@ -249,15 +260,15 @@ class Router {
             throw new Error(`unexpected client relay packet type ${Header.Type}`);
         }
 
-        let BodyOffset = 4;
+        let BodyOffset = PrefixLength;
         let Selected = null;
         if (Header.Routing === Routing.List) {
-            if (Packet.length < 8) throw new Error('relay list datagram has no recipient count');
-            const Count = Packet.readUInt32BE(4);
-            BodyOffset = 8 + Count * 8;
+            if (Packet.length < PrefixLength + 4) throw new Error('relay list datagram has no recipient count');
+            const Count = Packet.readUInt32BE(PrefixLength);
+            BodyOffset = PrefixLength + 4 + Count * 8;
             if (BodyOffset > Packet.length) throw new Error('relay recipient list overruns its datagram');
             Selected = new Set();
-            for (let At = 8; At < BodyOffset; At += 8) Selected.add(Packet.readBigUInt64BE(At));
+            for (let At = PrefixLength + 4; At < BodyOffset; At += 8) Selected.add(Packet.readBigUInt64BE(At));
         } else if (Header.Routing !== Routing.Others && Header.Routing !== Routing.All) {
             throw new Error(`client used invalid relay routing mode ${Header.Routing}`);
         }
@@ -313,7 +324,7 @@ let Socket = null;
 let ActiveRouterValue = null;
 
 function TimingOptions(Env = process.env) {
-    const LockstepDelayFrames = Number(Env.OPAL_LOCKSTEP_DELAY_FRAMES ?? Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 12);
+    const LockstepDelayFrames = Number(Env.OPAL_LOCKSTEP_DELAY_FRAMES ?? Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 6);
     const LockstepHz = Number(Env.OPAL_LOCKSTEP_HZ || 83);
     if (!Number.isInteger(LockstepDelayFrames) || LockstepDelayFrames < 0 || LockstepDelayFrames > 49)
         throw new Error('OPAL_LOCKSTEP_DELAY_FRAMES must be 0 (off) or 1..49');
@@ -371,7 +382,7 @@ function Start({
                 );
                 if (Result.SessionSize > 1)
                     Log.Info(
-                        `Play Now relay session has ${Result.SessionSize} machines; ` +
+                        `2K22 relay session has ${Result.SessionSize} machines; ` +
                             `native leader is 0x${Result.LeaderMachineId.toString(16).toUpperCase()} @ ${Log.Clock()}`,
                     );
             } else if (Result.Kind === 'disconnect') {
@@ -458,6 +469,7 @@ module.exports = {
     Type,
     Routing,
     MaxPacket,
+    PrefixLength,
     ConnectLength,
     ConnectReplyLength,
     DisconnectLength,

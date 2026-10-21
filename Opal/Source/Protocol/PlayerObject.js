@@ -10,6 +10,7 @@ const ObjectFrame = require('../Codec/ObjectFrame');
 const Roster = require('./Roster');
 const Userdata = require('./Userdata');
 const PlayerBody = require('./PlayerBody');
+const PlayerBody2K22 = require('./PlayerBody2K22');
 
 const PlayerClass = 0x2c5d2702;
 const ObjectDataPacket = 0x9c72247c;
@@ -92,8 +93,20 @@ function AuthoritativeBody(Connection) {
                 `${Stamped.MachineId.toString(16)} (GAME roster/self machine)`,
         );
     }
-    Connection.PlayerBody = Stamped.Body;
-    return Buffer.from(Stamped.Body);
+    let BodyData = Stamped.Body;
+    const Activity = Connection.Position && Connection.Position.World;
+    if (PlayerBody.LayoutFor(BodyData) === PlayerBody2K22 && Activity !== null && Activity !== undefined) {
+        // The packed movement message carries Activity separately from MOVEMENT objects.
+        const Updated = PlayerBody2K22.SetActivity(BodyData, Activity);
+        if (!Updated.Ok) {
+            Log.Error(`${Connection.Identifier}: PLAYER Activity publication blocked: ${Updated.Reason}`);
+            return null;
+        }
+        BodyData = PlayerBody.Mark(Updated.Body, '2K22');
+        if (Updated.Changed) BestBodies.set(Connection.Puid.toString(16).padStart(16, '0'), BodyData);
+    }
+    Connection.PlayerBody = BodyData;
+    return Buffer.from(BodyData);
 }
 
 function FrameFor(Connection) {

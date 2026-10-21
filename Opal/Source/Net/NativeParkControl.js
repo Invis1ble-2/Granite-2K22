@@ -6,7 +6,8 @@ const Fs = require('node:fs');
 const Path = require('node:path');
 const Log = require('../Core/Log');
 const Wire = require('../Protocol/NativeParkWire');
-const Endpoint = '/native-park/v3/poll';
+const Endpoint = '/native-park/v4/poll';
+const SoloEndpoint = '/native-solo/v3/poll', SoloReportLimit = 8192;
 
 function SessionOptions() {
     // Same installation/configuration as Granite; there is no park credential file.
@@ -37,10 +38,11 @@ function CreateHandler() {
     let Options = null;
     try { Options = SessionOptions(); }
     catch (_) { Log.Error('Native park control unavailable: existing Granite session configuration could not be read'); }
-    if (Options) Log.Info('Native park v3 uses existing Granite login sessions; no separate player credentials or park configuration');
+    if (Options) Log.Info('Native park v4 uses existing Granite login sessions; enhanced CPU profiles require no separate configuration');
     const Peers = new Map();
     return function Handle(Req, Res) {
-        if (Req.url !== Endpoint) return false;
+        const Solo = Req.url === SoloEndpoint;
+        if (Req.url !== Endpoint && !Solo) return false;
         let Done = false, Peer = null, OwnsPeer = false;
         const Release = () => { if (OwnsPeer) { Peer.Busy = false; OwnsPeer = false; } };
         const Reply = (Status, Body = null) => {
@@ -56,15 +58,17 @@ function CreateHandler() {
         Res.on('close', Release);
         if (!Options) { Reply(503); return true; }
         if (Req.method !== 'POST' || !Req.socket.encrypted) { Reply(405); return true; }
-        if (Req.headers['content-length'] !== String(Wire.ReportBytes) ||
-            Req.headers['content-type']?.split(';', 1)[0].trim().toLowerCase() !== 'application/octet-stream') {
+        const LengthText = Req.headers['content-length'];
+        const Expected = typeof LengthText === 'string' && /^[1-9][0-9]{0,4}$/.test(LengthText) ? Number(LengthText) : 0;
+        if ((!Solo && Expected !== Wire.ReportBytes) || (Solo && (!Expected || Expected > SoloReportLimit)) ||
+            Req.headers['content-type']?.split(';', 1)[0].trim().toLowerCase() !== (Solo ? 'application/json' : 'application/octet-stream')) {
             Reply(400); return true;
         }
         let Puid;
         try { Puid = SessionPlayer(Options, Req.headers['x-granite-session']); }
         catch (_) { Reply(503); return true; }
         if (!Puid) { Reply(401); return true; }
-        const Now = Date.now(), Id = String(Puid);
+        const Now = Date.now(), Id = `${Solo ? 'solo' : 'park'}:${Puid}`;
         for (const [Key, P] of Peers) if (!P.Busy && Now - P.LastAt > 60000) Peers.delete(Key);
         Peer = Peers.get(Id);
         if (!Peer) {
@@ -78,7 +82,7 @@ function CreateHandler() {
         Req.on('data', Chunk => {
             if (Done) return;
             Length += Chunk.length;
-            if (Length > Wire.ReportBytes) { Reply(413); return; }
+            if (Length > Expected) { Reply(413); return; }
             Parts.push(Chunk);
         });
         Req.on('error', Release);
@@ -86,8 +90,10 @@ function CreateHandler() {
         Req.on('end', () => {
             if (Done) return;
             try {
-                const R = Wire.ReadReport(Buffer.concat(Parts));
-                const Body = require('../Protocol/NativePark').OnReport(Puid, R);
+                if (Length !== Expected) throw new Error('incomplete native report');
+                const Bytes = Buffer.concat(Parts);
+                const Body = Solo ? require('../Protocol/NativeSoloPark').OnReport(Puid, JSON.parse(Bytes.toString('utf8'))) :
+                    require('../Protocol/NativePark').OnReport(Puid, Wire.ReadReport(Bytes));
                 Reply(Body ? 200 : 204, Body);
             } catch (Failure) { Reply(Failure.Status === 409 ? 409 : 400); }
         });

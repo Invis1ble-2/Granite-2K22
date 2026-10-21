@@ -91,7 +91,7 @@ function BuildEndpointBlob(File, Include2K22Catalog = false) {
 }
 
 function LockstepBufferFrames(Env = process.env) {
-    const Frames = Number(Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 12);
+    const Frames = Number(Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 6);
     if (!Number.isInteger(Frames) || Frames < 1 || Frames > 49)
         throw new Error('GRANITE_LOCKSTEP_BUFFER_FRAMES must be 1..49');
     return Frames;

@@ -1,7 +1,7 @@
 {
     "Port": 21000,
     "Host": "0.0.0.0",
-    "PublicHost": "127.0.0.1",
+    "PublicHost": "172.19.163.2",
     "CertificateDirectory": "Storage/Certificate",
     "CaptureDirectory": "Storage/Captures/Http",
     "UserContentDirectory": "Storage/UserContent",

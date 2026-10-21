@@ -13,6 +13,8 @@
 #include <bcrypt.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <atomic>
 #include <cstdint>
 #include <sstream>
@@ -92,7 +94,7 @@ enum class LogLevel
 
 void Log(LogLevel Level, const std::wstring& Message)
 {
-    if (Message.starts_with(L"SOLO22") && !ModuleConfig::LogSoloPark) return;
+    if (Message.starts_with(L"SOLO22") && !ModuleConfig::LogSoloPark && Level != LogLevel::Error) return;
     const wchar_t Symbol = Level == LogLevel::Info ? L'@' : Level == LogLevel::Verbose ? L'~' : L'!';
     const WORD Colour = Level == LogLevel::Info      ? FOREGROUND_GREEN | FOREGROUND_INTENSITY
                         : Level == LogLevel::Verbose ? FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY
@@ -685,6 +687,7 @@ DWORD WINAPI CareerPriceWatchdog(void*)
     return 0;
 }
 
+#include "CpuEnhancement.h"
 #include "NativeParkControl.h"
 #include "SoloParkNative.h"
 #include "AnimationUnlock.h"
@@ -699,7 +702,7 @@ DWORD WINAPI Initialise(void*)
     RedirectPort = ModuleConfig::ServerPort;
     EnsureConsole();
     OpenLogFile();
-    Log(LogLevel::Info, L"Granite module 0x0001020F initialized; configuration: " + Directory + L"\\Granite.ini");
+    Log(LogLevel::Info, L"Granite module 0x00010213 initialized; configuration: " + Directory + L"\\Granite.ini");
     if (!ConfigSaved) Log(LogLevel::Error, L"Granite.ini could not be created or accessed; missing settings use defaults");
     if (ModuleConfig::EnableCrashHandler)
         CrashHandler::Install([](const wchar_t* Text) { Log(LogLevel::Info, Text); },
@@ -794,7 +797,7 @@ DWORD WINAPI Initialise(void*)
 
 extern "C" __declspec(dllexport) unsigned int GraniteModuleVersion()
 {
-    return 0x0001020F;
+    return CpuEnhancement::ModuleVersion;
 }
 
 extern "C" __declspec(dllexport) void CALLBACK GraniteCrashWatchW(HWND, HINSTANCE, LPWSTR CommandLine, int)

@@ -54,12 +54,27 @@ struct Request
     uint64_t Match, Owner;
     uint32_t TeamSize, CpuCount;
     uint64_t Cpu[MaxCpu];
+    uint32_t Seeds[MaxCpu];
+    uint32_t Reserved;
 };
-static_assert(sizeof(Request) == 72 && offsetof(Request, TeamSize) == 24 && offsetof(Request, Cpu) == 32);
+static_assert(sizeof(Request) == 96 && offsetof(Request, TeamSize) == 24 && offsetof(Request, Cpu) == 32 && offsetof(Request, Seeds) == 72);
 inline Request Current{};
 inline bool Created[MaxCpu]{};
+inline std::array<CpuEnhancement::Snapshot, MaxCpu> Profiles{};
+inline std::string GenerationError;
 inline std::mutex ReceiptMutex;
 inline std::wstring Root;
+inline bool NetworkManaged = false, ReceiptStarted = false;
+inline Request NetworkRequest{};
+inline uint64_t NetworkEpoch = 0;
+inline ULONGLONG NetworkDeadline = 0;
+struct NetworkEnvelope
+{
+    uint64_t Instance, Epoch;
+    uint32_t LeaseMs, Reserved;
+    Request Data;
+};
+static_assert(sizeof(NetworkEnvelope) == 120 && offsetof(NetworkEnvelope, Data) == 24);
 
 inline bool Read(const void* Address, void* Out, size_t Size)
 {
@@ -70,33 +85,48 @@ template<class T> inline bool At(const void* Base, size_t Offset, T& Value)
 {
     return Base && Read(static_cast<const unsigned char*>(Base) + Offset, &Value, sizeof(Value));
 }
+inline bool ValidRequest(const Request& R)
+{
+    if (R.Magic != 0x32325053 || R.Version != 3 || R.Reserved || !R.Match || !R.Owner ||
+        (R.Owner & CpuMask) == CpuPrefix || (R.TeamSize != 2 && R.TeamSize != 3) ||
+        R.CpuCount != R.TeamSize * 2 - 1) return false;
+    for (unsigned I = R.CpuCount; I < MaxCpu; ++I) if (R.Cpu[I] || R.Seeds[I]) return false;
+    for (unsigned I = 0; I < R.CpuCount; ++I)
+    {
+        if ((R.Cpu[I] & CpuMask) != CpuPrefix || R.Cpu[I] == R.Owner || !R.Seeds[I]) return false;
+        for (unsigned J = 0; J < I; ++J) if (R.Cpu[J] == R.Cpu[I]) return false;
+    }
+    return true;
+}
 inline bool LoadRequest(Request& R)
 {
+    {
+        std::lock_guard<std::mutex> Lock(ReceiptMutex);
+        if (NetworkManaged)
+        {
+            if (GetTickCount64() >= NetworkDeadline) return false;
+            R = NetworkRequest; return ValidRequest(R);
+        }
+    }
     HANDLE File = CreateFileW((Root + L"\\SoloParkNative.request").c_str(), GENERIC_READ,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
     if (File == INVALID_HANDLE_VALUE) return false;
     DWORD N = 0;
     const bool Ok = GetFileSize(File, nullptr) == sizeof(R) && ReadFile(File, &R, sizeof(R), &N, nullptr) && N == sizeof(R);
     CloseHandle(File);
-    if (!Ok || R.Magic != 0x32325053 || R.Version != 2 || !R.Match || !R.Owner ||
-        (R.Owner & CpuMask) == CpuPrefix || (R.TeamSize != 2 && R.TeamSize != 3) ||
-        R.CpuCount != R.TeamSize * 2 - 1) return false;
-    for (unsigned I = R.CpuCount; I < MaxCpu; ++I) if (R.Cpu[I]) return false;
-    for (unsigned I = 0; I < R.CpuCount; ++I)
-    {
-        if ((R.Cpu[I] & CpuMask) != CpuPrefix || R.Cpu[I] == R.Owner) return false;
-        for (unsigned J = 0; J < I; ++J) if (R.Cpu[J] == R.Cpu[I]) return false;
-    }
-    return true;
+    return Ok && ValidRequest(R);
 }
 inline void Select(const Request& R)
 {
-    if (memcmp(&Current, &R, sizeof(R))) { Current = R; memset(Created, 0, sizeof(Created)); }
+    if (memcmp(&Current, &R, sizeof(R)))
+    { Current = R; memset(Created, 0, sizeof(Created)); Profiles = {}; GenerationError.clear(); ReceiptStarted = false; }
 }
-inline void Receipt(const char* Error = nullptr, bool Started = false)
+inline std::string BuildReceipt(const char* Error = nullptr, bool Started = false, uint64_t Instance = 0)
 {
+    if (Error && GenerationError.empty()) GenerationError = Error;
+    ReceiptStarted |= Started;
     std::ostringstream Text;
-    Text << "{\"version\":2,\"module\":\"0001020F\",\"installed\":true,\"pid\":" << GetCurrentProcessId()
+    Text << "{\"version\":3,\"module\":\"00010213\",\"installed\":" << (CpuEnhancement::Ready ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
          << ",\"match\":\"" << std::hex << Current.Match << "\",\"teamSize\":" << std::dec << Current.TeamSize
          << ",\"cpuCount\":" << Current.CpuCount << ",\"created\":[";
     bool First = true;
@@ -105,10 +135,29 @@ inline void Receipt(const char* Error = nullptr, bool Started = false)
         if (!First) Text << ',';
         Text << '\"' << std::hex << Current.Cpu[I] << '\"'; First = false;
     }
-    Text << "],\"started\":" << (Started ? "true" : "false") << ",\"error\":";
-    if (Error) Text << '\"' << Error << '\"'; else Text << "null";
-    Text << "}\n";
-    const auto Bytes = Text.str();
+    Text << "],\"profiles\":["; First = true;
+    for (unsigned I = 0; I < Current.CpuCount; ++I) if (Created[I])
+    {
+        if (!First) Text << ',';
+        const auto& P = Profiles[I];
+        Text << "{\"id\":\"" << std::hex << Current.Cpu[I] << "\",\"seed\":" << std::dec << Current.Seeds[I]
+             << ",\"overall\":" << P.Rating << ",\"height\":" << P.Height / 100 << ",\"shape\":[";
+        for (size_t J = 0; J < P.Shape.size(); ++J)
+        {
+            if (J) Text << ',';
+            float Value = 0; memcpy(&Value, &P.Shape[J], sizeof(Value)); Text << Value;
+        }
+        Text << "]}"; First = false;
+    }
+    Text << "],\"started\":" << (ReceiptStarted ? "true" : "false") << ",\"error\":";
+    if (!GenerationError.empty()) Text << '"' << GenerationError << '"'; else Text << "null";
+    Text << ",\"instance\":\"" << std::hex << Instance << "\",\"epoch\":\"" << NetworkEpoch
+         << "\",\"armed\":" << (NetworkManaged && GetTickCount64() < NetworkDeadline ? "true" : "false") << "}\n";
+    return Text.str();
+}
+inline void Receipt(const char* Error = nullptr, bool Started = false)
+{
+    const auto Bytes = BuildReceipt(Error, Started);
     const auto Temp = Root + L"\\SoloParkNative.ready.tmp";
     HANDLE File = CreateFileW(Temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
     if (File == INVALID_HANDLE_VALUE) return;
@@ -117,6 +166,31 @@ inline void Receipt(const char* Error = nullptr, bool Started = false)
     CloseHandle(File);
     if (Ok) MoveFileExW(Temp.c_str(), (Root + L"\\SoloParkNative.ready.json").c_str(), MOVEFILE_REPLACE_EXISTING);
     else DeleteFileW(Temp.c_str());
+}
+inline std::string NetworkReceipt(uint64_t Instance)
+{
+    std::lock_guard<std::mutex> Lock(ReceiptMutex);
+    return BuildReceipt(nullptr, false, Instance);
+}
+inline void RevokeNetwork()
+{
+    std::lock_guard<std::mutex> Lock(ReceiptMutex);
+    NetworkDeadline = 0; // Retain identity and never fall back to a stale local request.
+}
+inline bool NetworkReply(const void* Bytes, size_t Size, uint64_t Instance)
+{
+    NetworkEnvelope E{};
+    if (Size != sizeof(E)) { RevokeNetwork(); return false; }
+    memcpy(&E, Bytes, sizeof(E));
+    if (E.Instance != Instance || !E.Epoch || E.Reserved || !E.LeaseMs || E.LeaseMs > 8000 || !ValidRequest(E.Data))
+    { RevokeNetwork(); return false; }
+    std::lock_guard<std::mutex> Lock(ReceiptMutex);
+    if (NetworkManaged && NetworkEpoch == E.Epoch && NetworkRequest.Match == E.Data.Match &&
+        memcmp(&NetworkRequest, &E.Data, sizeof(E.Data))) { NetworkDeadline = 0; return false; }
+    NetworkManaged = true; NetworkRequest = E.Data; NetworkEpoch = E.Epoch;
+    NetworkDeadline = GetTickCount64() + E.LeaseMs;
+    Select(E.Data);
+    return true;
 }
 inline bool HasRoster(void* Player, uint64_t Id, bool Cpu)
 {
@@ -127,6 +201,13 @@ inline bool HasRoster(void* Player, uint64_t Id, bool Cpu)
 inline bool Validate(void* Session, void* Info, const Request& R, bool Prepared)
 {
     if ((R.TeamSize != 2 && R.TeamSize != 3) || R.CpuCount != R.TeamSize * 2 - 1) return false;
+    std::array<CpuEnhancement::Snapshot, MaxCpu> ExpectedProfiles{};
+    {
+        std::lock_guard<std::mutex> Lock(ReceiptMutex);
+        if (memcmp(&Current, &R, sizeof(R)) || !GenerationError.empty()) return false;
+        for (unsigned I = 0; I < R.CpuCount; ++I) if (!Created[I]) return false;
+        ExpectedProfiles = Profiles;
+    }
     int Home = 0, Away = 0; uint64_t Ids[6]{};
     const unsigned Count = R.TeamSize * 2;
     const size_t SideBytes = R.TeamSize * sizeof(uint64_t);
@@ -142,9 +223,15 @@ inline bool Validate(void* Session, void* Info, const Request& R, bool Prepared)
         for (unsigned J = 0; J < Count; ++J) Matches += Ids[J] == Expected;
         void* Player = Lookup ? Lookup(Session, Expected) : nullptr;
         Ok = Matches == 1 && HasRoster(Player, Expected, I != 0) &&
+            (!I || CpuEnhancement::Verify(Player, Expected, ExpectedProfiles[I - 1])) &&
             (!Prepared || (At(Player, 0x21f0, Source) && Source == 1));
     }
     return Ok;
+}
+inline bool AuthorizeProfile(const void* RequestData)
+{
+    Request Live{};
+    return LoadRequest(Live) && !memcmp(&Live, RequestData, sizeof(Live));
 }
 inline void* __fastcall Generate(void* Session, void* ActorManager, void* Object)
 {
@@ -163,28 +250,44 @@ inline void* __fastcall Generate(void* Session, void* ActorManager, void* Object
         NativePark::Generated(G, Player);
         SetLastError(Error); return Player;
     }
-    SetLastError(EntryError);
-    void* Player = OriginalGenerate(Session, ActorManager, Object);
-    const DWORD NativeError = GetLastError();
-    try
+    Request R{};
+    if (GeneratedId && LoadRequest(R)) for (unsigned I = 0; I < R.CpuCount; ++I) if (GeneratedId == R.Cpu[I])
     {
-        Request R{}; uint64_t Id = 0;
-        if (LoadRequest(R) && At(Object, 0xa0, Id))
+        CpuEnhancement::Generation P{};
+        P.Session = Session; P.Id = GeneratedId; P.Seed = R.Seeds[I];
+        P.Authority = &R; P.Authorized = &AuthorizeProfile;
+        unsigned char* Entries = nullptr;
+        P.Valid = CpuEnhancement::Ready && NativePark::Pool(P.PoolCount, P.PoolDigest, Entries);
+        if (P.Valid) P.Template = P.Seed % P.PoolCount;
+        else P.Error = CpuEnhancement::Ready ? "generation-pool" : "enhancement-not-ready";
+        void* Player = nullptr;
+        if (P.Valid)
         {
-            std::lock_guard<std::mutex> Lock(ReceiptMutex);
-            Select(R);
-            for (unsigned I = 0; I < R.CpuCount; ++I) if (Id == R.Cpu[I])
+            CpuEnhancement::Scope Scope(P);
+            SetLastError(EntryError);
+            Player = OriginalGenerate(Session, ActorManager, Object);
+        }
+        const DWORD NativeError = GetLastError();
+        try
+        {
+            const bool Ok = CpuEnhancement::Finish(P, Player);
+            if (AuthorizeProfile(&R))
             {
-                Created[I] = HasRoster(Player, Id, true);
-                Receipt(Created[I] ? nullptr : "native-cpu-roster-missing");
-                Log(LogLevel::Info, L"SOLO22 generated CPU " + std::to_wstring(I) +
-                    (Created[I] ? L" with native roster" : L" refused: native roster missing"));
+                std::lock_guard<std::mutex> Lock(ReceiptMutex);
+                Select(R); Created[I] = Ok;
+                if (Ok) Profiles[I] = P.Expected;
+                const std::string Error = Ok ? std::string{} : "native-cpu-enhancement-" + P.Error;
+                Receipt(Ok ? nullptr : Error.c_str());
+                Log(Ok ? LogLevel::Info : LogLevel::Error, L"SOLO22 CPU " + std::to_wstring(I) + (Ok ?
+                    L" verified: OVR=" + std::to_wstring(P.Expected.Rating) + L" height-cm=" + std::to_wstring(P.Expected.Height / 100) :
+                    L" refused: " + std::wstring(P.Error.begin(), P.Error.end())));
             }
         }
+        catch (...) { Log(LogLevel::Error, L"SOLO22 enhanced CPU receipt failed"); }
+        SetLastError(NativeError); return Player;
     }
-    catch (...) { Log(LogLevel::Error, L"SOLO22 readiness receipt failed"); }
-    SetLastError(NativeError);
-    return Player;
+    SetLastError(EntryError);
+    return OriginalGenerate(Session, ActorManager, Object);
 }
 // StartGame receives the native 0x590-byte game-info, before session/AI init.
 // Reject only our nonce. Normal local games and multiplayer retain their original calls.
@@ -344,6 +447,12 @@ inline const Site Sites[] = {
     {0x10d3e70, "\x8b\x05\x1e\x06\x1b\x05\xc3", 7,
         reinterpret_cast<void*>(&AwayCount), reinterpret_cast<void**>(&OriginalAwayCount)},
     {0x167d3c0, "\x48\x89\x5c\x24\x18\x48\x89\x6c\x24\x20\x57\x48\x83\xec\x20", 15, nullptr, nullptr},
+    {CpuEnhancement::ApiSites[0].Rva, CpuEnhancement::ApiSites[0].Bytes, CpuEnhancement::ApiSites[0].Size, nullptr, nullptr},
+    {CpuEnhancement::ApiSites[1].Rva, CpuEnhancement::ApiSites[1].Bytes, CpuEnhancement::ApiSites[1].Size, nullptr, nullptr},
+    {CpuEnhancement::ApiSites[2].Rva, CpuEnhancement::ApiSites[2].Bytes, CpuEnhancement::ApiSites[2].Size, nullptr, nullptr},
+    {CpuEnhancement::ApiSites[3].Rva, CpuEnhancement::ApiSites[3].Bytes, CpuEnhancement::ApiSites[3].Size, nullptr, nullptr},
+    {CpuEnhancement::ApiSites[4].Rva, CpuEnhancement::ApiSites[4].Bytes, CpuEnhancement::ApiSites[4].Size, nullptr, nullptr},
+    {CpuEnhancement::ApiSites[5].Rva, CpuEnhancement::ApiSites[5].Bytes, CpuEnhancement::ApiSites[5].Size, nullptr, nullptr},
 };
 inline constexpr DWORD ReadinessTimeoutMs = 30'000, ReadinessPollMs = 250;
 inline std::atomic_bool InstallStarted = false;
@@ -423,10 +532,12 @@ inline void InstallHooks(HMODULE Executable)
                << Sites[Made != 5 ? Made : Enabled].Rva << std::dec << L" status=" << Status;
         Log(LogLevel::Error, Detail.str()); return;
     }
-    { std::lock_guard<std::mutex> Lock(ReceiptMutex); Receipt(); }
-    Log(LogLevel::Info, L"SOLO22 enabled: protocol v2 native receipts and guarded 2v2/3v3 start");
     try { NativePark::Install(Executable); }
-    catch (...) { Log(LogLevel::Error, L"PARK22 control installation failed; solo v2 remains available"); }
+    catch (...) { Log(LogLevel::Error, L"PARK22 enhanced CPU hook installation failed"); }
+    { std::lock_guard<std::mutex> Lock(ReceiptMutex); Receipt(); }
+    Log(LogLevel::Info, CpuEnhancement::Ready ?
+        L"SOLO22 enabled: protocol v3 enhanced CPU receipts and guarded 2v2/3v3 start" :
+        L"SOLO22 unavailable: enhanced CPU hook is not ready");
 }
 inline DWORD WINAPI WaitAndInstall(void* Context)
 {

@@ -809,7 +809,7 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
         Token: RandomBytes(16),
         address: require('../Activity/Init').PackEndpoint(Relay.Ip, Relay.Port).Address,
         port: Relay.Port,
-        RelayId: 0,
+        RelayId: Teams.NativePark ? require('./NativeParkWire').RelayId : 0,
     };
     Teams.MatchId ??= RandomBytes(8).readBigUInt64LE() || 1n;
     Teams.Activity = Activity;
