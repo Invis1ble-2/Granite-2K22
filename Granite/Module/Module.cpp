@@ -692,7 +692,6 @@ DWORD WINAPI CareerPriceWatchdog(void*)
 #include "NativeParkControl.h"
 #include "SoloParkNative.h"
 #include "AnimationUnlock.h"
-#include "ContentSeasons.h"
 #include "CareerProgressionSync.h"
 
 DWORD WINAPI Initialise(void*)
@@ -743,7 +742,6 @@ DWORD WINAPI Initialise(void*)
         SoloParkNative::FrameTimingReady = OnlineFrameRate::IsReady;
         NativePark::FrameTimingReady = OnlineFrameRate::IsReady;
         OnlineFrameRate::Install(Executable);
-        ContentSeasons::Install(Executable);
         SoloParkNative::Install(Executable);
         AnimationUnlock::Install(Executable);
         CareerProgressionSync::Install(Executable);

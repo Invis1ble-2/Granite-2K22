@@ -45,7 +45,6 @@ set "OPAL_RELAY_HOST=%PUBLIC_IP%"
 if not defined OPAL_RELAY_BIND set "OPAL_RELAY_BIND=0.0.0.0"
 rem Let Granite use Config.json Host unless explicitly overridden by GRANITE_HOST.
 
-rem 12 frames at 120 Hz = 100 ms. For 50 ms, change BOTH buffer values to 6.
 set "GRANITE_LOCKSTEP_BUFFER_FRAMES=6"
 set "OPAL_LOCKSTEP_DELAY_FRAMES=6"
 set "OPAL_LOCKSTEP_HZ=120"

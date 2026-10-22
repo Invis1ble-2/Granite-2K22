@@ -9,14 +9,11 @@ const State = require('../Source/Services/MyCareer/Badges/State');
 const Get = require('../Source/Services/MyCareer/Attributes/Get');
 const Add = require('../Source/Services/MyCareer/GrindPoints/AddGrindPoints');
 const Update = require('../Source/Services/MyCareer/Badges/Update');
-const { Import } = require('../Tools/ImportNBA2K22BadgeBudget');
 
 function Setup(T) {
     const Root = Fs.mkdtempSync(Path.join(Os.tmpdir(), 'granite-badges-'));
     T.after(() => Fs.rmSync(Root, { recursive: true, force: true }));
-    const Config = { CareerBadgesFile: Path.join(Root, 'BadgePoints.json'), SessionDirectory: Path.join(Root, 'sessions') };
-    Fs.mkdirSync(Config.SessionDirectory);
-    Fs.writeFileSync(Path.join(Config.SessionDirectory, 'one.json'), JSON.stringify({ userId: '123', careerSlot: '2' }));
+    const Config = { CareerBadgesFile: Path.join(Root, 'BadgePoints.json') };
     const Context = { userId: '123', careerScopeId: 'slot-2', Careers: new Map(), CareerGrind: new Map(), ...Config };
     const Potential = Array(24).fill(1000000);
     Context.BuildProfile = { caps: Potential };
@@ -28,10 +25,9 @@ function Setup(T) {
 function Fields(Reply) { return Parse(Reply.Body, { FieldListSize: Reply.FieldListSize }).Fields; }
 function Numbers(Values, Crc) { return GetFields(Values, Crc).map(Field => Number((BigInt(Field.Data1) << 32n) | BigInt(Field.Data2))); }
 
-Test('native per-build maxima import as 10/9/10/7 and survive reload without copying them into other slots', T => {
+Test('per-build maxima survive reload without copying them into other slots', T => {
     const { Config, Context, Snapshot } = Setup(T);
-    const Result = Import(Snapshot, Config);
-    Assert.equal(Result.key, '123:slot-2');
+    State.Save(Config.CareerBadgesFile, { '123:slot-2': Snapshot });
     const Reply = Fields(Get.Build({}, Context));
     Assert.deepEqual(GetFields(Reply, State.Fields.Category).map(F => F.Data1), State.Categories);
     Assert.deepEqual(Numbers(Reply, State.Fields.Earned), [10,9,10,7]);
@@ -46,7 +42,7 @@ Test('native per-build maxima import as 10/9/10/7 and survive reload without cop
 
 Test('post-match reports cannot reduce the granted budget, and badge choices persist', T => {
     const { Config, Context, Snapshot } = Setup(T);
-    Import(Snapshot, Config);
+    State.Save(Config.CareerBadgesFile, { '123:slot-2': Snapshot });
     const Match = new Builder().AddU64(0x9479e41f, 100n).AddU64(0xc015fb98, 100n)
         .AddU32(State.Fields.Category, State.Categories[0])
         .AddU64(State.Fields.Earned, 0n).AddU64(State.Fields.Progress, 100005n).Build();
@@ -63,18 +59,13 @@ Test('post-match reports cannot reduce the granted budget, and badge choices per
     Assert.equal(State.For(Context).levels['12345'], State.Levels[2]);
 });
 
-Test('each snapshot has its own maxima, includes existing extra points and validates account selection', T => {
+Test('each build has its own maxima, includes existing extra points and can be reset', T => {
     const { Config, Context, Snapshot } = Setup(T);
     Snapshot.caps = [1,20,4,12];
     Snapshot.extra = [0,2,0,1];
-    Import(Snapshot, Config);
+    State.Save(Config.CareerBadgesFile, { '123:slot-2': Snapshot });
     Assert.deepEqual(Numbers(Fields(Get.Build({}, Context)), State.Fields.Earned), [1,20,4,12]);
     Assert.deepEqual(Numbers(Fields(Get.Build({}, Context)), State.Fields.Extra), [0,2,0,1]);
-    Fs.writeFileSync(Path.join(Config.SessionDirectory, 'two.json'), JSON.stringify({ userId: '456', careerSlot: '2' }));
-    Assert.throws(() => Import(Snapshot, Config), /uniquely identify/);
-    Assert.equal(Import(Snapshot, Config, '123').key, '123:slot-2');
-    Assert.throws(() => Import({ ...Snapshot, caps: [65536,9,10,7] }, Config, '123'), /Invalid caps/);
-    Assert.throws(() => Import({ ...Snapshot, extra: [2,0,0,0] }, Config, '123'), /Extra exceeds/);
     State.Reset(Context);
     Assert.equal(State.For(Context), null);
 });

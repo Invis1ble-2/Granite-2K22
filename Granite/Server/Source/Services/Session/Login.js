@@ -21,6 +21,7 @@ const Crcs = Object.freeze({
     Services: 0xb5017d25,
     Manifest: 0xdd831c7a,
     Parameters: 0x7f907735,
+    ConfigUpdates: 0x16380395,
     LockstepDelaySeconds: 0xfb1c4cf3,
     ServerTime: 0xe9824107,
     IssuedAt: 0x329a965f,
@@ -41,6 +42,14 @@ const Exact2K19 = Object.freeze({
 
 function Gzip(Bytes) {
     return Zlib.gzipSync(Bytes, { level: 9, Mtime: 0 });
+}
+
+function BuildContentSeasonConfigBlob() {
+    // NBA2K22 FUN_1420996a0 imports this JSON into the native config manager.
+    // Override only content time; retain the native schedule and global clock.
+    return Gzip(Buffer.from(JSON.stringify({
+        CONTENT_SEASONS: { DEBUG_TIME_OVERRIDE: '2022-07-11 12:00:00' },
+    }), 'utf8'));
 }
 
 function AddJsonRecord(ListBuilder, Record) {
@@ -174,6 +183,7 @@ function Build(Input, Context = {}) {
         .AddU64(Crcs.SessionKey, Session.key)
         .AddU64(Crcs.ManifestTimestamp, 0n)
         .AddBinary(Crcs.Parameters, BuildParameterBlob())
+        .AddBinary(Crcs.ConfigUpdates, BuildContentSeasonConfigBlob())
         .AddBinary(Crcs.Services, Endpoints)
         .AddBinary(Crcs.Manifest, Gzip(Buffer.alloc(0)));
     const Environment = GetU32(Fields, Crcs.Environment);
@@ -201,6 +211,7 @@ module.exports = {
     Exact2K19,
     BuildEndpointBlob,
     BuildParameterBlob,
+    BuildContentSeasonConfigBlob,
     LockstepBufferFrames,
     Status: 'REAL_2K19_LOGIN_FIELDS_PLUS_MIXED_EVIDENCE_SERVICE_TABLE',
 };

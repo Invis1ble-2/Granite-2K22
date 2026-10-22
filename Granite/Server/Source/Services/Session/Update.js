@@ -22,7 +22,8 @@ function Build(Input, Context = {}) {
     const Reply = new Builder()
         .AddVCDate(Login.Crcs.IssuedAt, Now)
         .AddVCDate(Login.Crcs.ServerTime, Now)
-        .AddU32(Login.Crcs.Result, Login.Crcs.Success);
+        .AddU32(Login.Crcs.Result, Login.Crcs.Success)
+        .AddBinary(Login.Crcs.ConfigUpdates, Login.BuildContentSeasonConfigBlob());
     if (Current) Reply.AddU64(Login.Crcs.SessionKey, Current.key);
     const Environment = GetU32(Fields, Login.Crcs.Environment);
     if (Environment !== null) Reply.AddU32(Login.Crcs.Environment, Environment);

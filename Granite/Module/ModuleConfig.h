@@ -26,7 +26,6 @@ namespace ModuleConfig
     inline bool LogSoloPark = false;
     inline bool LogAttributePrice = false;
     inline bool LogBadgeBudget = false;
-    inline bool LogContentSeasons = false;
     inline bool LogAnimationUnlock = false;
 
     // UTF-16LE lets the Windows profile API read comments and Unicode paths.
@@ -46,7 +45,7 @@ namespace ModuleConfig
             L"; Keep beside Module.dll. Changes apply on the next game launch.\r\n"
             L"; Crash reports are controlled separately from .log output.\r\n\r\n"
             L"[Network]\r\n"
-            L"; Server IPv4 (virtual LAN address for friends); no scheme or port\r\nServerHost = 127.0.0.1\r\n"
+            L"; Server IPv4 (virtual LAN address if for friends); no scheme or port\r\nServerHost = 127.0.0.1\r\n"
             L"; Granite HTTPS port\r\nServerPort = 21000\r\n\r\n"
             L"[Features]\r\n"
             L"; Crash capture and minidumps\r\nEnableCrashHandler = 1\r\n\r\n"
@@ -61,7 +60,6 @@ namespace ModuleConfig
             L"; Solo park validation and generated roster messages\r\nLogSoloPark = 0\r\n\r\n"
             L"; Attribute price synchronization and watchdog messages\r\nLogAttributePrice = 0\r\n\r\n"
             L"; Badge budget buffering and reporting messages\r\nLogBadgeBudget = 0\r\n\r\n"
-            L"; Content-season reference setup status (not a feature toggle)\r\nLogContentSeasons = 0\r\n\r\n"
             L"; Animation hook setup status (not a feature toggle)\r\nLogAnimationUnlock = 0\r\n";
         constexpr DWORD Size = static_cast<DWORD>(sizeof(Defaults) - sizeof(wchar_t));
         DWORD Written = 0;
@@ -155,7 +153,6 @@ namespace ModuleConfig
         LogSoloPark         = ReadToggle(L"Logging", L"LogSoloPark", false, Ini);
         LogAttributePrice   = ReadToggle(L"Logging", L"LogAttributePrice", false, Ini);
         LogBadgeBudget      = ReadToggle(L"Logging", L"LogBadgeBudget", false, Ini);
-        LogContentSeasons   = ReadToggle(L"Logging", L"LogContentSeasons", false, Ini);
         LogAnimationUnlock  = ReadToggle(L"Logging", L"LogAnimationUnlock", false, Ini);
         return Saved;
     }

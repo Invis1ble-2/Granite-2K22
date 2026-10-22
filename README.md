@@ -1,108 +1,75 @@
-# Granite
+# Granite — NBA 2K22 适配
 
-This project was developed by me (@vjei) and glory (@beforeglory), this is the base of every project above 2K18, and since everyone decided to leak this source and profit, we're going to release it for free. It was developed in four days, and matchmaking took nearly 4 hours, this is the FIRST proper above 2K18 server in the world. It doesn't matter who it is, this is the base for everyone's work above 2K18.
+中文 | [English](README.en.md)
 
-Join discord.gg/celestialclient
+基于 @vjei 与 glory（@beforeglory）开发的 Granite 原项目修改，适配 PC 版 NBA 2K22。原项目面向 NBA 2K19，本分支仅继续维护 2K22，非从零开发，目前仍在完善中。
 
-A private server stack for NBA 2K19 on PC.
+## 当前进度
 
-| Component | Path | Description |
-| --- | --- | --- |
-| Granite Server | `Granite/Server` | HTTPS web services: login, sessions, store, virtual currency, MyCareer, MyTeam, Pro-Am, user content and matchmaking. |
-| Opal | `Opal` | Secure websocket world server for the neighborhood, stage, MyCourt and squads, plus the UDP game relay. |
-| Module | `Granite/Module` | Native DLL loaded into the game. Redirects 2K web traffic to Granite and installs the crash handler. |
-| Injector / Launcher | `Granite/Injector`, `Granite/Launcher` | Native tools that start the game and load `Module.dll`. |
-| Shared | `Shared` | Ante-Up court pricing used by both servers. |
+- **街区与场景**：街区大厅可进入；Game Room、Ante-Up 独立进入及双向互切已验收。
+- **公园比赛**：单人 3v3 人机补位、赛前模型/名牌及赛后占位修复已验收；增强人机已能开赛。
+- **双人联机**：双真人公园对局已完成整场比赛；120 FPS 与流畅度修复已获用户确认。
+- **Ante-Up**：Got Next 点位、左右选位已验收，球场金额显示已恢复；不代表内部比赛可用。
 
-## Requirements
+以上仅代表已验收场景，其他人数/模式、连续重开、完整计时与长期同步仍待验证。
 
-- Node.js 18 or newer
-- Visual Studio 2022 with the C++ desktop workload to build the native projects
+## 已知问题
 
-A self-signed TLS certificate is included in `Granite/Server/Storage/Certificate` and is used by both Granite and Opal.
+- **MyCOURT**：好友加入与双方互见异常，联机玩法及离开流程未确认。
+- **Ante-Up**：目前1v1无法开赛问题未修复；排队推进及完整多人比赛等未验收。VC 仅为练习显示，不扣款、不结算。
+- **场景设施**：Game Room 设施、健身房项目不可用；护城河缺少 Got Next 点，蹦床球场存在进入问题。
+- **其他内容**：未列出的玩法不保证可用，项目尚非完整官方服务替代品。
 
-## Running
+## 特殊功能
 
-```bat
-StartServers.bat
-```
+| 功能 | 说明 |
+| --- | --- |
+| 随机80-99总评人机补位 | 公园人数不足时补位，单人或者少人也能开赛 |
+| 公园 120 FPS | 默认已启用，并配置启动脚本中已知可行的 `6/6/120` 同步参数，勿混用旧版。 |
+| 动画限制解除 | 默认显示全部原生动画候选并跳过身高、属性、进度限制，仍走正常购买流程。 |
+| 动画全部拥有 | `Granite.ini` 中 `EnableAnimationUnlockAll=1`，默认关闭；开启后无需购买。 |
+| 永久物品自动拥有 | 服务端 `AutomaticOwnership=true`，默认开启；涵盖服装、鞋等永久物品，不含消耗品。 |
+| 生涯快速解锁 | `InstantMaxProgression` / `InstantMaxBadges` 默认开启，解锁成长进度与徽章进度 |
+| 固定 VC | 新钱包初始为 `888888` VC；默认正常扣款，`VirtualCurrencyStatic=true` 可固定余额。 |
 
-Or start each server on its own:
+客户端配置位于 `Module.dll` 同目录的 `Granite.ini`，下次启动游戏生效；服务端配置位于 `Granite/Server/Config.json`。
 
-```bat
-cd Granite\Server
-npm start
+## 启动与联机
 
-cd Opal
-npm start
-```
+环境：Windows、Node.js 18.20.8+；编译原生模块需 Visual Studio 2022 的 C++ 桌面开发组件。
 
-### NBA 2K22：虚拟局域网联机
-
-1. 服务器电脑和朋友加入同一个虚拟局域网，记下**服务器电脑的虚拟网卡 IPv4**。
-2. 服务器只修改 `Granite/Server/Config.json` 的 `PublicHost` 为这个 IPv4；`Host` 保持 `0.0.0.0`。默认端口：`Port=21000`、`WorldPort=20054`、`RelayPort=28091`。
-3. 使用 `StartServers.bat` 启动：脚本读取上述配置，统一设置 Opal 切场景与比赛 relay 地址，替换旧的 `OPAL_PUBLIC_HOST` / `OPAL_RELAY_HOST` 环境变量。无需修改 JS、C++ 或脚本内的 IP。
-4. 每台客户端（包括服务器电脑上运行的游戏）使用新版 `Module.dll`，在 **DLL 同目录**的 `Granite.ini` 中添加/修改下面的配置。保留已有 Features/Logging 等设置，不要覆盖整份运行配置。
+1. 本机使用时，将 `Granite/Server/Config.json` 的 `PublicHost` 设为 `127.0.0.1`；虚拟局域网联机则设为服务器虚拟网卡 IPv4。`Host` 保持 `0.0.0.0`。
+2. 运行 `StartServers.bat`，统一启动 Granite 与 Opal，并同步对外地址。
+3. 每台客户端使用配套 `Module.dll`，修改其同目录 `Granite.ini` 的以下字段，保留其他已有设置：
 
 ```ini
 [Network]
-ServerHost = 服务器电脑的虚拟网卡IPv4
+ServerHost = 127.0.0.1
 ServerPort = 21000
 ```
 
-`ServerHost` 只接受 IPv4，不含协议、端口或路径；`ServerPort` 是 Granite HTTPS 端口，不是街区端口。缺失/非法值回退为 `127.0.0.1:21000` 对应的默认字段值，下次启动游戏生效。新建 ini 会自动包含 Network；旧 ini 不会被重写。HTTP 重定向、属性价格直连和多人公园控制请求复用同一个服务器地址。
+联机时将 `ServerHost` 改为服务器虚拟网卡 IPv4（不含协议或端口），所有玩家加入同一虚拟局域网且使用不同玩家 ID。仅服务器电脑运行服务端；防火墙放行 TCP `21000`、TCP `20054`、UDP `28091`，自定义端口时对应调整。
 
-仅服务器电脑运行 Granite/Opal；朋友只运行客户端。服务器防火墙应允许虚拟网卡上的 TCP `21000`、TCP `20054`、UDP `28091`（自定义端口则对应调整），无需为此公开路由器端口。此步骤只配置连接地址，不代表多人比赛已验收：请双方依次验证登录、进入同一街区、移动互见、切场景、排队开赛、结束和退出重进，且玩家 ID 必须不同。
+配置地址不代表联机已验收，请自行验证互见、切场景、开赛、结束及退出重进。
 
-分开 `npm start` 时，Granite 仍读取 Config.json；启动 Opal 前需手动将 `OPAL_PUBLIC_HOST`、`OPAL_RELAY_HOST` 设置为同一个 PublicHost，并同步 `OPAL_PORT=WorldPort`、`OPAL_RELAY_PORT=RelayPort`。推荐使用启动脚本避免遗漏。保留默认 `127.0.0.1` 即继续本机使用。
+## 目录与编译
 
-Granite reads `Granite/Server/Config.json`. Environment overrides:
+- `Granite/Server`：HTTPS 接口、登录、存档、商店与 VC。
+- `Opal`：街区、场景、排队与比赛 relay。
+- `Granite/Module`：客户端注入 DLL；`Granite/Injector`、`Granite/Launcher`：注入与启动工具。
+- `Granite/Server/Storage`：运行数据；CDN 资源放入其 `Cdn` 子目录。
 
-| Variable | Purpose |
-| --- | --- |
-| `GRANITE_PORT`, `GRANITE_HOST` | Granite listen address |
-| `OPAL_PORT` | Opal websocket port |
-| `OPAL_RELAY_PORT`, `OPAL_RELAY_HOST`, `OPAL_RELAY_BIND`, `OPAL_PUBLIC_HOST` | Relay and advertised addresses |
-| `OPAL_SSL`, `OPAL_KEY_NAME`, `OPAL_CERT_NAME` | Certificate used by Opal |
-| `GRANITE_LOCKSTEP_BUFFER_FRAMES`, `OPAL_LOCKSTEP_DELAY_FRAMES`, `OPAL_LOCKSTEP_HZ` | Lockstep tuning (the two frame counts must match) |
-| `GRANITE_VC_STATIC` | Use a fixed 100000 VC wallet |
-
-Pass `--verbose` for detailed logging and `--capture` to record traffic.
-
-Stage court placement is tuned in `Opal/Source/Activity/StageSpots/StageSpots.txt`.
-
-## Data
-
-The repository ships the endpoint table and the store catalog. Runtime state is created on first use and is not tracked: sessions, owned items, career progress, user content, arbitration results and captures. CDN files belong in `Granite/Server/Storage/Cdn`.
-
-`Granite/Server/Tools/ImportStoreCatalog.py` rebuilds `Storage/Inventory/AutomaticCatalog.json` from a game manifest:
-
-```bat
-python Granite\Server\Tools\ImportStoreCatalog.py <manifest> Granite\Server\Storage\Inventory\AutomaticCatalog.json
-```
-
-## Building the native projects
+在 VS 开发者命令行执行：
 
 ```bat
 msbuild Granite\Granite.sln -p:Configuration=Release -p:Platform=x64
 ```
 
-Output is written to `Granite/Build`.
+产物位于 `Granite/Build`。客户端 Hook 仅适用于当前适配的 2K22 可执行文件，不保证兼容其他版本。
 
-## Tests
+## 致谢与许可
 
-```bat
-cd Granite\Server
-npm test
+原项目作者：@vjei、glory（@beforeglory）。Copyright (c) 2026 Celestial。
+原项目仓库：https://github.com/ztpd/Granite/
 
-cd Opal
-npm test
-```
-
-The native test project is `Granite/Module/Tests/CrashHandlerTests.vcxproj`. It expects a Release `Module.dll` in `Granite/Build/Release`.
-
-## License
-
-Copyright (c) 2026 Celestial. Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). You may use, modify and share this project for personal, hobby, research and other noncommercial purposes. Commercial use is not permitted.
-
-MinHook (`Granite/Module/MinHook`) is copyright Tsuda Kageyu and is distributed under its own BSD 2-Clause license, included in `MinHook.h`.
+采用 [PolyForm Noncommercial License 1.0.0](LICENSE.md)，仅限非商业用途。MinHook 保留其 BSD 2-Clause 许可（见 `Granite/Module/MinHook/MinHook.h`）。
