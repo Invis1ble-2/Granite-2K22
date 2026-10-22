@@ -12,6 +12,7 @@ const CourtData = require('./CourtData');
 const PlayerObject = require('./PlayerObject');
 const Body22 = require('./PlayerBody2K22');
 const ObjectFrame = require('../Codec/ObjectFrame');
+const CpuTemplates = require('./CpuTemplates2K22');
 const Controls = new Map(), Waiting = new Map(), Courts = new Map(), Participants = new Map();
 const WaitMs = 10000;
 const Nonce = () => Crypto.randomBytes(8).readBigUInt64LE() || 1n;
@@ -25,6 +26,11 @@ function Notice(C, Why) {
     if (C.NativeParkNotice === Why) return;
     C.NativeParkNotice = Why;
     Log.Info(`Native park fill withheld for ${C.Identifier}: ${Why}`);
+}
+function HasTemplatePool(C, Instance) {
+    const Control = Controls.get(C.Id);
+    return Wire.HasPool(Control) && Control.Instance.toString(16) === Instance &&
+        CpuTemplates.MatchesPool(Control.Report);
 }
 function Snapshot(C, Found) {
     const Size = Found.Raw.TeamSize, Next = require('./GotNext');
@@ -128,7 +134,7 @@ function Commit(P) {
         const Held = Slots.Occupy(P.Found.Groups[Side].SlotObjectId, Id, P.TeamSize, Seat);
         if (!Held || Held.Index !== Seat) throw new Error('CPU seat became unavailable');
     }
-    const Blobs = new Map(P.Members.map(M => [M.Connection.Puid, M.Blob]));
+    const Blobs = new Map(P.Members.map(M => [M.Connection.Puid, require('./Userdata').CourtProfile(M.Connection, M.Blob)]));
     const Home = P.Players.slice(0, P.TeamSize), Away = P.Players.slice(3, 3 + P.TeamSize);
     const Profiles = Side => Side.map(Id => Blobs.get(Id) || Buffer.alloc(0));
     const Prepared = CourtData.PrepareGameTeams(P.ActivityName, P.Found.Raw.Name, Home, Away,
@@ -188,6 +194,7 @@ function Tick(P) {
 }
 function Begin(C, Found, S, Key) {
     const First = S.Members[0].Control.Report;
+    const Selected = CpuTemplates.Select(Found.Raw.TeamSize * 2 - S.Members.length, Settings.NativePark());
     const P = {
         Key, Anchor: S.Members[0].Connection, Found, Snapshot: S, Members: S.Members, Seats: S.Seats,
         ActivityName: C.ActivityName,
@@ -207,15 +214,16 @@ function Begin(C, Found, S, Key) {
     for (let Side = 0; Side < 2; ++Side) for (let Seat = 0; Seat < P.TeamSize; ++Seat) {
         const I = Side * 3 + Seat;
         if (P.Players[I]) continue;
+        const Profile = Selected[P.Cpu.length];
         const Id = Base + BigInt(P.Cpu.length);
         P.Players[I] = Id; P.Cpu.push(Id); P.CpuMask |= 1 << I;
-        P.Seeds[I] = Crypto.randomBytes(4).readUInt32LE() || 1;
-        P.Templates[I] = P.Seeds[I] % P.PoolCount;
+        P.Seeds[I] = Profile.Seed;
+        P.Templates[I] = Profile.Template;
     }
     Courts.set(Key, P);
     for (const M of P.Members) Participants.set(M.Connection.Id, P);
     P.Timer = setInterval(() => Tick(P), 250); P.Timer.unref?.();
-    Log.Info(`Native park ${Found.Raw.Name}: froze ${P.Members.length} human seat(s), ${P.Cpu.length} empty seat(s); awaiting v4 enhanced CPU authorization on every client`);
+    Log.Info(`Native park ${Found.Raw.Name}: froze ${P.Members.length} human seat(s), ${P.Cpu.length} empty seat(s); templates: ${Selected.map(Profile => Profile.Name).join(', ')}; awaiting v4 enhanced CPU authorization on every client`);
     return true;
 }
 // One court clock is shared by solo and multiplayer fill, independent of module heartbeats.
@@ -272,17 +280,27 @@ function TryStart(C, Found) {
     if (S.Members.some(M => Participants.has(M.Connection.Id))) return false;
     const Waited = WaitForQueue(C, Found);
     if (S.Members.some(M => !Wire.HasPool(M.Control))) {
-        Notice(C, 'all queued humans need Module 00010217 v4 readiness through their game login'); return false;
+        Notice(C, 'all queued humans need Module 00010221 v4 readiness through their game login'); return false;
     }
     const First = S.Members[0].Control.Report;
     if (S.Members.some(M => M.Control.Report.PoolCount !== First.PoolCount || !M.Control.Report.Digest.equals(First.Digest))) {
         Notice(C, 'client template pools differ; refusing CPU fill'); return false;
     }
-    C.NativeParkNotice = null;
+    if (!CpuTemplates.MatchesPool(First)) {
+        Notice(C, 'client template pool differs from the server catalog; refusing CPU fill'); return false;
+    }
     if (!Waited) return false;
-    const W = Waiting.get(Key);
-    if (W) { clearTimeout(W.Timer); Waiting.delete(Key); }
-    return Begin(C, Found, S, Key);
+    try {
+        const Started = Begin(C, Found, S, Key);
+        if (Started) {
+            const W = Waiting.get(Key);
+            if (W) { clearTimeout(W.Timer); Waiting.delete(Key); }
+            C.NativeParkNotice = null;
+        }
+        return Started;
+    } catch (Failure) {
+        Notice(C, Failure.message); return false;
+    }
 }
 function OnReport(Puid, R) {
     const Matches = Roster.Active().filter(C => C.Puid === Puid && C.ActivityName === 'neighborhood' &&
@@ -343,4 +361,4 @@ function HandleUpdate(C, Bytes) {
     for (const M of P.Members) if (!M.Connection.Closed) Sent = M.Connection.SendObject(Frame) || Sent;
     return Sent;
 }
-module.exports = { TryStart, WaitForQueue, QueueChanged, CancelWait, Stop, Disconnect, Finish, OnReport, HandleUpdate };
+module.exports = { TryStart, WaitForQueue, QueueChanged, CancelWait, Stop, Disconnect, Finish, OnReport, HandleUpdate, HasTemplatePool };

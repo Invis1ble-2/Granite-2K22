@@ -233,6 +233,37 @@ function Inflated(Connection) {
     return Out;
 }
 
+// NBA2K22: COURT reader FUN_14164C0D0 inflates raw USERDATA, not a FieldList.
+// MYPLAYER_EQUIP_DATA maps ParkMascotId/MascotSignature to these absolute offsets;
+// FUN_141641C00 accepts the equipped ID only with the matching string_crc.
+const CourtMascot2K22 = Object.freeze({ Field: 82, Id: 0x13a34, Signature: 0x13a38, Valid: 0x255e30a7 });
+
+function CourtProfile(Connection, Blob) {
+    if (!Connection?.PlayerBody || require('./PlayerBody').GenerationForConnection(Connection) !== '2K22')
+        return Blob;
+
+    const Decoded = require('./PlayerBody2K22').Decode(Connection.PlayerBody);
+    if (!Decoded.Ok) throw new Error(`invalid PLAYER for court appearance: ${Decoded.Reason}`);
+    const At = Decoded.Offsets.get(CourtMascot2K22.Field);
+    // An absent field is not an explicit unequip; preserve the native profile.
+    if (At === undefined) return Blob;
+    const MascotId = Connection.PlayerBody.readInt32LE(At);
+    if (MascotId < -1 || MascotId > 127) throw new Error('court mascot ID does not fit the native signed byte');
+
+    const Profile = Zlib.inflateSync(Blob, { maxOutputLength: 0x6d030 });
+    if (Profile.length < CourtMascot2K22.Signature + 4) throw new Error('court mascot USERDATA is truncated');
+    const Signature = Profile.readUInt32LE(CourtMascot2K22.Signature);
+    if (Profile.readInt8(CourtMascot2K22.Id) === MascotId &&
+        (MascotId === -1 || Signature === CourtMascot2K22.Valid)) return Blob;
+
+    // Keep the original cache, length and every unrelated byte intact.
+    const Updated = Buffer.from(Profile);
+    Updated.writeInt8(MascotId, CourtMascot2K22.Id);
+    if (MascotId >= 0) Updated.writeUInt32LE(CourtMascot2K22.Valid, CourtMascot2K22.Signature);
+    // -1 explicitly unequips; its unused signature needs no invented replacement.
+    return Zlib.deflateSync(Updated, { level: 9 });
+}
+
 function PromoteVconlineProfile(Connection) {
     const Profile = Packaged(Connection);
     if (!Profile) return false;
@@ -270,6 +301,7 @@ module.exports = {
     RelayGameCommand,
     Inflated,
     Packaged,
+    CourtProfile,
     InflatedLength,
     RecordHeader,
     PayloadLength,

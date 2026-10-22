@@ -4,8 +4,11 @@
 
 namespace CpuEnhancement
 {
-inline constexpr uint32_t ModuleVersion = 0x00010217;
-inline constexpr size_t TemplateBytes = 0x560, DataBytes = 0x4f0, AttributeCount = 0x39;
+inline constexpr uint32_t ModuleVersion = 0x00010221;
+inline constexpr size_t TemplateBytes = 0x560, DataBytes = 0x4f0, AttributeCount = 0x39, BadgeCount = 99;
+// PLAYERDATA_ATTRIBUTE mappings verified against native getter/setter cases.
+inline constexpr unsigned ThreePointAbility = 0x07;
+inline constexpr unsigned ShotTendencyIndices[] = {0x53, 0x54};
 inline constexpr size_t ShapeOffsets[] = {4, 8, 0xc, 0x10, 0x14};
 inline std::atomic_bool Ready = false;
 struct ApiSite { size_t Rva; const char* Bytes; size_t Size; };
@@ -17,17 +20,26 @@ inline constexpr ApiSite ApiSites[] = {
     {0x979130, "\x48\x83\xec\x28\xe8\x07\xfa\x00\x00\x48\x83\xc4\x28\xe9", 14},
     {0x11010d0, "\x48\x8b\xc4\x48\x89\x58\x08\x57\x48\x83\xec\x60\xf3\x0f\x10\x41\x14", 17},
     {0x16403a0, "\x48\x89\x5c\x24\x08\x55\x56\x57\x41\x54\x41\x55\x41\x56\x41\x57\x48\x8d\xac\x24\x10\xf5\xff\xff\x48\x81\xec\xf0\x0b\x00\x00", 31},
+    {0x9800a0, "\x45\x32\xc9\x45\x33\xd2\x83\xfa\x62\x0f\x87\x12\x06\x00\x00\x48\x63\xc2\x4c\x8d", 20},
+    {0x996d20, "\x40\x53\x55\x56\x41\x55\x48\x83\xec\x78\x4c\x63\xea\x41\x0f\xb6\xe8\x41\x8b\xd5", 20},
+    {0x19544e0, "\x83\xf9\x62\x77\x24\x48\x63\xc1\x48\x8d\x15\x11\xbb\x6a\xfe\x0f\xb6\x84\x02\x14", 20},
 };
 using GetAttributeFn = int(__fastcall*)(void*, unsigned);
 using SetAttributeFn = void(__fastcall*)(void*, unsigned, int);
 using RecalculateFn = void(__fastcall*)(void*, int);
 using OverallFn = int(__fastcall*)(void*);
 using DeriveBodyFn = void(__fastcall*)(void*, float);
+using GetBadgeFn = uint8_t(__fastcall*)(void*, unsigned, int);
+using SetBadgeFn = void(__fastcall*)(void*, unsigned, uint8_t, int);
+using BadgeLimitFn = uint8_t(__fastcall*)(unsigned);
 inline GetAttributeFn GetAttribute = nullptr;
 inline SetAttributeFn SetAttribute = nullptr;
 inline RecalculateFn Recalculate = nullptr;
 inline OverallFn Overall = nullptr;
 inline DeriveBodyFn DeriveBody = nullptr;
+inline GetBadgeFn GetBadge = nullptr;
+inline SetBadgeFn SetBadge = nullptr;
+inline BadgeLimitFn BadgeLimit = nullptr;
 inline void Bind(unsigned char* Base)
 {
     GetAttribute = reinterpret_cast<GetAttributeFn>(Base + ApiSites[0].Rva);
@@ -35,6 +47,9 @@ inline void Bind(unsigned char* Base)
     Recalculate = reinterpret_cast<RecalculateFn>(Base + ApiSites[2].Rva);
     Overall = reinterpret_cast<OverallFn>(Base + ApiSites[3].Rva);
     DeriveBody = reinterpret_cast<DeriveBodyFn>(Base + ApiSites[4].Rva);
+    GetBadge = reinterpret_cast<GetBadgeFn>(Base + ApiSites[6].Rva);
+    SetBadge = reinterpret_cast<SetBadgeFn>(Base + ApiSites[7].Rva);
+    BadgeLimit = reinterpret_cast<BadgeLimitFn>(Base + ApiSites[8].Rva);
 }
 inline bool Read(const void* Address, void* Out, size_t Size)
 {
@@ -77,8 +92,11 @@ struct Random
 struct Snapshot
 {
     uint32_t Rating = 0, Position = 0, Type = 0, Height = 0, DerivedHeight = 0, Weight = 0;
+    // Weight and Shape store raw float bits for exact profile comparison/hashing.
     std::array<uint32_t, 5> Shape{};
     std::array<uint32_t, AttributeCount> Attributes{};
+    std::array<uint32_t, BadgeCount> Badges{};
+    std::array<uint32_t, 2> ShotTendencies{};
     bool operator==(const Snapshot&) const = default;
 };
 struct Generation
@@ -115,6 +133,33 @@ inline bool Reject(std::string* Error, const std::string& Reason)
     if (Error && Error->empty()) *Error = Reason;
     return false;
 }
+inline int ThreePointTendency(int Ability)
+{
+    if (Ability < 60) return std::max(10, 50 - 2 * (60 - Ability));
+    return Ability > 65 ? 50 + Ability - 65 : 50;
+}
+inline bool TuneShotTendencies(void* Data, std::string* Error)
+{
+    const int Ability = GetAttribute(Data, ThreePointAbility);
+    if (Ability < 25 || Ability > 99) return Reject(Error, "three-point-ability-range");
+    const int Value = ThreePointTendency(Ability);
+    for (unsigned Index : ShotTendencyIndices)
+    {
+        SetAttribute(Data, Index, Value);
+        if (GetAttribute(Data, Index) != Value)
+            return Reject(Error, "shot-tendency-write:index=" + std::to_string(Index));
+    }
+    return true;
+}
+inline bool WriteBadge(void* Data, unsigned Index, uint8_t Level, std::string* Error)
+{
+    if (Index >= BadgeCount || BadgeLimit(Index) != 4 || Level > 4)
+        return Reject(Error, "badge-write-range:index=" + std::to_string(Index));
+    // fixupFlag=1: write only this graded badge, without personality fixups.
+    SetBadge(Data, Index, Level, 1);
+    return GetBadge(Data, Index, 0) == Level ||
+        Reject(Error, "badge-write-mismatch:index=" + std::to_string(Index));
+}
 inline bool Capture(void* Data, Snapshot& S, std::string* Error = nullptr)
 {
     unsigned char Bytes[DataBytes]{}, Appearance[0x40]{};
@@ -128,13 +173,16 @@ inline bool Capture(void* Data, Snapshot& S, std::string* Error = nullptr)
     S.Height = Load<uint16_t>(Appearance, 0) & 0x7fff;
     S.DerivedHeight = Load<uint16_t>(Appearance, 2) & 0x7fff;
     S.Weight = Load<uint32_t>(Bytes, 0x58);
+    const float Weight = Load<float>(Bytes, 0x58);
+    if (!std::isfinite(Weight) || Weight < 165.0f || Weight > 325.0f || std::floor(Weight) != Weight)
+        return Reject(Error, "weight-range:actual=" + std::to_string(Weight));
     if (S.Height < 17500 || S.Height > 22000)
         return Reject(Error, "height-range:actual=" + std::to_string(S.Height));
     if (!S.DerivedHeight) return Reject(Error, "derived-height-zero");
     for (size_t I = 0; I < S.Shape.size(); ++I)
     {
         const float Value = Load<float>(Appearance, ShapeOffsets[I]);
-        if (!std::isfinite(Value) || Value < 0.9499f || Value > 1.0501f)
+        if (!std::isfinite(Value) || Value <= 0.0f)
             return Reject(Error, "shape-range:index=" + std::to_string(I) + ":actual=" + std::to_string(Value));
         S.Shape[I] = Load<uint32_t>(Appearance, ShapeOffsets[I]);
     }
@@ -144,6 +192,22 @@ inline bool Capture(void* Data, Snapshot& S, std::string* Error = nullptr)
         if (Value < 25 || Value > 99)
             return Reject(Error, "attribute-range:index=" + std::to_string(I) + ":actual=" + std::to_string(Value));
         S.Attributes[I] = static_cast<uint32_t>(Value);
+    }
+    const int Tendency = ThreePointTendency(static_cast<int>(S.Attributes[ThreePointAbility]));
+    for (size_t I = 0; I < S.ShotTendencies.size(); ++I)
+    {
+        const int Value = GetAttribute(Data, ShotTendencyIndices[I]);
+        if (Value != Tendency)
+            return Reject(Error, "shot-tendency:index=" + std::to_string(ShotTendencyIndices[I]) + ":expected=" +
+                std::to_string(Tendency) + ":actual=" + std::to_string(Value));
+        S.ShotTendencies[I] = static_cast<uint32_t>(Value);
+    }
+    for (unsigned I = 0; I < BadgeCount; ++I)
+    {
+        const unsigned Limit = BadgeLimit(I), Level = GetBadge(Data, I, 0);
+        if ((Limit != 1 && Limit != 4) || Level > Limit)
+            return Reject(Error, "badge-range:index=" + std::to_string(I) + ":actual=" + std::to_string(Level));
+        S.Badges[I] = Level;
     }
     const int Rating = Overall(Data); // 0x140979130 -> 0x140988b40 -> display conversion.
     if (Rating < 80 || Rating > 99) return Reject(Error, "overall-range:actual=" + std::to_string(Rating));
@@ -164,6 +228,11 @@ inline bool Compare(const Snapshot& Actual, const Snapshot& Expected, std::strin
         return Reject(Error, "shape-bits:index=" + std::to_string(I) + ":expected=" + std::to_string(Expected.Shape[I]) + ":actual=" + std::to_string(Actual.Shape[I]));
     for (size_t I = 0; I < Actual.Attributes.size(); ++I) if (Actual.Attributes[I] != Expected.Attributes[I])
         return Reject(Error, "attribute:index=" + std::to_string(I) + ":expected=" + std::to_string(Expected.Attributes[I]) + ":actual=" + std::to_string(Actual.Attributes[I]));
+    for (size_t I = 0; I < Actual.Badges.size(); ++I) if (Actual.Badges[I] != Expected.Badges[I])
+        return Reject(Error, "badge:index=" + std::to_string(I) + ":expected=" + std::to_string(Expected.Badges[I]) + ":actual=" + std::to_string(Actual.Badges[I]));
+    for (size_t I = 0; I < Actual.ShotTendencies.size(); ++I) if (Actual.ShotTendencies[I] != Expected.ShotTendencies[I])
+        return Reject(Error, "shot-tendency:index=" + std::to_string(I) + ":expected=" + std::to_string(Expected.ShotTendencies[I]) +
+            ":actual=" + std::to_string(Actual.ShotTendencies[I]));
     return true;
 }
 inline bool Tune(void* Data, uint32_t Target, uint32_t Seed, std::string* Error)
@@ -174,7 +243,7 @@ inline bool Tune(void* Data, uint32_t Target, uint32_t Seed, std::string* Error)
     unsigned Evaluations = 0;
     const auto Score = [&]() -> int
     {
-        if (++Evaluations > 512) { Reject(Error, "evaluation-limit"); return -1; }
+        if (++Evaluations > 1024) { Reject(Error, "evaluation-limit"); return -1; }
         if (GetTickCount64() > Deadline) { Reject(Error, "deadline"); return -1; }
         // updatePotential=0: no potential write or registered-roster change branch.
         Recalculate(Data, 0);
@@ -186,17 +255,37 @@ inline bool Tune(void* Data, uint32_t Target, uint32_t Seed, std::string* Error)
             SetAttribute(Data, I, std::clamp(Base[I] + Delta, 25, 99));
         return Score();
     };
-    // Preserve the template's relative strengths. Potential (index 0x22),
-    // tendencies (0x39+), badges and animation data are not randomized.
+    // Preserve relative attribute strengths, potential (0x22) and animation data.
+    // Build adjusts only the two three-point tendencies after final tuning.
     int Low = -74, High = 74;
     int Value = Shift(High);
-    if (Value < static_cast<int>(Target) || Value > 99)
-        return Reject(Error, "target-unreachable:target=" + std::to_string(Target) + ":actual=" + std::to_string(Value));
+    if (Value < 25) return Reject(Error, "score-range:actual=" + std::to_string(Value));
+    if (Value < static_cast<int>(Target))
+    {
+        // Only when maximum ordinary attributes are insufficient, lift graded
+        // badges one tier at a time in a deterministic seed-based order.
+        const unsigned Start = Seed % static_cast<unsigned>(BadgeCount);
+        for (unsigned Tier = 0; Tier < 4 && Value < static_cast<int>(Target); ++Tier)
+            for (unsigned N = 0; N < BadgeCount && Value < static_cast<int>(Target); ++N)
+            {
+                const unsigned I = (Start + N) % static_cast<unsigned>(BadgeCount);
+                if (BadgeLimit(I) != 4) continue;
+                const uint8_t Level = GetBadge(Data, I, 0);
+                if (Level >= 4) continue;
+                if (!WriteBadge(Data, I, static_cast<uint8_t>(Level + 1), Error)) return false;
+                Value = Score();
+                if (Value < 25) return Reject(Error, "score-range:actual=" + std::to_string(Value));
+            }
+        if (Value < static_cast<int>(Target))
+            return Reject(Error, "target-unreachable-after-badges:target=" + std::to_string(Target) + ":actual=" + std::to_string(Value));
+    }
+    // Intermediate native scores may exceed 99 after a badge promotion; they
+    // are an upper search bound, never a published/display-only rating.
     while (Low < High)
     {
         const int Mid = Low + (High - Low) / 2;
         Value = Shift(Mid);
-        if (Value < 25 || Value > 99) return Reject(Error, "score-range:actual=" + std::to_string(Value));
+        if (Value < 25) return Reject(Error, "score-range:actual=" + std::to_string(Value));
         if (Value < static_cast<int>(Target)) Low = Mid + 1;
         else High = Mid;
     }
@@ -216,12 +305,13 @@ inline bool Tune(void* Data, uint32_t Target, uint32_t Seed, std::string* Error)
             const int Mid = A + (B - A) / 2;
             SetAttribute(Data, I, Mid);
             Value = Score();
-            if (Value < 25 || Value > 99) return Reject(Error, "score-range:actual=" + std::to_string(Value));
+            if (Value < 25) return Reject(Error, "score-range:actual=" + std::to_string(Value));
             if (Value < static_cast<int>(Target)) A = Mid + 1;
             else B = Mid;
         }
         SetAttribute(Data, I, A);
         Value = Score();
+        if (Value < 25) return Reject(Error, "score-range:actual=" + std::to_string(Value));
         if (Value == static_cast<int>(Target)) return true;
         if (Value < static_cast<int>(Target)) return Reject(Error, "coordinate-below-target:actual=" + std::to_string(Value));
     }
@@ -247,14 +337,38 @@ inline bool Build(Generation& G, const unsigned char* Source)
     auto* Appearance = G.Data + 0x520;
     const auto Height = static_cast<uint16_t>(17500 + R.Below(46) * 100);
     Store(Appearance, 0, static_cast<uint16_t>((Load<uint16_t>(Appearance, 0) & 0x8000) | Height));
-    for (size_t Offset : ShapeOffsets)
-        Store(Appearance, Offset, static_cast<float>(9500 + R.Below(1001)) / 10000.0f);
+    const float Weight = static_cast<float>(165 + R.Below(161));
+    // PLAYERDATA+0x58 is a float (native MOVSS store at 0x14059af22).
+    Store(G.Data, 0x58, Weight);
+    std::array<uint32_t, 5> TemplateShape{};
+    for (size_t I = 0; I < TemplateShape.size(); ++I)
+    {
+        const float Value = Load<float>(Appearance, ShapeOffsets[I]);
+        if (!std::isfinite(Value) || Value <= 0.0f)
+            return Reject(&G.Error, "template-shape-invalid:index=" + std::to_string(I));
+        TemplateShape[I] = Load<uint32_t>(Appearance, ShapeOffsets[I]);
+    }
     // 0x14044d6bc-6c2 passes appearance+0xc as the second (XMM1) argument.
     DeriveBody(Appearance, Load<float>(Appearance, 0xc));
+    std::array<uint32_t, BadgeCount> TemplateBadges{};
+    for (unsigned I = 0; I < BadgeCount; ++I)
+    {
+        const unsigned Limit = BadgeLimit(I), Level = GetBadge(G.Data, I, 0);
+        if ((Limit != 1 && Limit != 4) || Level > Limit)
+            return Reject(&G.Error, "template-badge-range:index=" + std::to_string(I));
+        TemplateBadges[I] = Level;
+        if (Limit == 4 && !WriteBadge(G.Data, I, static_cast<uint8_t>(R.Below(5)), &G.Error)) return false;
+    }
     std::string Detail;
     if (!Tune(G.Data, Target, G.Seed, &Detail)) return Reject(&G.Error, "tune-" + Detail);
+    if (!TuneShotTendencies(G.Data, &Detail)) return Reject(&G.Error, "tune-" + Detail);
     if (!Capture(G.Data, G.Expected, &Detail)) return Reject(&G.Error, "template-" + Detail);
     if (G.Expected.Rating != Target) return Reject(&G.Error, "template-target-mismatch");
+    if (Load<float>(G.Data, 0x58) != Weight) return Reject(&G.Error, "template-weight-mismatch");
+    if (G.Expected.Shape != TemplateShape) return Reject(&G.Error, "template-shape-mismatch");
+    for (unsigned I = 0; I < BadgeCount; ++I)
+        if (BadgeLimit(I) == 1 && G.Expected.Badges[I] != TemplateBadges[I])
+            return Reject(&G.Error, "template-personality-mismatch:index=" + std::to_string(I));
     return Authorized(G) || Reject(&G.Error, "build-authorization-expired");
 }
 // OverallRating is the U8 at ServerObject+0x14d; TK_WORLD::PLAYER embeds it at +0x50.
@@ -318,5 +432,7 @@ inline void Append(std::vector<unsigned char>& Bytes, uint64_t Id, const Snapsho
     U32(S.Rating); U32(S.Position); U32(S.Type); U32(S.Height); U32(S.DerivedHeight); U32(S.Weight);
     for (uint32_t V : S.Shape) U32(V);
     for (uint32_t V : S.Attributes) U32(V);
+    for (uint32_t V : S.Badges) U32(V);
+    for (uint32_t V : S.ShotTendencies) U32(V);
 }
 }

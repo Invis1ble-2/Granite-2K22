@@ -9,37 +9,22 @@ const PlayerObject = require('./PlayerObject');
 const Body22 = require('./PlayerBody2K22');
 const ObjectFrame = require('../Codec/ObjectFrame');
 const Settings = require('../Core/Config');
+const CpuTemplates = require('./CpuTemplates2K22');
 const ProtocolVersion = 3, RequestBytes = 96;
 const Pending = new Map(), Controls = new Map();
 const LeaseMs = 8000, HeartbeatMs = 10000;
 const Nonce = () => (Crypto.randomBytes(8).readBigUInt64LE() || 1n).toString(16);
 function Config() { return Settings.NativePark(); }
 function Installed(R) {
-    return Boolean(R && R.version === ProtocolVersion && R.module === '00010217' && R.installed === true &&
+    return Boolean(R && R.version === ProtocolVersion && R.module === '00010221' && R.installed === true &&
         Number.isInteger(R.pid) && R.pid > 0);
 }
 function RemoteLive(C, P) {
     return Controls.get(C.Id) === P.Control && Date.now() - P.Control.SeenAt <= HeartbeatMs &&
-        P.Control.Report.instance === P.Instance && Installed(P.Control.Report);
+        P.Control.Report.instance === P.Instance && Installed(P.Control.Report) &&
+        require('./NativePark').HasTemplatePool(C, P.Instance);
 }
 function ReceiptFor(P) { return P.Control.Report; }
-// Same uint32 recipe as CpuEnhancement::Random; independent of the game's RNG.
-function ProfileForSeed(Seed) {
-    let State = (Seed ^ 0x50433232) >>> 0;
-    const Next = () => {
-        State = (State + 0x9e3779b9) >>> 0;
-        let X = Math.imul(State ^ (State >>> 16), 0x21f0aaad) >>> 0;
-        X = Math.imul(X ^ (X >>> 15), 0x735a2d97) >>> 0;
-        return (X ^ (X >>> 15)) >>> 0;
-    };
-    const Below = Count => {
-        const Threshold = ((-Count) >>> 0) % Count;
-        let X; do { X = Next(); } while (X < Threshold);
-        return X % Count;
-    };
-    return { Overall: 80 + Below(20), Height: 175 + Below(46),
-        Shape: Array.from({ length: 5 }, () => (9500 + Below(1001)) / 10000) };
-}
 function IsReady(R, P) {
     return Installed(R) && R.pid === P.Pid && R.instance === P.Instance && R.epoch === P.Epoch && R.armed === true &&
         R.match === P.MatchId.toString(16) && !R.error &&
@@ -50,10 +35,13 @@ function IsReady(R, P) {
         new Set(R.profiles.map(Profile => Profile?.id)).size === P.Cpu.length &&
         P.Cpu.every((Id, I) => {
             const Actual = R.profiles.find(Profile => Profile?.id === Id.toString(16));
-            const Expected = ProfileForSeed(P.Seeds[I]);
+            const Expected = CpuTemplates.ProfileForSeed(P.Seeds[I]);
             return Actual?.seed === P.Seeds[I] && Actual.overall === Expected.Overall && Actual.height === Expected.Height &&
+                Actual.weight === Expected.Weight && CpuTemplates.ValidBadges(P.Seeds[I], Actual.badges) &&
+                CpuTemplates.ValidShotTendencies(Actual.threePointAbility, Actual.shotTendencies) &&
                 Array.isArray(Actual.shape) && Actual.shape.length === 5 &&
-                Actual.shape.every((Value, J) => Number.isFinite(Value) && Math.abs(Value - Expected.Shape[J]) < 0.00001);
+                // Exact template shape bits are checked against the source by the module.
+                Actual.shape.every(Value => Number.isFinite(Value) && Value > 0);
         });
 }
 function BuildRequest(Match, Owner, Cpu, TeamSize = (Cpu.length + 1) / 2, Seeds) {
@@ -144,7 +132,8 @@ function Commit(C, P) {
     const Userdata = require('./Userdata');
     const Data = C.Userdata && Userdata.Read(C.Userdata);
     if (!Data || !Data.IsUserdata || Data.DeclaredLength !== Data.Blob.length) throw new Error('human USERDATA is incomplete');
-    const Profiles = Sides.map(Side => Side.map(Id => Id === C.Puid ? Data.Blob : Buffer.alloc(0)));
+    const HumanProfile = Userdata.CourtProfile(C, Data.Blob);
+    const Profiles = Sides.map(Side => Side.map(Id => Id === C.Puid ? HumanProfile : Buffer.alloc(0)));
     const Prepared = CourtData.PrepareGameTeams(P.Activity,P.Found.Raw.Name,Sides[0],Sides[1],
         {Home:Profiles[0],Away:Profiles[1]},'2K22',{NativeSolo:{Owner:C.Puid,MatchId:P.MatchId}});
     if (!C.SendObject(Prepared.Frame)) throw new Error('court roster send failed');
@@ -205,16 +194,26 @@ function TryStart(C, Found) {
     if (!require('./NativePark').WaitForQueue(C, Found)) return false;
     const Control = Controls.get(C.Id);
     if (!Control || Date.now() - Control.SeenAt > HeartbeatMs || !Installed(Control.Report)) {
-        if (!C.NativeSoloNotice) Log.Info('Native solo withheld: authenticated game control with Module 00010217 is required');
+        if (!C.NativeSoloNotice) Log.Info('Native solo withheld: authenticated game control with Module 00010221 is required');
+        C.NativeSoloNotice = true; return false;
+    }
+    if (!require('./NativePark').HasTemplatePool(C, Control.Instance)) {
+        if (!C.NativeSoloNotice) Log.Info('Native solo withheld: authenticated client template pool is unavailable or differs from the server catalog');
         C.NativeSoloNotice = true; return false;
     }
     const Receipt = Control.Report;
     C.NativeSoloNotice = false;
+    let Selected;
+    try { Selected = CpuTemplates.Select(TeamSize * 2 - 1, Opts); }
+    catch (E) {
+        Log.Error(`Native solo ${Found.Raw.Name} withheld: ${E.message}`);
+        return false;
+    }
+    const Seeds = Selected.map(Profile => Profile.Seed);
     CancelWait(C);
     const MatchId = Crypto.randomBytes(8).readBigUInt64LE() || 1n;
     const Base = 0x0222c00000000000n | BigInt('0x'+Crypto.randomBytes(5).toString('hex'));
     const Cpu = Array.from({length:TeamSize * 2 - 1},(_,I) => (Base & 0xfffffffffffffff8n)+BigInt(I));
-    const Seeds = Cpu.map(() => Crypto.randomBytes(4).readUInt32LE() || 1);
     const P = {Pid:Receipt.pid,MatchId,Cpu,Seeds,TeamSize,Spot,Court:Spot.Court,OwnSlot:Own.SlotObjectId,
         Activity:C.ActivityName,ActivityKey:C.ActivityKey,RoomScope:C.RoomScope || null,
         Found,Bodies:new Map(),Phase:'arming',CreatedAt:Date.now(),Timer:null,
@@ -222,7 +221,7 @@ function TryStart(C, Found) {
     Pending.set(C.Id,P);
     try {
         P.Request = BuildRequest(MatchId, C.Puid, Cpu, TeamSize, Seeds);
-        Log.Info(`Native solo ${Found.Raw.Name}: awaiting authenticated game control authorization`);
+        Log.Info(`Native solo ${Found.Raw.Name}: CPU overall ${Opts.CpuOverallMode === 'fixed' ? `fixed ${Opts.CpuFixedOverall}` : 'random 80-99'}; templates: ${Selected.map(Profile => Profile.Name).join(', ')}; awaiting authenticated game control authorization`);
         P.Timer = setInterval(() => Poll(C,P),120);P.Timer.unref?.();
     } catch (E) { Abort(C,E.message); }
     return true;

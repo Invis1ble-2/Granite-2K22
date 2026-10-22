@@ -2,6 +2,8 @@
   "NativePark": {
     "Enabled": true,
     "TwoOnTwo": true,
-    "ThreeOnThree": true
+    "ThreeOnThree": true,
+    "CpuOverallMode": "random",
+    "CpuFixedOverall": 99
   }
 }

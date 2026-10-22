@@ -4,7 +4,7 @@
 
 // Fixed little-endian wire contract shared with Module/NativeParkControl.h.
 // Seats 0..2 are Home, 3..5 are Away; seats 2 and 5 are zero in 2v2.
-const Version = 4, ModuleVersion = 0x00010217, ManifestBytes = 184, ReportBytes = 120;
+const Version = 4, ModuleVersion = 0x00010221, ManifestBytes = 184, ReportBytes = 120;
 const ManifestMagic = 0x3232504d, ReportMagic = 0x3452504d;
 const LeaseMs = 8000, HeartbeatMs = 10000, MaxTemplates = 72, RelayId = 0x0a;
 const Flag = Object.freeze({ Installed: 1, Armed: 2, Started: 4 });
@@ -16,6 +16,7 @@ const ErrorNames = Object.freeze([
     'native CPU roster missing', 'native start validation failed', 'native playing validation failed',
     'native initialization failed', 'native template pool unavailable', 'enhanced CPU ability or body validation failed',
     'native online session descriptor or authorization invalid', 'native online session creation failed',
+    'native defense strategy write or verification failed',
 ]);
 
 function ReadReport(Bytes) {

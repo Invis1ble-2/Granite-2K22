@@ -123,7 +123,7 @@ inline std::string BuildReceipt(const char* Error = nullptr, bool Started = fals
     if (Error && GenerationError.empty()) GenerationError = Error;
     ReceiptStarted |= Started;
     std::ostringstream Text;
-    Text << "{\"version\":3,\"module\":\"00010217\",\"installed\":" <<
+    Text << "{\"version\":3,\"module\":\"00010221\",\"installed\":" <<
         (CpuEnhancement::Ready && (!FrameTimingReady || FrameTimingReady()) ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
          << ",\"match\":\"" << std::hex << Current.Match << "\",\"teamSize\":" << std::dec << Current.TeamSize
          << ",\"cpuCount\":" << Current.CpuCount << ",\"created\":[";
@@ -138,12 +138,26 @@ inline std::string BuildReceipt(const char* Error = nullptr, bool Started = fals
     {
         if (!First) Text << ',';
         const auto& P = Profiles[I];
+        float Weight = 0; memcpy(&Weight, &P.Weight, sizeof(Weight));
         Text << "{\"id\":\"" << std::hex << Current.Cpu[I] << "\",\"seed\":" << std::dec << Current.Seeds[I]
-             << ",\"overall\":" << P.Rating << ",\"height\":" << P.Height / 100 << ",\"shape\":[";
+             << ",\"overall\":" << P.Rating << ",\"height\":" << P.Height / 100
+             << ",\"weight\":" << Weight << ",\"shape\":[";
         for (size_t J = 0; J < P.Shape.size(); ++J)
         {
             if (J) Text << ',';
             float Value = 0; memcpy(&Value, &P.Shape[J], sizeof(Value)); Text << Value;
+        }
+        Text << "],\"badges\":[";
+        for (size_t J = 0; J < P.Badges.size(); ++J)
+        {
+            if (J) Text << ',';
+            Text << P.Badges[J];
+        }
+        Text << "],\"threePointAbility\":" << P.Attributes[CpuEnhancement::ThreePointAbility] << ",\"shotTendencies\":[";
+        for (size_t J = 0; J < P.ShotTendencies.size(); ++J)
+        {
+            if (J) Text << ',';
+            Text << P.ShotTendencies[J];
         }
         Text << "]}"; First = false;
     }
@@ -224,6 +238,133 @@ inline bool AuthorizeProfile(const void* RequestData)
     Request Live{};
     return LoadRequest(Live) && !memcmp(&Live, RequestData, sizeof(Live));
 }
+// FUN_141de3450 resolves per-matchup AI settings, including template fallbacks.
+// Override only its final output in an authenticated generated-CPU park match.
+using DefenseFn = void(__fastcall*)(void*, int, void*);
+inline DefenseFn OriginalDefense = nullptr;
+struct DefenseContext
+{
+    void* Session = nullptr;
+    uint64_t Match = 0, Epoch = 0;
+    uint32_t TeamSize = 0;
+    bool Mixed = false;
+    std::array<uint64_t, 6> Players{};
+};
+inline std::mutex DefenseMutex;
+inline DefenseContext Defense;
+inline void ClearDefense()
+{
+    std::lock_guard<std::mutex> Lock(DefenseMutex); Defense = {};
+}
+inline bool DefenseRoster(const DefenseContext& C)
+{
+    if (!C.Session || !C.Match || !C.Epoch || (C.TeamSize != 2 && C.TeamSize != 3)) return false;
+    auto* Info = static_cast<unsigned char*>(C.Session) + 0xcb0;
+    uint64_t Match = 0; int Home = 0, Away = 0;
+    std::array<uint64_t, 6> Players{};
+    const size_t SideBytes = C.TeamSize * sizeof(uint64_t);
+    return At(Info, MatchOffset, Match) && Match == C.Match &&
+        At(Info, 0x118, Home) && At(Info, 0x11c, Away) &&
+        Home == static_cast<int>(C.TeamSize) && Away == static_cast<int>(C.TeamSize) &&
+        Read(Info + 0x48, Players.data(), SideBytes) &&
+        Read(Info + 0xb0, Players.data() + 3, SideBytes) && Players == C.Players;
+}
+// Caller holds the matching native-park or solo authorization mutex.
+inline bool DefenseAuthorizedLocked(const DefenseContext& C)
+{
+    if (!DefenseRoster(C)) return false;
+    if (C.Mixed)
+    {
+        const auto& M = NativePark::State.Request;
+        return M.Match == C.Match && M.Epoch == C.Epoch && M.TeamSize == C.TeamSize &&
+            std::equal(C.Players.begin(), C.Players.end(), M.Players) && NativePark::LiveLocked(M);
+    }
+    return NetworkManaged && GetTickCount64() < NetworkDeadline && NetworkEpoch == C.Epoch &&
+        NetworkRequest.Match == C.Match && Current.Match == C.Match &&
+        NetworkRequest.TeamSize == C.TeamSize && GenerationError.empty();
+}
+inline bool DefenseAuthorized(const DefenseContext& C)
+{
+    std::lock_guard<std::mutex> Lock(C.Mixed ? NativePark::StateMutex : ReceiptMutex);
+    return DefenseAuthorizedLocked(C);
+}
+inline bool ArmDefense(void* Session, uint64_t Match, uint32_t TeamSize, bool Mixed)
+{
+    DefenseContext C{}; C.Session = Session; C.Match = Match; C.TeamSize = TeamSize; C.Mixed = Mixed;
+    if (!Session || (TeamSize != 2 && TeamSize != 3)) return false;
+    if (Mixed)
+    {
+        NativePark::Manifest M{};
+        if (!NativePark::ForMatch(Match, M)) return false;
+        C.Epoch = M.Epoch;
+    }
+    else
+    {
+        std::lock_guard<std::mutex> Lock(ReceiptMutex); C.Epoch = NetworkEpoch;
+    }
+    auto* Info = static_cast<unsigned char*>(Session) + 0xcb0;
+    const size_t SideBytes = TeamSize * sizeof(uint64_t);
+    if (!Read(Info + 0x48, C.Players.data(), SideBytes) ||
+        !Read(Info + 0xb0, C.Players.data() + 3, SideBytes) ||
+        std::none_of(C.Players.begin(), C.Players.end(), NativePark::IsCpu) || !DefenseAuthorized(C)) return false;
+    std::lock_guard<std::mutex> Lock(DefenseMutex); Defense = C; return true;
+}
+inline void __fastcall BuildDefense(void* Strategy, int Index, void* Template)
+{
+    const bool FromMatch = NativePark::ExeBase && _ReturnAddress() == NativePark::ExeBase + 0x1ddd28d;
+    OriginalDefense(Strategy, Index, Template);
+    const DWORD NativeError = GetLastError();
+    if (FromMatch && Strategy && Index >= 0 && Index < 6)
+    {
+        std::lock_guard<std::mutex> Lock(DefenseMutex);
+        if (Defense.Session)
+        {
+            // Serialize validation and writes with lease/epoch updates and revoke.
+            std::lock_guard<std::mutex> AuthorityLock(Defense.Mixed ? NativePark::StateMutex : ReceiptMutex);
+            if (DefenseAuthorizedLocked(Defense))
+            {
+                // Native marks a non-default setting with 0x20. Leave the
+                // other 10 value/source pairs and all cached/menu settings alone.
+                struct Setting { size_t FlagOffset; uint32_t Value; };
+                constexpr Setting Settings[] = {{0x634, 1}, {0x63c, 1}, {0x664, 2}, {0x66c, 2}};
+                auto* Row = static_cast<unsigned char*>(Strategy) + static_cast<size_t>(Index) * 0x70;
+                std::array<std::array<uint32_t, 2>, 4> Previous{};
+                bool Ok = true; size_t Touched = 0;
+                for (size_t I = 0; I < Previous.size(); ++I)
+                    if (!Read(Row + Settings[I].FlagOffset, Previous[I].data(), sizeof(Previous[I])))
+                    { Ok = false; break; }
+                for (size_t I = 0; Ok && I < Previous.size(); ++I)
+                {
+                    const std::array<uint32_t, 2> Pair = {0x20, Settings[I].Value};
+                    std::array<uint32_t, 2> Actual{}; SIZE_T Written = 0;
+                    Touched = I + 1;
+                    Ok = WriteProcessMemory(GetCurrentProcess(), Row + Settings[I].FlagOffset,
+                        Pair.data(), sizeof(Pair), &Written) && Written == sizeof(Pair) &&
+                        Read(Row + Settings[I].FlagOffset, Actual.data(), sizeof(Actual)) && Actual == Pair;
+                }
+                if (!Ok)
+                {
+                    bool Restored = true;
+                    for (size_t I = 0; I < Touched; ++I)
+                    {
+                        std::array<uint32_t, 2> Actual{}; SIZE_T Written = 0;
+                        const bool RestoredPair = WriteProcessMemory(GetCurrentProcess(), Row + Settings[I].FlagOffset,
+                            Previous[I].data(), sizeof(Previous[I]), &Written) && Written == sizeof(Previous[I]) &&
+                            Read(Row + Settings[I].FlagOffset, Actual.data(), sizeof(Actual)) && Actual == Previous[I];
+                        Restored = RestoredPair && Restored;
+                    }
+                    if (Defense.Mixed) NativePark::State.Error = 12;
+                    else Receipt(Restored ? "native-defense-strategy-write-failed" : "native-defense-strategy-rollback-failed");
+                    Defense = {};
+                    Log(LogLevel::Error, Restored ?
+                        L"PARK22 defense write/readback failed; native settings restored and failure reported" :
+                        L"PARK22 defense rollback verification failed; override disabled and failure reported");
+                }
+            }
+        }
+    }
+    SetLastError(NativeError);
+}
 inline void* __fastcall Generate(void* Session, void* ActorManager, void* Object)
 {
     const DWORD EntryError = GetLastError();
@@ -285,6 +426,7 @@ inline void* __fastcall Generate(void* Session, void* ActorManager, void* Object
 inline void __fastcall Start(void* Session, void* Info)
 {
     const DWORD NativeError = GetLastError();
+    ClearDefense();
     Request R{}; uint64_t Match = 0, Slots[10]{};
     const bool HasMatch = At(Info, MatchOffset, Match);
     NativePark::Manifest Mixed{};
@@ -343,6 +485,7 @@ inline void __fastcall Start(void* Session, void* Info)
 inline uint64_t __fastcall Playing(void* Session)
 {
     const DWORD NativeError = GetLastError();
+    ClearDefense();
     uint64_t Match = 0; Request R{};
     uint32_t SortRoster = 0;
     void* Info = Session ? static_cast<unsigned char*>(Session) + 0xcb0 : nullptr;
@@ -350,7 +493,8 @@ inline uint64_t __fastcall Playing(void* Session)
     if (At(Info, MatchOffset, Match) && NativePark::ForMatch(Match, Mixed))
     {
         bool Ok = false;
-        try { Ok = NativePark::Validate(Session, Info, Mixed, true, Lookup) && At(Info, RosterSortOffset, SortRoster); }
+        try { Ok = NativePark::Validate(Session, Info, Mixed, true, Lookup) && At(Info, RosterSortOffset, SortRoster) &&
+            ArmDefense(Session, Match, Mixed.TeamSize, true); }
         catch (...) { Ok = false; }
         if (!Ok)
         {
@@ -366,6 +510,7 @@ inline uint64_t __fastcall Playing(void* Session)
             Result = OriginalPlaying(Session);
         }
         const DWORD Error = GetLastError();
+        if (!Result) ClearDefense();
         NativePark::Started(Mixed, Result != 0);
         Log(LogLevel::Info, L"PARK22 InitPlayingGame returned " + std::to_wstring(Result));
         SetLastError(Error); return Result;
@@ -393,7 +538,7 @@ inline uint64_t __fastcall Playing(void* Session)
     try
     {
         Ok = LoadRequest(R) && R.Match == Match && Validate(Session, Info, R, true) &&
-            At(Info, RosterSortOffset, SortRoster);
+            At(Info, RosterSortOffset, SortRoster) && ArmDefense(Session, Match, R.TeamSize, false);
         std::lock_guard<std::mutex> Lock(ReceiptMutex);
         if (!Ok) Receipt("native-playing-roster-validation-failed");
     }
@@ -419,12 +564,14 @@ inline uint64_t __fastcall Playing(void* Session)
         Result = OriginalPlaying(Session);
     }
     const DWORD PlayingError = GetLastError();
+    if (!Result) ClearDefense();
     { std::lock_guard<std::mutex> Lock(ReceiptMutex);
       Receipt(Result ? nullptr : "native-playing-init-failed", Result != 0); }
     Log(LogLevel::Info, L"SOLO22 InitPlayingGame returned " + std::to_wstring(Result));
     SetLastError(PlayingError);
     return Result;
 }
+inline constexpr unsigned HookCount = 6;
 struct Site { size_t Rva; const char* Bytes; size_t Size; void* Detour; void** Original; };
 inline const Site Sites[] = {
     {0x166b330, "\x48\x8b\xc4\x55\x53\x56\x41\x55\x41\x56\x48\x8d\x68\x88\x48\x81\xec\x50\x01\x00\x00", 21,
@@ -437,6 +584,8 @@ inline const Site Sites[] = {
         reinterpret_cast<void*>(&HomeCount), reinterpret_cast<void**>(&OriginalHomeCount)},
     {0x10d3e70, "\x8b\x05\x1e\x06\x1b\x05\xc3", 7,
         reinterpret_cast<void*>(&AwayCount), reinterpret_cast<void**>(&OriginalAwayCount)},
+    {0x1de3450, "\x40\x57\x41\x55\x41\x56\x48\x83\xec\x30\x48\x89\x6c\x24\x58\x49\x8b\xf8\x4c\x8b\x41\x10", 22,
+        reinterpret_cast<void*>(&BuildDefense), reinterpret_cast<void**>(&OriginalDefense)},
     {0x167d3c0, "\x48\x89\x5c\x24\x18\x48\x89\x6c\x24\x20\x57\x48\x83\xec\x20", 15, nullptr, nullptr},
     {CpuEnhancement::ApiSites[0].Rva, CpuEnhancement::ApiSites[0].Bytes, CpuEnhancement::ApiSites[0].Size, nullptr, nullptr},
     {CpuEnhancement::ApiSites[1].Rva, CpuEnhancement::ApiSites[1].Bytes, CpuEnhancement::ApiSites[1].Size, nullptr, nullptr},
@@ -444,6 +593,9 @@ inline const Site Sites[] = {
     {CpuEnhancement::ApiSites[3].Rva, CpuEnhancement::ApiSites[3].Bytes, CpuEnhancement::ApiSites[3].Size, nullptr, nullptr},
     {CpuEnhancement::ApiSites[4].Rva, CpuEnhancement::ApiSites[4].Bytes, CpuEnhancement::ApiSites[4].Size, nullptr, nullptr},
     {CpuEnhancement::ApiSites[5].Rva, CpuEnhancement::ApiSites[5].Bytes, CpuEnhancement::ApiSites[5].Size, nullptr, nullptr},
+    {CpuEnhancement::ApiSites[6].Rva, CpuEnhancement::ApiSites[6].Bytes, CpuEnhancement::ApiSites[6].Size, nullptr, nullptr},
+    {CpuEnhancement::ApiSites[7].Rva, CpuEnhancement::ApiSites[7].Bytes, CpuEnhancement::ApiSites[7].Size, nullptr, nullptr},
+    {CpuEnhancement::ApiSites[8].Rva, CpuEnhancement::ApiSites[8].Bytes, CpuEnhancement::ApiSites[8].Size, nullptr, nullptr},
 };
 inline constexpr DWORD ReadinessTimeoutMs = 30'000, ReadinessPollMs = 250;
 inline std::atomic_bool InstallStarted = false;
@@ -497,37 +649,37 @@ inline void InstallHooks(HMODULE Executable)
     auto* Base = reinterpret_cast<unsigned char*>(Executable);
     size_t Made = 0, Enabled = 0;
     MH_STATUS Status = MH_OK;
-    for (unsigned I = 0; I < 5; ++I)
+    for (unsigned I = 0; I < HookCount; ++I)
     {
         Status = MH_CreateHook(Base + Sites[I].Rva, Sites[I].Detour, Sites[I].Original);
         if (Status != MH_OK) break;
         ++Made;
     }
     // Hooks can be called as soon as they are enabled; publish Lookup first.
-    if (Made == 5)
+    if (Made == HookCount)
     {
-        Lookup = reinterpret_cast<LookupFn>(Base + Sites[5].Rva);
-        for (unsigned I = 0; I < 5; ++I)
+        Lookup = reinterpret_cast<LookupFn>(Base + Sites[HookCount].Rva);
+        for (unsigned I = 0; I < HookCount; ++I)
         {
             Status = MH_EnableHook(Base + Sites[I].Rva);
             if (Status != MH_OK) break;
             ++Enabled;
         }
     }
-    if (Made != 5 || Enabled != 5)
+    if (Made != HookCount || Enabled != HookCount)
     {
         for (unsigned I = 0; I < Enabled; ++I) MH_DisableHook(Base + Sites[I].Rva);
         for (unsigned I = 0; I < Made; ++I) MH_RemoveHook(Base + Sites[I].Rva);
         std::wostringstream Detail;
         Detail << L"SOLO22 refused: hook installation failed rva=0x" << std::hex
-               << Sites[Made != 5 ? Made : Enabled].Rva << std::dec << L" status=" << Status;
+               << Sites[Made != HookCount ? Made : Enabled].Rva << std::dec << L" status=" << Status;
         Log(LogLevel::Error, Detail.str()); return;
     }
     try { NativePark::Install(Executable); }
     catch (...) { Log(LogLevel::Error, L"PARK22 enhanced CPU hook installation failed"); }
     { std::lock_guard<std::mutex> Lock(ReceiptMutex); Receipt(); }
     Log(LogLevel::Info, CpuEnhancement::Ready ?
-        L"SOLO22 enabled: protocol v3 enhanced CPU receipts and guarded 2v2/3v3 start" :
+        L"SOLO22 enabled: protocol v3 enhanced CPU receipts, guarded 2v2/3v3 start and manual/no-help AI defense" :
         L"SOLO22 unavailable: enhanced CPU hook is not ready");
 }
 inline DWORD WINAPI WaitAndInstall(void* Context)

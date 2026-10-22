@@ -980,7 +980,7 @@ function MaybeStartMatch(Connection) {
                 const Data = Player.Userdata && Userdata.Read(Player.Userdata);
                 if (!Data || !Data.IsUserdata || Data.DeclaredLength !== Data.Blob.length)
                     throw new Error(`missing complete USERDATA for ${Player.Identifier}`);
-                return Data.Blob;
+                return Userdata.CourtProfile(Player, Data.Blob);
             });
             Prepared = CourtData.PrepareGameTeams(Connection.ActivityName, Found.Raw.Name, Home, Away, {
                 Home: Blobs.slice(0, Home.length),
