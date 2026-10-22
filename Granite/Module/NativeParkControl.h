@@ -54,6 +54,8 @@ struct ControlData
 {
     std::wstring Session;
     INTERNET_PORT Port = 0;
+    unsigned FrameRate = 0, BufferFrames = 0;
+    uint64_t TimingEpoch = 0;
     uint64_t Generation = 1;
 };
 inline std::mutex ControlMutex;
@@ -528,10 +530,45 @@ struct InternetHandle
     InternetHandle(const InternetHandle&) = delete;
     InternetHandle& operator=(const InternetHandle&) = delete;
 };
+inline bool ReadTimingHeaders(HINTERNET Request, unsigned& Hz, unsigned& Buffer, uint64_t& TimingEpoch)
+{
+    const auto Number = [Request](const wchar_t* Name, unsigned& Value)
+    {
+        wchar_t Text[8]{}; DWORD Size = sizeof(Text);
+        if (!WinHttpQueryHeaders(Request, WINHTTP_QUERY_CUSTOM, Name, Text, &Size, WINHTTP_NO_HEADER_INDEX)) return false;
+        Text[_countof(Text) - 1] = L'\0';
+        if (!Text[0]) return false;
+        Value = 0;
+        for (const wchar_t C : std::wstring(Text))
+        {
+            if (C < L'0' || C > L'9' || Value > 1000) return false;
+            Value = Value * 10 + static_cast<unsigned>(C - L'0');
+        }
+        return true;
+    };
+    wchar_t EpochText[24]{}; DWORD EpochSize = sizeof(EpochText);
+    if (!WinHttpQueryHeaders(Request, WINHTTP_QUERY_CUSTOM, L"X-Granite-Park-Timing-Epoch",
+        EpochText, &EpochSize, WINHTTP_NO_HEADER_INDEX)) return false;
+    EpochText[_countof(EpochText) - 1] = L'\0';
+    const std::wstring Epoch(EpochText);
+    if (Epoch.empty() || Epoch.size() > 16) return false;
+    TimingEpoch = 0;
+    for (const wchar_t C : Epoch)
+    {
+        const unsigned Digit = C >= L'0' && C <= L'9' ? static_cast<unsigned>(C - L'0') :
+            C >= L'a' && C <= L'f' ? static_cast<unsigned>(C - L'a' + 10) : 16;
+        if (Digit > 15) return false;
+        TimingEpoch = (TimingEpoch << 4) | Digit;
+    }
+    return TimingEpoch && Number(L"X-Granite-Park-Frame-Rate", Hz) && (Hz == 60 || Hz == 120) &&
+        Number(L"X-Granite-Park-Buffer-Frames", Buffer) && Buffer >= 1 && Buffer <= 49;
+}
 inline void ResetLogin(uint64_t Generation)
 {
     std::lock_guard<std::mutex> Lock(ControlMutex);
-    Control.Session.clear(); Control.Port = 0; Control.Generation = Generation;
+    Control.Session.clear(); Control.Port = 0; Control.FrameRate = Control.BufferFrames = 0;
+    Control.TimingEpoch = 0; Control.Generation = Generation;
+    OnlineFrameRate::ClearLogin();
     Revoke(); SoloParkNative::RevokeNetwork();
 }
 inline void ObserveResponse(HINTERNET Request, uint64_t Generation)
@@ -574,6 +611,10 @@ inline void ObserveResponse(HINTERNET Request, uint64_t Generation)
             if (Changed)
             {
                 Revoke(); SoloParkNative::RevokeNetwork();
+                // Granite discovers credentials only. Timing is negotiated directly with Opal,
+                // so a late response with the previous login's Hz cannot overwrite a new selection.
+                OnlineFrameRate::ClearLogin();
+                Control.FrameRate = Control.BufferFrames = 0; Control.TimingEpoch = 0;
                 Control.Session = Key; Control.Port = static_cast<INTERNET_PORT>(PortValue);
             }
         }
@@ -584,7 +625,8 @@ inline void ObserveResponse(HINTERNET Request, uint64_t Generation)
 inline bool CurrentControl(const ControlData& C)
 {
     // Caller holds ControlMutex. A new login must not accept an old poll's reply.
-    return C.Generation == Control.Generation && C.Port == Control.Port && C.Session == Control.Session;
+    return C.Generation == Control.Generation && C.Port == Control.Port && C.Session == Control.Session &&
+        C.FrameRate == Control.FrameRate && C.BufferFrames == Control.BufferFrames && C.TimingEpoch == Control.TimingEpoch;
 }
 inline bool Poll(HINTERNET Connection, const Report& R, const ControlData& C, bool Solo = false)
 {
@@ -600,12 +642,47 @@ inline bool Poll(HINTERNET Connection, const Report& R, const ControlData& C, bo
         SECURITY_FLAG_IGNORE_CERT_DATE_INVALID | SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
     if (!WinHttpSetOption(Request.Value, WINHTTP_OPTION_REDIRECT_POLICY, &Policy, sizeof(Policy)) ||
         !WinHttpSetOption(Request.Value, WINHTTP_OPTION_SECURITY_FLAGS, &Security, sizeof(Security))) return false;
+    std::wostringstream TimingEpoch; TimingEpoch << std::hex << C.TimingEpoch;
     const std::wstring Headers = std::wstring(L"Content-Type: ") + (Solo ? L"application/json" : L"application/octet-stream") +
-        L"\r\nCache-Control: no-store\r\nX-Granite-Session: " + C.Session + L"\r\n";
+        L"\r\nCache-Control: no-store\r\nX-Granite-Session: " + C.Session +
+        L"\r\nX-Granite-Park-Frame-Rate: " + std::to_wstring(C.FrameRate) +
+        L"\r\nX-Granite-Park-Buffer-Frames: " + std::to_wstring(C.BufferFrames) +
+        L"\r\nX-Granite-Park-Timing-Epoch: " + TimingEpoch.str() + L"\r\n";
     if (!WinHttpSendRequest(Request.Value, Headers.c_str(), static_cast<DWORD>(Headers.size()),
         const_cast<void*>(Body), BodyBytes, BodyBytes, 0) || !WinHttpReceiveResponse(Request.Value, nullptr)) return false;
     DWORD Status = 0, Size = sizeof(Status);
     if (!WinHttpQueryHeaders(Request.Value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &Status, &Size, WINHTTP_NO_HEADER_INDEX)) return false;
+    {
+        std::lock_guard<std::mutex> Lock(ControlMutex);
+        if (!CurrentControl(C)) return true;
+        if (Status == 428)
+        {
+            unsigned Hz = 0, Buffer = 0; uint64_t Epoch = 0;
+            OnlineFrameRate::VerifyServer(0, 0);
+            Revoke(); SoloParkNative::RevokeNetwork();
+            if (!ReadTimingHeaders(Request.Value, Hz, Buffer, Epoch) ||
+                (Epoch == C.TimingEpoch && Hz == C.FrameRate && Buffer == C.BufferFrames) ||
+                !OnlineFrameRate::ConfigureServer(Hz, Buffer)) return false;
+            Control.FrameRate = Hz; Control.BufferFrames = Buffer; Control.TimingEpoch = Epoch;
+            Log(LogLevel::Info, L"FPS22 received Opal timing: " + std::to_wstring(Hz) +
+                L" Hz, buffer " + std::to_wstring(Buffer) + L" frames; awaiting server acknowledgement");
+            return true; // Rebuild the next report against the new configuration before acknowledging it.
+        }
+        if (Status == 200 || Status == 204)
+        {
+            unsigned Hz = 0, Buffer = 0; uint64_t Epoch = 0;
+            if (!ReadTimingHeaders(Request.Value, Hz, Buffer, Epoch) || !C.TimingEpoch || Epoch != C.TimingEpoch ||
+                Hz != C.FrameRate || Buffer != C.BufferFrames ||
+                !OnlineFrameRate::VerifyServer(Hz, Buffer))
+            {
+                OnlineFrameRate::VerifyServer(0, 0);
+                Revoke(); SoloParkNative::RevokeNetwork();
+                Log(LogLevel::Error, L"FPS22 Opal timing acknowledgement mismatch; waiting to renegotiate after reconnect");
+                return false;
+            }
+        }
+        else if (Status == 401 || Status == 409) OnlineFrameRate::VerifyServer(0, 0);
+    }
     if (Status == 204 || Status == 401 || Status == 409)
     {
         std::lock_guard<std::mutex> Lock(ControlMutex);
@@ -650,6 +727,10 @@ inline DWORD WINAPI Worker(void*)
             {
                 const auto R = Snapshot(Instance);
                 const bool ParkOk = Poll(Connection.Value, R, C);
+                {
+                    std::lock_guard<std::mutex> Lock(ControlMutex);
+                    if (!CurrentControl(C)) continue; // A proposal/new login invalidated this cycle's report.
+                }
                 const bool SoloOk = Poll(Connection.Value, R, C, true);
                 Ok = ParkOk && SoloOk;
             }

@@ -56,9 +56,11 @@ function Decode(Body, Counts) {
 }
 
 class DelayService {
-    constructor(Delay) {
+    constructor(Delay, FrameRate = require('../Core/Config').FrameRate()) {
         if (!Number.isInteger(Delay) || Delay < 1 || Delay > 49) throw new Error('lockstep delay must be 1..49 frames');
+        if (FrameRate !== 60 && FrameRate !== 120) throw new Error('park frame rate must be 60 or 120');
         this.Delay = Delay;
+        this.FrameRate = FrameRate;
     }
 
     Process(Payload, Sender, Recipients, SessionClients) {
@@ -92,8 +94,8 @@ class DelayService {
                     throw new Error('invalid 2K22 mode-3 startup');
                 const Counts = Array.from(Body.subarray(9, StartupBytes));
                 const FrameRate = Body.readFloatBE(4);
-                if (FrameRate !== 120)
-                    throw new Error('this relay requires 120 Hz lockstep; all players must use the matching park DLL');
+                if (FrameRate !== this.FrameRate)
+                    throw new Error(`this relay requires ${this.FrameRate} Hz lockstep; relog all players with the matching park DLL`);
                 if (!Counts[Body[0]] || Counts.some((N) => N > 9)) throw new Error('invalid startup controller map');
                 const SendPeriod = Body[1] * Body[2];
                 if (!Body[1] || Body[1] > 8 || !Body[2] || SendPeriod > 255)

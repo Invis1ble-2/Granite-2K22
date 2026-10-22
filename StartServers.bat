@@ -47,7 +47,7 @@ rem Let Granite use Config.json Host unless explicitly overridden by GRANITE_HOS
 
 set "GRANITE_LOCKSTEP_BUFFER_FRAMES=6"
 set "OPAL_LOCKSTEP_DELAY_FRAMES=6"
-set "OPAL_LOCKSTEP_HZ=120"
+rem 60/120 Hz comes only from NativePark.FrameRate in Opal\Config.json.
 if not "%OPAL_LOCKSTEP_DELAY_FRAMES%"=="%GRANITE_LOCKSTEP_BUFFER_FRAMES%" (
   echo [ERROR] GRANITE_LOCKSTEP_BUFFER_FRAMES and OPAL_LOCKSTEP_DELAY_FRAMES must match.
   pause

@@ -4,6 +4,7 @@
 
 const Fs = require('node:fs');
 const Path = require('node:path');
+const Crypto = require('node:crypto');
 const Log = require('../Core/Log');
 const Wire = require('../Protocol/NativeParkWire');
 const Endpoint = '/native-park/v4/poll';
@@ -35,6 +36,8 @@ function SessionPlayer(Options, Key) {
     return Puid <= 0xffffffffffffffffn && !Wire.IsCpu(Puid) ? Puid : null;
 }
 function CreateHandler() {
+    const Timing = require('./VconlineRelay').TimingOptions();
+    const TimingEpoch = (Crypto.randomBytes(8).readBigUInt64LE() || 1n).toString(16);
     let Options = null;
     try { Options = SessionOptions(); }
     catch (_) { Log.Error('Native park control unavailable: existing Granite session configuration could not be read'); }
@@ -52,6 +55,9 @@ function CreateHandler() {
             Res.writeHead(Status, {
                 'Content-Type': 'application/octet-stream', 'Content-Length': Body?.length || 0,
                 'Cache-Control': 'no-store', 'Connection': 'close',
+                'X-Granite-Park-Frame-Rate': String(Timing.LockstepHz),
+                'X-Granite-Park-Buffer-Frames': String(Timing.LockstepDelayFrames),
+                'X-Granite-Park-Timing-Epoch': TimingEpoch,
             });
             Res.end(Body);
         };
@@ -68,6 +74,13 @@ function CreateHandler() {
         try { Puid = SessionPlayer(Options, Req.headers['x-granite-session']); }
         catch (_) { Reply(503); return true; }
         if (!Puid) { Reply(401); return true; }
+        if (Req.headers['x-granite-park-frame-rate'] !== String(Timing.LockstepHz) ||
+            Req.headers['x-granite-park-buffer-frames'] !== String(Timing.LockstepDelayFrames) ||
+            Req.headers['x-granite-park-timing-epoch'] !== TimingEpoch) {
+            // Authenticated proposal only: do not process a report or issue a manifest
+            // until the client echoes this Opal instance's timing on its next poll.
+            Reply(428); return true;
+        }
         const Now = Date.now(), Id = `${Solo ? 'solo' : 'park'}:${Puid}`;
         for (const [Key, P] of Peers) if (!P.Busy && Now - P.LastAt > 60000) Peers.delete(Key);
         Peer = Peers.get(Id);

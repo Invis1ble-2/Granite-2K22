@@ -272,7 +272,7 @@ function TryStart(C, Found) {
     if (S.Members.some(M => Participants.has(M.Connection.Id))) return false;
     const Waited = WaitForQueue(C, Found);
     if (S.Members.some(M => !Wire.HasPool(M.Control))) {
-        Notice(C, 'all queued humans need Module 00010215 v4 readiness through their game login'); return false;
+        Notice(C, 'all queued humans need Module 00010217 v4 readiness through their game login'); return false;
     }
     const First = S.Members[0].Control.Report;
     if (S.Members.some(M => M.Control.Report.PoolCount !== First.PoolCount || !M.Control.Report.Digest.equals(First.Digest))) {

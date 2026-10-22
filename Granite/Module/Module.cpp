@@ -92,9 +92,18 @@ enum class LogLevel
     Error
 };
 
-void Log(LogLevel Level, const std::wstring& Message)
+void Log(LogLevel Level, const std::wstring& Message, bool DetailsEnabled = ModuleConfig::LogModule)
 {
-    if (Message.starts_with(L"SOLO22") && !ModuleConfig::LogSoloPark && Level != LogLevel::Error) return;
+    // Errors always bypass category toggles, for every output destination.
+    if (Level != LogLevel::Error)
+    {
+        if (Message.starts_with(L"SOLO22")) DetailsEnabled = ModuleConfig::LogSoloPark;
+        else if (Message.starts_with(L"PARK22")) DetailsEnabled = ModuleConfig::LogNativePark;
+        else if (Message.starts_with(L"FPS22")) DetailsEnabled = ModuleConfig::LogOnlineFrameRate;
+        else if (Message.starts_with(L"PROGRESSION22")) DetailsEnabled = ModuleConfig::LogCareerProgression;
+        else if (Message.starts_with(L"ANIM22")) DetailsEnabled = ModuleConfig::LogAnimationUnlock;
+        if (!DetailsEnabled) return;
+    }
     const wchar_t Symbol = Level == LogLevel::Info ? L'@' : Level == LogLevel::Verbose ? L'~' : L'!';
     const WORD Colour = Level == LogLevel::Info      ? FOREGROUND_GREEN | FOREGROUND_INTENSITY
                         : Level == LogLevel::Verbose ? FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY
@@ -130,14 +139,19 @@ void Log(LogLevel Level, const std::wstring& Message)
     }
 }
 
+void LogHttp(LogLevel Level, const std::wstring& Message)
+{
+    Log(Level, Message, ModuleConfig::LogHttp);
+}
+
 void LogPrice(LogLevel Level, const std::wstring& Message)
 {
-    if (ModuleConfig::LogAttributePrice) Log(Level, Message);
+    Log(Level, Message, ModuleConfig::LogAttributePrice);
 }
 
 void LogBadges(LogLevel Level, const std::wstring& Message)
 {
-    if (ModuleConfig::LogBadgeBudget) Log(Level, Message);
+    Log(Level, Message, ModuleConfig::LogBadgeBudget);
 }
 
 std::wstring ModuleDirectory()
@@ -201,7 +215,7 @@ bool EnsureConsole()
     if (freopen_s(&Stream, "CONOUT$", "w", stderr) != 0)
         OutputDebugStringW(L"! Granite could not bind stderr to CONOUT$\n");
     if (freopen_s(&Stream, "CONIN$", "r", stdin) != 0)
-        OutputDebugStringW(L"~ Granite could not bind stdin to CONIN$\n");
+        OutputDebugStringW(L"! Granite could not bind stdin to CONIN$\n");
     return true;
 }
 
@@ -243,7 +257,7 @@ HINTERNET WINAPI ConnectHook(HINTERNET Session, LPCWSTR ServerName, INTERNET_POR
     }
     if (Redirect)
     {
-        Log(LogLevel::Info, L"redirect " + std::wstring(ServerName) + L":" + std::to_wstring(Port) + L" -> " +
+        LogHttp(LogLevel::Info, L"redirect " + std::wstring(ServerName) + L":" + std::to_wstring(Port) + L" -> " +
                                 RedirectHost + L":" + std::to_wstring(RedirectPort));
     }
     return Result;
@@ -270,7 +284,7 @@ HINTERNET WINAPI OpenRequestHook(HINTERNET Connection, LPCWSTR Verb, LPCWSTR Obj
     }
     if (IsRedirectedConnection(Connection))
     {
-        Log(LogLevel::Info, L">> HTTP Request: " + std::wstring(Verb ? Verb : L"GET") + L" " + (ObjectName ? ObjectName : L"/"));
+        LogHttp(LogLevel::Info, L">> HTTP Request: " + std::wstring(Verb ? Verb : L"GET") + L" " + (ObjectName ? ObjectName : L"/"));
     }
     SetLastError(RequestError);
     return Request;
@@ -304,11 +318,11 @@ BOOL WINAPI SendRequestHook(HINTERNET Request, LPCWSTR Headers, DWORD HeadersLen
     {
         if (LogDetails && Headers && HeadersLength > 0)
         {
-            Log(LogLevel::Verbose, L"   Headers: " + std::wstring(Headers, HeadersLength == static_cast<DWORD>(-1) ? wcslen(Headers) : HeadersLength));
+            LogHttp(LogLevel::Verbose, L"   Headers: " + std::wstring(Headers, HeadersLength == static_cast<DWORD>(-1) ? wcslen(Headers) : HeadersLength));
         }
         if (LogDetails && Optional && OptionalLength > 0)
         {
-            Log(LogLevel::Info, L"   Body bytes: " + std::to_wstring(OptionalLength));
+            LogHttp(LogLevel::Info, L"   Body bytes: " + std::to_wstring(OptionalLength));
         }
 
         DWORD Security = SECURITY_FLAG_IGNORE_UNKNOWN_CA | SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
@@ -333,7 +347,7 @@ BOOL WINAPI SendRequestHook(HINTERNET Request, LPCWSTR Headers, DWORD HeadersLen
             }
             else
             {
-                Log(LogLevel::Verbose, L"attached verified identity to Session/login");
+                LogHttp(LogLevel::Verbose, L"attached verified identity to Session/login");
             }
         }
     }
@@ -702,10 +716,10 @@ DWORD WINAPI Initialise(void*)
     RedirectPort = ModuleConfig::ServerPort;
     EnsureConsole();
     OpenLogFile();
-    Log(LogLevel::Info, L"Granite module 0x00010215 initialized; configuration: " + Directory + L"\\Granite.ini");
+    Log(LogLevel::Info, L"Granite module 0x00010217 initialized; configuration: " + Directory + L"\\Granite.ini");
     if (!ConfigSaved) Log(LogLevel::Error, L"Granite.ini could not be created or accessed; missing settings use defaults");
     if (ModuleConfig::EnableCrashHandler)
-        CrashHandler::Install([](const wchar_t* Text) { Log(LogLevel::Info, Text); },
+        CrashHandler::Install([](const wchar_t* Text) { Log(LogLevel::Error, Text); },
                               (Directory + L"\\console logs").c_str(), LogPath, SelfModule);
     DWORD TicketLength = GetEnvironmentVariableW(L"CELESTIAL_IDENTITY_TICKET", nullptr, 0);
     if (TicketLength > 1 && TicketLength < 8192)
@@ -788,7 +802,7 @@ DWORD WINAPI Initialise(void*)
 
     if (Connect && Open && Send && Close && Write)
     {
-        Log(LogLevel::Info,
+        LogHttp(LogLevel::Info,
             L"NBA2K WinHTTP redirect active at " + std::wstring(RedirectHost) + L":" + std::to_wstring(RedirectPort));
         return 0;
     }

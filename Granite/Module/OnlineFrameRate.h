@@ -1,4 +1,4 @@
-// NBA 2K22 park 120 Hz trial. Included by Module.cpp; no executable-file patches.
+// NBA 2K22 park 60/120 Hz, selected by authenticated server timing. No executable-file patches.
 #pragma once
 #include <array>
 #include <atomic>
@@ -28,11 +28,44 @@ inline std::atomic_bool Ready = false, InstallStarted = false;
 inline thread_local bool InSupportedSync = false;
 inline std::recursive_mutex TimingMutex;
 // All mutable timing ownership is serialized, including nested setter -> recompute calls.
-inline bool Armed = false, OwnRate = false, OwnTiming = false;
-inline float SavedRate = 60.0f, SavedStep = 0.0f;
+inline bool Armed = false, OwnRate = false, OwnTiming = false, OwnDelay = false;
+inline float SavedRate = 60.0f, SavedStep = 0.0f, SavedDelay = 0.0f, AppliedDelay = 0.0f;
 inline uint64_t SavedPeriod = 0, TargetPeriod = 0;
 struct MatchContext { unsigned char* Session = nullptr; uint64_t Match = 0; int TeamSize = 0; };
 inline MatchContext Candidate{};
+inline unsigned ServerRate = 0, ServerBuffer = 0;
+inline bool ServerVerified = false;
+inline bool IsReady()
+{
+    std::lock_guard<std::recursive_mutex> Lock(TimingMutex);
+    return Ready && ServerVerified && (ServerRate == 60 || ServerRate == 120);
+}
+inline void ClearLogin()
+{
+    std::lock_guard<std::recursive_mutex> Lock(TimingMutex);
+    // Do not alter a running match's owned native timing; End still restores it.
+    ServerRate = ServerBuffer = 0; ServerVerified = false;
+}
+inline bool ConfigureServer(unsigned Hz, unsigned Buffer)
+{
+    std::lock_guard<std::recursive_mutex> Lock(TimingMutex);
+    if ((Hz != 60 && Hz != 120) || Buffer < 1 || Buffer > 49) return false;
+    if (ServerRate == Hz && ServerBuffer == Buffer) return true;
+    // Opal restart interrupts the match. Retry until native teardown has released our fields.
+    if (Armed || OwnRate || OwnTiming || OwnDelay) return false;
+    ServerRate = Hz; ServerBuffer = Buffer; ServerVerified = false;
+    return true;
+}
+inline bool VerifyServer(unsigned Hz, unsigned Buffer)
+{
+    std::lock_guard<std::recursive_mutex> Lock(TimingMutex);
+    const bool Match = (Hz == 60 || Hz == 120) && Hz == ServerRate && Buffer == ServerBuffer;
+    if (Match && !ServerVerified)
+        Log(LogLevel::Info, L"FPS22 server timing confirmed: " + std::to_wstring(Hz) +
+            L" Hz; configured buffer " + std::to_wstring(Buffer) + L" frames; applies to the next park match");
+    ServerVerified = Match;
+    return Match;
+}
 
 template<class T> inline T& At(size_t Rva) { return *reinterpret_cast<T*>(Base + Rva); }
 inline bool Read(const void* Address, void* Out, size_t Size)
@@ -100,6 +133,8 @@ inline void Reset(bool ForgetMatch)
     Armed = false;
     if (OwnRate && At<float>(ParameterRva + 0xc) == Rate) At<float>(ParameterRva + 0xc) = SavedRate;
     OwnRate = false;
+    if (OwnDelay && At<float>(ParameterRva + 0x10) == AppliedDelay) At<float>(ParameterRva + 0x10) = SavedDelay;
+    OwnDelay = false;
     if (HadTiming && Ready && OriginalRecompute) Recompute();
     if (ForgetMatch) Candidate = {};
 }
@@ -117,7 +152,7 @@ inline void __fastcall Request(int Slot, int Multiplier, int Fixed)
     std::lock_guard<std::recursive_mutex> Lock(TimingMutex);
     if (Slot == 2)
     {
-        Armed = Ready && InSupportedSync && Fixed == 1 && Multiplier == 1 &&
+        Armed = Ready && ServerVerified && ServerRate == 120 && InSupportedSync && Fixed == 1 && Multiplier == 1 &&
             _ReturnAddress() == Base + 0x17af365 && At<int>(ParameterRva) == 3 &&
             At<float>(ParameterRva + 0xc) == 60.0f;
     }
@@ -125,32 +160,50 @@ inline void __fastcall Request(int Slot, int Multiplier, int Fixed)
 }
 inline int __fastcall Begin(void* Parameters)
 {
-    bool Changed = false;
+    unsigned ActiveHz = 0;
     {
         std::lock_guard<std::recursive_mutex> Lock(TimingMutex);
-        if (Armed && InSupportedSync && Parameters == Base + ParameterRva)
+        if (InSupportedSync && Parameters == Base + ParameterRva && At<int>(ParameterRva) == 3 &&
+            At<float>(ParameterRva + 0xc) == 60.0f)
         {
-            if (!OwnTiming || !CurrentMatch() || At<float>(ParameterRva + 0xc) != 60.0f)
+            if (!IsReady() || !CurrentMatch() || (ServerRate == 120 && (!Armed || !OwnTiming)))
             {
                 Reset(false);
-                Log(LogLevel::Error, L"FPS22 refused 120 Hz setup: native timing or match scope changed");
+                Log(LogLevel::Error, L"FPS22 refused setup: server timing is unconfirmed or native match timing changed");
                 return 0;
             }
-            SavedRate = At<float>(ParameterRva + 0xc);
-            At<float>(ParameterRva + 0xc) = Rate; OwnRate = Changed = true;
+            ActiveHz = ServerRate;
+            const float Delay = static_cast<float>(ServerBuffer) / static_cast<float>(ActiveHz);
+            if (static_cast<unsigned>(std::ceil(Delay * static_cast<float>(ActiveHz))) != ServerBuffer)
+            {
+                Reset(false);
+                Log(LogLevel::Error, L"FPS22 refused setup: configured buffer does not round-trip at the selected rate");
+                return 0;
+            }
+            // Granite may still have the previous login's seconds after only Opal restarts.
+            // Rewrite just this supported Begin's delay, and restore it on failure/End.
+            SavedDelay = At<float>(ParameterRva + 0x10); AppliedDelay = Delay;
+            At<float>(ParameterRva + 0x10) = Delay; OwnDelay = true;
+            if (ActiveHz == 120)
+            {
+                SavedRate = At<float>(ParameterRva + 0xc);
+                At<float>(ParameterRva + 0xc) = Rate; OwnRate = true;
+            }
         }
     }
     const int Result = OriginalBegin(Parameters);
     const DWORD Error = GetLastError();
-    if (Changed)
+    if (ActiveHz)
     {
         if (!Result) Reset(false);
         else
         {
             const float Delay = At<float>(ParameterRva + 0x10);
-            Log(LogLevel::Info, L"FPS22 active: park 120 Hz, fixed dt 1/120; input lookahead " +
-                std::to_wstring(static_cast<int>(std::ceil(Delay * Rate))) + L" frames (" +
-                std::to_wstring(static_cast<int>(std::lround(Delay * 1000.0f))) + L" ms). Game behavior awaits validation.");
+            Log(LogLevel::Info, L"FPS22 active: park " + std::to_wstring(ActiveHz) +
+                (ActiveHz == 60 ? L" Hz, native timing retained; configured input lookahead " :
+                    L" Hz, fixed dt 1/120; configured input lookahead ") +
+                std::to_wstring(static_cast<int>(std::ceil(Delay * static_cast<float>(ActiveHz)))) + L" frames (" +
+                std::to_wstring(static_cast<int>(std::lround(Delay * 1000.0f))) + L" ms)");
         }
     }
     SetLastError(Error); return Result;
@@ -163,6 +216,12 @@ inline uint64_t __fastcall Synchronize()
         InSupportedSync = Ready && IsPark() != 0 && At<int>(0x3fa424c) == 0 && CurrentMatch();
     }
     const bool Supported = InSupportedSync;
+    if (Supported && !IsReady())
+    {
+        InSupportedSync = Previous;
+        Log(LogLevel::Error, L"FPS22 refused sync: waiting for confirmed Opal timing after reconnect");
+        return 0;
+    }
     const uint64_t Result = OriginalSync();
     const DWORD Error = GetLastError();
     InSupportedSync = Previous;
@@ -182,7 +241,6 @@ inline void __fastcall End(int Upload)
     if (WasActive) Log(LogLevel::Info, L"FPS22 ended: original timing restored; other native limiter slots retained");
     SetLastError(Error);
 }
-inline bool IsReady() { return Ready.load(); }
 struct Site { size_t Rva; const char* Bytes; size_t Size; void* Detour; void** Original; };
 inline const Site Sites[] = {
     {0xb71a70, "\x48\x89\x5c\x24\x08\x48\x89\x74\x24\x10\x57\x48\x81\xec\xa0\x00\x00\x00", 18,
@@ -237,7 +295,7 @@ inline bool InstallHooks()
         return false;
     }
     Ready = true;
-    Log(LogLevel::Info, L"FPS22 ready: scoped park 2v2/3v3 mode-3 120 Hz trial; native 30 Hz modes are not promoted");
+    Log(LogLevel::Info, L"FPS22 hooks ready: scoped park 2v2/3v3; waiting for server 60/120 Hz configuration; native 30 Hz modes are not promoted");
     return true;
 }
 inline DWORD WINAPI WaitAndInstall(void*)

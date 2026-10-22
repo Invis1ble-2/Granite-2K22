@@ -4,7 +4,7 @@
 
 namespace CpuEnhancement
 {
-inline constexpr uint32_t ModuleVersion = 0x00010215;
+inline constexpr uint32_t ModuleVersion = 0x00010217;
 inline constexpr size_t TemplateBytes = 0x560, DataBytes = 0x4f0, AttributeCount = 0x39;
 inline constexpr size_t ShapeOffsets[] = {4, 8, 0xc, 0x10, 0x14};
 inline std::atomic_bool Ready = false;

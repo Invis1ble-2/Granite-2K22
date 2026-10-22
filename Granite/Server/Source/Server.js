@@ -525,6 +525,8 @@ function CreateHandler(Config, Dependencies = {}) {
             (!RequireVerifiedIdentity || Context.verified)) {
             Res.setHeader('X-Granite-Native-Park-Session', String(Context.SessionKey));
             Res.setHeader('X-Granite-Native-Park-Port', String(ParkPort));
+            Res.setHeader('X-Granite-Park-Frame-Rate', String(Login.LockstepFrameRate));
+            Res.setHeader('X-Granite-Park-Buffer-Frames', String(Login.LockstepBufferFrames()));
             Res.setHeader('Cache-Control', 'no-store');
         }
         // The game does not reliably send MyCareer/Online/delete. A new

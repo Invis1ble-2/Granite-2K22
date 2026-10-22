@@ -15,7 +15,7 @@ const LeaseMs = 8000, HeartbeatMs = 10000;
 const Nonce = () => (Crypto.randomBytes(8).readBigUInt64LE() || 1n).toString(16);
 function Config() { return Settings.NativePark(); }
 function Installed(R) {
-    return Boolean(R && R.version === ProtocolVersion && R.module === '00010215' && R.installed === true &&
+    return Boolean(R && R.version === ProtocolVersion && R.module === '00010217' && R.installed === true &&
         Number.isInteger(R.pid) && R.pid > 0);
 }
 function RemoteLive(C, P) {
@@ -205,7 +205,7 @@ function TryStart(C, Found) {
     if (!require('./NativePark').WaitForQueue(C, Found)) return false;
     const Control = Controls.get(C.Id);
     if (!Control || Date.now() - Control.SeenAt > HeartbeatMs || !Installed(Control.Report)) {
-        if (!C.NativeSoloNotice) Log.Info('Native solo withheld: authenticated game control with Module 00010215 is required');
+        if (!C.NativeSoloNotice) Log.Info('Native solo withheld: authenticated game control with Module 00010217 is required');
         C.NativeSoloNotice = true; return false;
     }
     const Receipt = Control.Report;

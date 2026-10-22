@@ -99,8 +99,8 @@ function BuildEndpointBlob(File, Include2K22Catalog = false) {
     return Gzip(ListBuilder.Build().Body);
 }
 
-// Must match the 120 Hz park DLL and relay STARTUP contract.
-const LockstepFrameRate = 120;
+// Use the same Opal configuration snapshot as the relay and native control server.
+const LockstepFrameRate = require('../../../../../Opal/Source/Core/Config').FrameRate();
 
 function LockstepBufferFrames(Env = process.env) {
     const Frames = Number(Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 12);
@@ -213,5 +213,6 @@ module.exports = {
     BuildParameterBlob,
     BuildContentSeasonConfigBlob,
     LockstepBufferFrames,
+    LockstepFrameRate,
     Status: 'REAL_2K19_LOGIN_FIELDS_PLUS_MIXED_EVIDENCE_SERVICE_TABLE',
 };

@@ -23,6 +23,12 @@ namespace ModuleConfig
     inline bool EnableFileLogging = true;
     inline bool EnableConsole = true;
 
+    // Category toggles only affect non-error messages.
+    inline bool LogModule = false;
+    inline bool LogHttp = true;
+    inline bool LogNativePark = false;
+    inline bool LogOnlineFrameRate = false;
+    inline bool LogCareerProgression = false;
     inline bool LogSoloPark = false;
     inline bool LogAttributePrice = false;
     inline bool LogBadgeBudget = false;
@@ -57,6 +63,12 @@ namespace ModuleConfig
             L"[Logging]\r\n"
             L"; Write .log files in console logs\r\nEnableFileLogging = 1\r\n\r\n"
             L"; Allocate a console window and print to it\r\nEnableConsole = 1\r\n\r\n"
+            L"; Category toggles affect non-error messages only; errors remain enabled\r\n"
+            L"; General module initialization and uncategorized messages\r\nLogModule = 0\r\n\r\n"
+            L"; HTTP redirects, requests and request details\r\nLogHttp = 1\r\n\r\n"
+            L"; Native park control and mixed online session messages\r\nLogNativePark = 0\r\n\r\n"
+            L"; Online frame rate negotiation and lifecycle messages\r\nLogOnlineFrameRate = 0\r\n\r\n"
+            L"; Career progression synchronization messages\r\nLogCareerProgression = 0\r\n\r\n"
             L"; Solo park validation and generated roster messages\r\nLogSoloPark = 0\r\n\r\n"
             L"; Attribute price synchronization and watchdog messages\r\nLogAttributePrice = 0\r\n\r\n"
             L"; Badge budget buffering and reporting messages\r\nLogBadgeBudget = 0\r\n\r\n"
@@ -150,6 +162,11 @@ namespace ModuleConfig
         EnableFileLogging   = ReadToggle(L"Logging", L"EnableFileLogging", true, Ini);
         EnableConsole       = ReadToggle(L"Logging", L"EnableConsole", true, Ini);
 
+        LogModule           = ReadToggle(L"Logging", L"LogModule", false, Ini);
+        LogHttp             = ReadToggle(L"Logging", L"LogHttp", true, Ini);
+        LogNativePark       = ReadToggle(L"Logging", L"LogNativePark", false, Ini);
+        LogOnlineFrameRate  = ReadToggle(L"Logging", L"LogOnlineFrameRate", false, Ini);
+        LogCareerProgression = ReadToggle(L"Logging", L"LogCareerProgression", false, Ini);
         LogSoloPark         = ReadToggle(L"Logging", L"LogSoloPark", false, Ini);
         LogAttributePrice   = ReadToggle(L"Logging", L"LogAttributePrice", false, Ini);
         LogBadgeBudget      = ReadToggle(L"Logging", L"LogBadgeBudget", false, Ini);

@@ -123,7 +123,7 @@ inline std::string BuildReceipt(const char* Error = nullptr, bool Started = fals
     if (Error && GenerationError.empty()) GenerationError = Error;
     ReceiptStarted |= Started;
     std::ostringstream Text;
-    Text << "{\"version\":3,\"module\":\"00010215\",\"installed\":" <<
+    Text << "{\"version\":3,\"module\":\"00010217\",\"installed\":" <<
         (CpuEnhancement::Ready && (!FrameTimingReady || FrameTimingReady()) ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
          << ",\"match\":\"" << std::hex << Current.Match << "\",\"teamSize\":" << std::dec << Current.TeamSize
          << ",\"cpuCount\":" << Current.CpuCount << ",\"created\":[";

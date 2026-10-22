@@ -6,6 +6,7 @@
 const Dgram = require('dgram');
 const Log = require('../Core/Log');
 const { performance: Perf } = require('node:perf_hooks');
+const Settings = require('../Core/Config');
 
 const Type = Object.freeze({
     Connect: 0,
@@ -156,7 +157,7 @@ class Router {
         this.Now = Now;
         this.Clients = new Map();
         this.LockstepDelay = LockstepDelayFrames
-            ? new (require('./LockstepDelay').DelayService)(LockstepDelayFrames)
+            ? new (require('./LockstepDelay').DelayService)(LockstepDelayFrames, LockstepHz || Settings.FrameRate())
             : null;
         this.Pacer = this.LockstepDelay && LockstepPacing ? new (require('./LockstepPacer').Pacer)(LockstepHz) : null;
     }
@@ -325,14 +326,12 @@ let ActiveRouterValue = null;
 
 function TimingOptions(Env = process.env) {
     const LockstepDelayFrames = Number(Env.OPAL_LOCKSTEP_DELAY_FRAMES ?? Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 12);
-    const LockstepHz = Number(Env.OPAL_LOCKSTEP_HZ ?? 120);
+    const LockstepHz = Settings.FrameRate();
     if (!Number.isInteger(LockstepDelayFrames) || LockstepDelayFrames < 1 || LockstepDelayFrames > 49)
-        throw new Error('OPAL_LOCKSTEP_DELAY_FRAMES must be 1..49 for the 120 Hz client');
+        throw new Error('OPAL_LOCKSTEP_DELAY_FRAMES must be 1..49');
     if (Env.GRANITE_LOCKSTEP_BUFFER_FRAMES !== undefined &&
         Number(Env.GRANITE_LOCKSTEP_BUFFER_FRAMES) !== LockstepDelayFrames)
         throw new Error('Granite and Opal lockstep buffer frame counts must match');
-    if (!Number.isInteger(LockstepHz) || (LockstepHz !== 0 && LockstepHz !== 120))
-        throw new Error('OPAL_LOCKSTEP_HZ must be 0 (native startup rate) or 120 for the 120 Hz client');
     return { LockstepDelayFrames, LockstepHz };
 }
 
