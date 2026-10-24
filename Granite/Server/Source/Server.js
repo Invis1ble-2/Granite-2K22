@@ -18,6 +18,8 @@ const { LoadAutomaticItems } = require('./Storage/AutomaticOwnership');
 const { LoadCatalogPrices } = require('./Storage/StoreCatalog');
 const { LoadCareerOveralls, SaveCareerOveralls, RecordOverall } = require('./Storage/CareerOverall');
 const { LoadCareerGrind, SaveCareerGrind } = require('./Storage/CareerGrind');
+const { PlayerCards2K22 } = require('./Storage/PlayerCards2K22');
+const { GameStats2K22 } = require('./Storage/GameStats2K22');
 const GatoradeStore = require('./Storage/GatoradeBoosts');
 const WalletStore = require('./Storage/Wallets');
 const Gatorade = require('./Services/MyCareer/Gatorade');
@@ -37,6 +39,7 @@ const CheckDLC = require('./Services/Misc/CheckDLCInventory');
 const StringsFilter = require('./Services/Misc/StringsFilter');
 const MyCareerSave = require('./Services/MyCareer/Save');
 const MyCareerAttributes = require('./Services/MyCareer/Attributes/Get');
+const MyCareerCard = require('./Services/MyCareer/Card');
 const MyCareerAddGrindPoints = require('./Services/MyCareer/GrindPoints/AddGrindPoints');
 const UpdateCareerBadges = require('./Services/MyCareer/Badges/Update');
 const MyCareerAttributePrices = require('./Services/MyCareer/Attributes/Price');
@@ -305,22 +308,26 @@ function LoadCelestialOptions(Config = {}) {
     };
 }
 
-function ResolveContext(Input, Sessions, Key) {
+function ResolveContext(Input, Sessions, Key, TargetQuery = false) {
     const Fields = Input.Parsed?.Fields || [];
-    const BodyUser = GetU64(Fields, UserFields.UserId);
+    // 2K22 card/stat targets use a different field from generic USERID.
+    const BodyUser = TargetQuery
+        ? GetU64(Fields, 0xa0666b6f) ?? GetU64(Fields, UserFields.UserId)
+        : GetU64(Fields, UserFields.UserId);
     const AuthenticatedBodyUser = BodyUser !== null && BodyUser !== 0n ? BodyUser : null;
     const Gamertag = GetString8(Fields, Login.Crcs.GamertagLogin) || GetString8(Fields, Login.Crcs.Gamertag) || '';
     let Current = Key ? Sessions.get(Key) : null;
-    if (Current && (AuthenticatedBodyUser !== null || Gamertag)) {
+    if (!TargetQuery && Current && (AuthenticatedBodyUser !== null || Gamertag)) {
         Current = Sessions.bind(Key, { userId: AuthenticatedBodyUser, gamertag: Gamertag });
     }
     const SessionUser = Current?.userId !== undefined && Current?.userId !== 0n ? Current.userId : null;
-    const EffectiveUserId = Current?.verified
+    // Card/stat USERID identifies the player being inspected, not the caller.
+    const EffectiveUserId = TargetQuery ? SessionUser : Current?.verified
         ? (SessionUser ?? AuthenticatedBodyUser)
         : (AuthenticatedBodyUser ?? SessionUser);
-    const RequestedCareerSaveId = GetU64(Fields, CareerSaveId) ?? 0n;
-    const RequestedSlot = GetU64(Fields, CareerSlot);
-    if (Current && RequestedSlot !== null)
+    const RequestedCareerSaveId = TargetQuery ? 0n : GetU64(Fields, CareerSaveId) ?? 0n;
+    const RequestedSlot = TargetQuery ? null : GetU64(Fields, CareerSlot);
+    if (!TargetQuery && Current && RequestedSlot !== null)
         Current = Sessions.bind(Key, { careerSlot: RequestedSlot.toString() }) || Current;
     const CareerSlotValue =
         RequestedSlot !== null
@@ -445,11 +452,23 @@ function CreateHandler(Config, Dependencies = {}) {
     const CelestialIdentity = Dependencies.CelestialIdentity || CreateCelestialIdentity(LoadCelestialOptions(Config));
     const RequireVerifiedIdentity =
         Config.RequireVerifiedIdentity === true || process.env.CELESTIAL_REQUIRE_VERIFIED_IDENTITY === '1';
+    const ArbitrationDirectory = Config.ArbitrationDirectory || Path.resolve(__dirname, '../Storage/Arbitration');
+    const PlayerCards = Dependencies.PlayerCards || new PlayerCards2K22(
+        Config.PlayerCardsFile || Path.join(Path.dirname(CareerAttributesFile), 'PlayerCards2K22.json'));
+    const GameStats = Dependencies.GameStats || new GameStats2K22(
+        Config.GameStatsFile || Path.resolve(ArbitrationDirectory, '../GameStats/WorldStats2K22.json'));
+    // Recover summaries once; reconcile retained game reports idempotently at startup.
+    if (!Dependencies.PlayerCards) PlayerCards.Recover(Config.CaptureDirectory, Config.SessionDirectory);
+    if (!Dependencies.GameStats) GameStats.Recover(ArbitrationDirectory);
     return async function Handle(Req, Res) {
         const Body = await ReadBody(Req, Config.MaximumBodyBytes);
         const Key = SessionKey(Req.url || '/');
         const Route = RouteKey(Req.url || '/');
         const FullUrl = String(Req.url || '/').toLowerCase();
+        // Presence USERIDs are lookup targets, never the caller's identity.
+        const TargetQuery = Route === 'mycareerv3/getmycareerattributesofdefaultsave' ||
+            Route === 'gamestatsv4/get_world_game_stats' || Route === 'gamestatsv4/get_user_status' ||
+            Route === 'presence/get_user_status';
         Logger.Info(`${Req.method || 'GET'} ${Req.url || '/'}${Key ? ` session=${Key}` : ''}`);
 
         let Parsed = null;
@@ -464,10 +483,12 @@ function CreateHandler(Config, Dependencies = {}) {
 
         const Input = { Body, Parsed, headers: Req.headers || {} };
         const Context = {
-            ...ResolveContext(Input, Sessions, Key),
+            ...ResolveContext(Input, Sessions, Key, TargetQuery),
             Sessions,
             content: Content,
             Careers,
+            PlayerCards,
+            GameStats,
             AttributeProfiles,
             BuildProfiles: AttributeProfiles,
             Wallets,
@@ -512,11 +533,13 @@ function CreateHandler(Config, Dependencies = {}) {
             RequireKnownAttributeProfile: false,
             CareerOveralls,
             CareerGrind,
-            ArbitrationDirectory: Config.ArbitrationDirectory || Path.resolve(__dirname, '../Storage/Arbitration'),
+            ArbitrationDirectory,
             SaveCareerGrind: () => {
                 if (!Dependencies.CareerGrind) SaveCareerGrind(CareerGrindFile, CareerGrind);
             },
         };
+        if (!TargetQuery && (Route === 'attributes/get' || Route === 'mycareer/save'))
+            PlayerCards.Observe(Context, Parsed?.Fields || []);
         // Reuse the current game login for park readiness. No separate player
         // token, endpoint configuration or public certificate setup is needed.
         const ParkPort = Number(process.env.OPAL_PORT || Config.WorldPort || 20054);
@@ -540,6 +563,7 @@ function CreateHandler(Config, Dependencies = {}) {
             const SaveMarker = GetU64(Parsed.Fields, CareerSaveId);
             const IsNewSave = SaveMarker === 0n || SaveMarker === null;
             if (IsNewSave && ExistingKey) {
+                PlayerCards.Forget({ ...Context, careerScopeId: Scope });
                 Careers.delete(ExistingKey);
                 AttributeProfiles.delete(ExistingKey);
                 CareerOveralls.delete(ExistingKey);
@@ -552,7 +576,7 @@ function CreateHandler(Config, Dependencies = {}) {
                 Logger.Info(`cleared stale career state for new save ${ExistingKey}`);
             }
         }
-        const ReportedOverall = RecordOverall(Parsed?.Fields, CareerKey(Context), CareerOveralls);
+        const ReportedOverall = TargetQuery ? null : RecordOverall(Parsed?.Fields, CareerKey(Context), CareerOveralls);
         if (ReportedOverall !== null) {
             Logger.Info(`career ${CareerKey(Context)} reports overall ${ReportedOverall}`);
             if (!Dependencies.CareerOveralls) {
@@ -651,8 +675,8 @@ function CreateHandler(Config, Dependencies = {}) {
             Reply = CareerBadgePrices.Build(Input, Context);
         else if (ArbitrationUpload.Resolve(Route) !== null)
             Reply = ArbitrationUpload.Build(Input, { ...Context, Route });
-        else if (Route === 'attributes/get' || Route === 'mycareerv3/getmycareerattributesofdefaultsave')
-            Reply = MyCareerAttributes.Build(Input, Context);
+        else if (Route === 'mycareerv3/getmycareerattributesofdefaultsave') Reply = MyCareerCard.Build(Input, Context);
+        else if (Route === 'attributes/get') Reply = MyCareerAttributes.Build(Input, Context);
         else if (Route === 'mycareerv3/addgrindpoints') Reply = MyCareerAddGrindPoints.Build(Input, Context);
         else if (Route === 'mycareerv3/unlockbadge') Reply = UpdateCareerBadges.Build(Input, Context);
         else if (
@@ -717,7 +741,7 @@ function CreateHandler(Config, Dependencies = {}) {
         else if (Route === 'nbatoday/packagequery') Reply = PackageQuery.Build(Input, Context);
         else if (PlayNowOnline.Resolve(Route)) Reply = PlayNowOnline.Build(Input, { ...Context, Route });
         else if (Route === 'gamestatsv4/get_world_game_stats' || Route === 'gamestatsv4/get_user_status')
-            Reply = WorldGameStats.Build(Input, Context);
+            Reply = WorldGameStats.Build(Input, { ...Context, Route });
         else if (Route === 'gamestatsv4/checkpoint') Reply = Checkpoint.Build(Input, Context);
         else if (Route.includes('lastngamestats') || Route === 'gamestats/lastgames')
             Reply = LastGames.Build(Input, Context);

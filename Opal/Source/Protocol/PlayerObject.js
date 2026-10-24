@@ -23,6 +23,11 @@ const Body = { Key: 0, Revision: 8, Presence: 16, Puid2K19: 35 };
 
 const BestBodies = new Map();
 
+function ClearCachedBody(Connection) {
+    if (Connection.Puid === null || Connection.Puid === undefined) return false;
+    return BestBodies.delete(Connection.Puid.toString(16).padStart(16, '0'));
+}
+
 function ExtractHandshakeBody(Frame) {
     if (!Frame || Frame.length < 90 || Frame.readUInt32BE(4) !== HandshakePacket) return null;
 
@@ -559,6 +564,7 @@ module.exports = {
     DataBlobKey,
     Body,
     BestBodies,
+    ClearCachedBody,
     ExtractHandshakeBody,
     FindPuidValue,
     StampIdentity,

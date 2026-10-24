@@ -1,59 +1,54 @@
 // Copyright (c) 2026 Celestial
 // Licensed under the PolyForm Noncommercial License 1.0.0. See LICENSE.md.
-
 'use strict';
 
-const { Builder, Crc32 } = require('../../Codec/FieldList');
+const { Builder, Crc32, Types } = require('../../Codec/FieldList');
+const { UserId } = require('../../Storage/PlayerCards2K22');
 
-const Result = Crc32('RESULT');
-const Success = 0x504521a8;
-
-const Base = [
-    2696653694, 1249782776, 1297381777, 243123598, 771937339, 3670841212, 326992993, 2568506765, 4262499014, 3304932682,
-    852580581, 675690122, 1901994346, 1892017623, 2103128565, 1961721310, 719462360, 592729075, 481587303, 352468044,
-    636144645, 1688261981, 4177135580, 2990019981,
-];
-
-const Bit0 = [
-    2378457710, 681967876, 1512111402, 137918368, 3647692313, 3504149042, 2396155956, 2271493151, 2972865440,
-    3095666571, 2170464438, 1449078711, 3580776070, 3292613987, 3572861499, 2531342089, 3230710449, 1310826853,
-    3303839327, 757433746, 1348874757, 1506836014, 132062248, 241782787, 3181245895, 1439823169, 3340420741, 3958524537,
-];
-const Bit3 = [
-    2362116984, 404175577, 751756225, 2606537194, 2464863681, 3437606855, 3310615532, 4206090360, 4077229139,
-    2779266263, 1923726294, 2539227509, 1092538954, 2529316296, 3570856186, 2192014658, 202794646, 2262520236,
-    2826574523, 1484819201, 1362544426, 255436076, 110094599, 952265454, 3498994280, 2234319222, 3473202712,
-];
-const Bit4 = [
-    2567968627, 4024609414, 3622656564, 1823017397, 1696548254, 990914456, 849767347, 222709799, 82838540, 1586201890,
-    2307523107, 1621891370, 3604599006, 1631051159, 589521061, 1968368925, 4226021065, 1898889715, 1069357103,
-    2096062018, 1968771689, 727085167, 585120836, 2936367226, 1195993340, 1926795561, 874997741,
-];
-const Bit5 = [
-    1466282061, 800972032, 836786178, 1432340399, 2514845493, 3591660700, 3751946423, 2175617713, 2283472538,
-    3086689550, 3192744229, 478388259, 3414304546, 3658576899, 3145923626, 3683299518, 2577272204, 3488579636,
-    1914983325, 2073173942, 1720858611, 743450018, 1982808812,
-];
-const Bit6 = [
-    2451270701, 3307597094, 4104029282, 405329963, 2138918675, 2606988056, 2463446835, 3436860725, 3312195870,
-    4203494026, 4080694945, 4129001477, 555357956, 2540071815, 2130452554, 2533207866, 3572044296, 2191040432,
-    2562483131, 2433363856, 2750213011, 3912169922, 2629268170,
-];
-const Bit7 = [
-    724664632, 741027037, 1303669111, 1967920685, 2524155624, 4127700254, 4289853749, 2713623347, 2819151640,
-    2548626572, 2657007783, 521490942, 3356808959, 4194477441, 3352743263, 4221133116, 3113081870, 4026290614,
-    1907532352, 2013589099, 449185414, 1342444759, 1975104305,
-];
-
-const WorldFields = [].concat(Base, Bit0, Bit3, Bit4, Bit5, Bit6, Bit7);
+// 2K22 FUN_14179ED20 -> FUN_14179EFE0 / FUN_14179F2F0 / FUN_1417A02C0.
+// FUN_140679B50 consumes these groups in NBA / Ship / Rec menu order.
+// Values on the wire are U64 TOTALS, not precomputed averages or F32 bits.
+// The parser divides technical totals by games; the card multiplies back
+// when displaying total points/rebounds/etc. Ratios use made/attempted counts.
+const Groups = Object.freeze([
+    { mode: 'NBA', flag: 0x1c80f23e, fields: {
+        games: 0x35a6214e, W: 0x0154d43a, L: 0x8b311dd6,
+        FGM: 0x4f7ff6b7, FGA: 0x46c9ba9c, FTM: 0x2e90b725, FTA: 0x2726fb0e,
+        '3PM': 0x18c6d89a, '3PA': 0x117094b1, STL: 0x437ae628, BLK: 0x42e12295,
+        FLS: 0x5684121f, AST: 0x00f59fa7, REB: 0xf6d98208, PTS: 0xcc345584, TO: 0xd9416d29,
+    } },
+    { mode: 'Ship', flag: 0x60894192, fields: {
+        games: 0x50ce12d2, W: 0xd9be8e62, L: 0x53db478e,
+        FGM: 0xb6a341eb, FGA: 0xbf150dc0, FTM: 0xd74c0079, FTA: 0xdefa4c52,
+        '3PM': 0xe11a6fc6, '3PA': 0xe8ac23ed, STL: 0xbaa65174, BLK: 0xbb3d95c9,
+        FLS: 0xaf58a543, AST: 0xf92928fb, REB: 0x0f053554, PTS: 0x35e8e2d8, TO: 0xbc295eb5,
+    } },
+    { mode: 'Rec', flag: 0x2b57a072, fields: {
+        games: 0xa47750f4, W: 0xb449f974, L: 0x3e2c3098,
+        FGM: 0x645a7d54, FGA: 0x6dec317f, FTM: 0x05b53cc6, FTA: 0x0c0370ed,
+        '3PM': 0x33e35379, '3PA': 0x3a551f52, STL: 0x685f6dcb, BLK: 0x69c4a976,
+        FLS: 0x7da199fc, AST: 0x2bd01444, REB: 0xddfc09eb, PTS: 0xe711de67, TO: 0x48901c93,
+    } },
+]);
 
 function Build(Input, Context = {}) {
-    const Reply = new Builder().AddU32(Result, Success);
-    const Route = String(Context.Route || '').toLowerCase();
-    if (Route === 'gamestatsv4/get_world_game_stats') {
-        for (const Crc of WorldFields) Reply.AddU64(Crc >>> 0, 0n);
+    const Reply = new Builder().AddU32(Crc32('RESULT'), Crc32('SUCCESS'));
+    if (Context.Route !== 'gamestatsv4/get_world_game_stats' || !Context.HasLoginSession) return Reply.Build();
+    const Fields = Input?.Parsed?.Fields || [];
+    const Individual = Fields.find(Field => Field.Crc === 0xfa8be7f1);
+    // Do not answer team-stat requests with individual career statistics.
+    if (Individual && (Individual.Type !== Types.Bool8 || !Individual.Data1)) return Reply.Build();
+    const Id = UserId(Context.RequestUserId ?? Context.userId);
+    if (!Id) return Reply.Build();
+    for (const Group of Groups) {
+        if (!Fields.some(Field => Field.Crc === Group.flag && Field.Type === Types.Bool8 && Field.Data1)) continue;
+        const Totals = Context.GameStats?.Totals(Id, Group.mode) || {};
+        for (const [Name, Crc] of Object.entries(Group.fields)) Reply.AddU64(Crc, Totals[Name] ?? 0n);
     }
+    // No proven reports exist for Rec / Pro-Am in this implementation. Never
+    // copy Ship data into those modes; their missing counters stay zero.
     return Reply.Build();
 }
 
-module.exports = { Build, WorldFields, Status: '2K19_WORLD_STATS_ZEROED_BOOTSTRAP' };
+const WorldFields = Groups.flatMap(Group => Object.values(Group.fields));
+module.exports = { Build, WorldFields, Groups, Status: 'NBA2K22_PERSISTED_INDIVIDUAL_STATS' };

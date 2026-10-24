@@ -43,7 +43,7 @@ namespace
 const wchar_t* RedirectHost = L"127.0.0.1";
 INTERNET_PORT RedirectPort = 21000;
 
-namespace NativePark
+namespace ParkCpu::Multiplayer
 {
 inline void ResetLogin(uint64_t Generation);
 inline void ObserveResponse(HINTERNET Request, uint64_t Generation);
@@ -277,7 +277,7 @@ HINTERNET WINAPI OpenRequestHook(HINTERNET Connection, LPCWSTR Verb, LPCWSTR Obj
         const size_t Query = Object.find(L'?');
         const std::wstring Path = Object.substr(0, Query);
         if (Path.ends_with(L"/session/login") || Path.ends_with(L"/session/destroy"))
-            NativePark::ResetLogin(++ParkLoginGeneration);
+            ParkCpu::Multiplayer::ResetLogin(++ParkLoginGeneration);
         ParkRequests[Request] = ParkLoginGeneration;
         // Classify attribute requests for logging even when budget reporting is disabled.
         if (Path.ends_with(L"/mycareer/attributes/get")) BadgeRequests.insert(Request);
@@ -472,7 +472,7 @@ BOOL WINAPI CloseHandleHook(HINTERNET Handle)
     }
     // Headers are available here even when the game used asynchronous WinHTTP.
     // Observe only requests made through the existing Granite redirect.
-    if (Generation) NativePark::ObserveResponse(Handle, Generation);
+    if (Generation) ParkCpu::Multiplayer::ObserveResponse(Handle, Generation);
     SetLastError(EntryError);
     return OriginalCloseHandle(Handle);
 }
@@ -701,10 +701,8 @@ DWORD WINAPI CareerPriceWatchdog(void*)
     return 0;
 }
 
-#include "CpuEnhancement.h"
 #include "OnlineFrameRate.h"
-#include "NativeParkControl.h"
-#include "SoloParkNative.h"
+#include "ParkCpu.h"
 #include "AnimationUnlock.h"
 #include "CareerProgressionSync.h"
 
@@ -716,7 +714,7 @@ DWORD WINAPI Initialise(void*)
     RedirectPort = ModuleConfig::ServerPort;
     EnsureConsole();
     OpenLogFile();
-    Log(LogLevel::Info, L"Granite module 0x00010221 initialized; configuration: " + Directory + L"\\Granite.ini");
+    Log(LogLevel::Info, L"Granite module 0x00010222 initialized; configuration: " + Directory + L"\\Granite.ini");
     if (!ConfigSaved) Log(LogLevel::Error, L"Granite.ini could not be created or accessed; missing settings use defaults");
     if (ModuleConfig::EnableCrashHandler)
         CrashHandler::Install([](const wchar_t* Text) { Log(LogLevel::Error, Text); },
@@ -752,11 +750,10 @@ DWORD WINAPI Initialise(void*)
     MH_STATUS MhStatus = MH_Initialize();
     if (MhStatus == MH_OK || MhStatus == MH_ERROR_ALREADY_INITIALIZED)
     {
-        SoloParkNative::BeforeStart = OnlineFrameRate::ObserveMatch;
-        SoloParkNative::FrameTimingReady = OnlineFrameRate::IsReady;
-        NativePark::FrameTimingReady = OnlineFrameRate::IsReady;
+        ParkCpu::BeforeStart = OnlineFrameRate::ObserveMatch;
+        ParkCpu::FrameTimingReady = OnlineFrameRate::IsReady;
         OnlineFrameRate::Install(Executable);
-        SoloParkNative::Install(Executable);
+        ParkCpu::Install(Executable);
         AnimationUnlock::Install(Executable);
         CareerProgressionSync::Install(Executable);
         if (ModuleConfig::EnablePriceWatchdog)
@@ -814,7 +811,7 @@ DWORD WINAPI Initialise(void*)
 
 extern "C" __declspec(dllexport) unsigned int GraniteModuleVersion()
 {
-    return CpuEnhancement::ModuleVersion;
+    return ParkCpu::ModuleVersion;
 }
 
 extern "C" __declspec(dllexport) void CALLBACK GraniteCrashWatchW(HWND, HINSTANCE, LPWSTR CommandLine, int)

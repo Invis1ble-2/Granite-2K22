@@ -271,6 +271,14 @@ function Build(Input, Context = {}) {
     } catch (Failure) {
         Logger.Error(`${Service} upload could not be stored: ${Failure.message}`);
     }
+    if (Context.HasLoginSession && Context.GameStats) {
+        try {
+            Context.GameStats.Accept(Record);
+        } catch (Failure) {
+            // The original report is retained above and can be recovered later.
+            Logger.Error(`${Service} stats could not be persisted: ${Failure.message}`);
+        }
+    }
     return new Builder().AddU32(Result, Success).Build();
 }
 

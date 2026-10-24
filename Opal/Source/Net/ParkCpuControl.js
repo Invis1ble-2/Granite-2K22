@@ -6,9 +6,9 @@ const Fs = require('node:fs');
 const Path = require('node:path');
 const Crypto = require('node:crypto');
 const Log = require('../Core/Log');
-const Wire = require('../Protocol/NativeParkWire');
-const Endpoint = '/native-park/v4/poll';
-const SoloEndpoint = '/native-solo/v3/poll', SoloReportLimit = 8192;
+const Wire = require('../Protocol/ParkCpuWire');
+const Endpoint = '/native-park/v5/poll';
+const SoloEndpoint = '/native-solo/v4/poll', SoloReportLimit = 8192;
 
 function SessionOptions() {
     // Same installation/configuration as Granite; there is no park credential file.
@@ -40,8 +40,8 @@ function CreateHandler() {
     const TimingEpoch = (Crypto.randomBytes(8).readBigUInt64LE() || 1n).toString(16);
     let Options = null;
     try { Options = SessionOptions(); }
-    catch (_) { Log.Error('Native park control unavailable: existing Granite session configuration could not be read'); }
-    if (Options) Log.Info('Native park v4 uses existing Granite login sessions; enhanced CPU profiles require no separate configuration');
+    catch (_) { Log.Error('ParkCpu control unavailable: existing Granite session configuration could not be read'); }
+    if (Options) Log.Info('ParkCpu v5 uses existing Granite login sessions; CPU generation and ratings are server-authored');
     const Peers = new Map();
     return function Handle(Req, Res) {
         const Solo = Req.url === SoloEndpoint;
@@ -105,8 +105,9 @@ function CreateHandler() {
             try {
                 if (Length !== Expected) throw new Error('incomplete native report');
                 const Bytes = Buffer.concat(Parts);
-                const Body = Solo ? require('../Protocol/NativeSoloPark').OnReport(Puid, JSON.parse(Bytes.toString('utf8'))) :
-                    require('../Protocol/NativePark').OnReport(Puid, Wire.ReadReport(Bytes));
+                const ParkCpu = require('../Protocol/ParkCpu');
+                const Body = Solo ? ParkCpu.OnSoloReport(Puid, JSON.parse(Bytes.toString('utf8'))) :
+                    ParkCpu.OnReport(Puid, Wire.ReadReport(Bytes));
                 Reply(Body ? 200 : 204, Body);
             } catch (Failure) { Reply(Failure.Status === 409 ? 409 : 400); }
         });

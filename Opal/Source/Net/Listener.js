@@ -96,9 +96,9 @@ function Attach(Client) {
 
 function Start({ port: Port = Number(process.env.OPAL_PORT) || 20054, Certificate = null } = {}) {
     const Server = Https.createServer(LoadCertificate(Certificate));
-    const NativeParkControl = require('./NativeParkControl').CreateHandler();
+    const ParkCpuControl = require('./ParkCpuControl').CreateHandler();
     Server.on('request', (Req, Res) => {
-        if (NativeParkControl(Req, Res)) return;
+        if (ParkCpuControl(Req, Res)) return;
         Res.writeHead(404, { 'Content-Length': 0 }); Res.end();
     });
 

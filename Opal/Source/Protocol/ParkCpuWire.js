@@ -2,9 +2,10 @@
 // Licensed under the PolyForm Noncommercial License 1.0.0. See LICENSE.md.
 'use strict';
 
-// Fixed little-endian wire contract shared with Module/NativeParkControl.h.
+// Fixed little-endian wire contract shared with Granite/Module/ParkCpu.h.
 // Seats 0..2 are Home, 3..5 are Away; seats 2 and 5 are zero in 2v2.
-const Version = 4, ModuleVersion = 0x00010221, ManifestBytes = 184, ReportBytes = 120;
+const CpuTemplates = require('./ParkCpuProfiles');
+const Version = 5, ModuleVersion = 0x00010222, ManifestBytes = 184 + 6 * CpuTemplates.ProfileBytes, ReportBytes = 120;
 const ManifestMagic = 0x3232504d, ReportMagic = 0x3452504d;
 const LeaseMs = 8000, HeartbeatMs = 10000, MaxTemplates = 72, RelayId = 0x0a;
 const Flag = Object.freeze({ Installed: 1, Armed: 2, Started: 4 });
@@ -51,6 +52,7 @@ function BuildManifest(P, Client) {
         B.writeBigUInt64LE(P.Players[I], 88 + I * 8);
         B.writeUInt32LE(P.Seeds[I], 136 + I * 4);
         B.writeUInt32LE(P.Templates[I], 160 + I * 4);
+        if (P.Profiles[I]) CpuTemplates.EncodeProfile(P.Profiles[I]).copy(B, 184 + I * CpuTemplates.ProfileBytes);
     }
     return B;
 }

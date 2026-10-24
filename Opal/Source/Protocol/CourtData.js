@@ -651,11 +651,11 @@ function BuildStageCourtOccupancy(MarkerCourt, Profiles) {
 
 function SendToActivity(Connection, Frame) {
     let Sent = 0;
-    if (Connection.SendObject(Frame)) Sent++;
+    if (!Connection.Closed && Connection.SendObject(Frame)) Sent++;
     try {
         const Roster = require('./Roster');
         for (const Peer of Roster.Peers(Connection)) {
-            if (Peer.ActivityName === Connection.ActivityName && Peer.SendObject(Frame)) Sent++;
+            if (!Peer.Closed && Peer.ActivityName === Connection.ActivityName && Peer.SendObject(Frame)) Sent++;
         }
     } catch (_) {}
     return Sent;
@@ -782,7 +782,7 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
     if (Options.NativeSolo && Options.NativePark) throw new Error('conflicting native park modes');
     if (Options.NativePark) {
         const Mixed = Options.NativePark, Ids = [...Teams.Home, ...Teams.Away];
-        const Cpu = Ids.filter(Id => require('./NativeParkWire').IsCpu(Id));
+        const Cpu = Ids.filter(Id => require('./ParkCpuWire').IsCpu(Id));
         const Humans = Ids.filter(Id => !Cpu.includes(Id));
         if (Activity !== 'neighborhood' || Generation !== '2K22' || ![2, 3].includes(Teams.Home.length) ||
             !Cpu.length || Humans.length < 2 || !Mixed.MatchId || !Array.isArray(Mixed.Humans) ||
@@ -809,7 +809,7 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
         Token: RandomBytes(16),
         address: require('../Activity/Init').PackEndpoint(Relay.Ip, Relay.Port).Address,
         port: Relay.Port,
-        RelayId: Teams.NativePark ? require('./NativeParkWire').RelayId : 0,
+        RelayId: Teams.NativePark ? require('./ParkCpuWire').RelayId : 0,
     };
     Teams.MatchId ??= RandomBytes(8).readBigUInt64LE() || 1n;
     Teams.Activity = Activity;

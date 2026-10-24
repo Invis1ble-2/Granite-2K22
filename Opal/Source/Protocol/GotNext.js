@@ -136,8 +136,7 @@ function Handle(Connection, Bytes) {
         return true;
     }
 
-    require('./NativePark').Stop(Connection, 'queue changed');
-    require('./NativeSoloPark').Stop(Connection);
+    require('./ParkCpu').Stop(Connection, 'queue changed');
     Connection.GotNext = { Court: Grab.CourtKey, Slot: Slot, Since: Date.now() };
 
     Log.Info(`${Connection.Identifier} has next on ${Court}, slot ${Slot} @ ${Log.Clock()}`);
@@ -487,7 +486,7 @@ function NotifyQueueChanges(Connection, SlotIds) {
     for (const Raw of World.Courts) {
         const Groups = Courts.GroupsFor(Raw, World.Room, World.SeqBase).filter(G => G.Kind === 'gotnext');
         if (Groups.some(G => Changed.has(G.SlotObjectId)))
-            require('./NativePark').QueueChanged(Connection, { Raw, Groups });
+            require('./ParkCpu').QueueChanged(Connection, { Raw, Groups });
     }
 }
 
@@ -765,8 +764,7 @@ function SendPostGameWarp(Player, Destination, FacingTarget) {
 
 function FinishPublicGame(Connection, Found, Game, WinnerSide, Reason) {
     if (!Game || Game.Ended || !Found || Found.Groups.length !== 2) return false;
-    if (Game.NativeSolo) return require('./NativeSoloPark').Finish(Connection, Found, Game, Reason);
-    if (Game.NativePark) return require('./NativePark').Finish(Connection, Found, Game, Reason);
+    if (Game.NativeSolo || Game.NativePark) return require('./ParkCpu').Finish(Connection, Found, Game, Reason);
     Game.Ended = true;
     Game.Phase = 'ending';
     Game.WinnerSide = WinnerSide;
@@ -904,8 +902,7 @@ function GrantPlaying(PlayerConn) {
     const Body = Buffer.from(PlayerConn.PlayerBody);
     Body.writeUInt32LE(State.Playing >>> 0, At);
     PlayerConn.PlayerBody = Body;
-    require('./NativeSoloPark').CancelWait(PlayerConn);
-    require('./NativePark').CancelWait(PlayerConn);
+    require('./ParkCpu').CancelWait(PlayerConn);
     if (PlayerConn.GotNext) PlayerConn.GotNext.Playing = true;
     const Frame = PlayerObject.FrameFor(PlayerConn);
     if (!Frame) return false;
@@ -922,8 +919,7 @@ function MaybeStartMatch(Connection) {
     const Found = CourtGroupsForMatch(Connection, Connection.GotNext.Court);
     if (!Found || Found.Groups.length !== 2) return false;
     if (require('./CourtData').GameTeams(Connection.ActivityName, Found.Raw.Name, PlayerBody.GenerationForConnection(Connection))) return false;
-    if (require('./NativePark').TryStart(Connection, Found)) return true;
-    if (require('./NativeSoloPark').TryStart(Connection, Found)) return true;
+    if (require('./ParkCpu').TryStart(Connection, Found)) return true;
 
     const Teams = [];
     for (const G of Found.Groups) {
@@ -1045,8 +1041,7 @@ function IsFrozenParticipant(Game, Puid) {
 }
 
 function Vacate(Connection) {
-    require('./NativePark').Stop(Connection, 'participant vacated court');
-    require('./NativeSoloPark').Stop(Connection);
+    require('./ParkCpu').Stop(Connection, 'participant vacated court');
     if (Connection.Puid === null) return [];
 
     if (require('./CourtData').IsBitstreamWorld(Connection.ActivityName) && Connection.GotNext) {
@@ -1092,8 +1087,7 @@ function Vacate(Connection) {
 }
 
 function Release(Connection) {
-    require('./NativePark').Stop(Connection, 'participant released queue');
-    require('./NativeSoloPark').Stop(Connection);
+    require('./ParkCpu').Stop(Connection, 'participant released queue');
     if (!Connection.PlayerBody) {
         Vacate(Connection);
         return false;

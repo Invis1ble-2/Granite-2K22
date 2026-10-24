@@ -544,7 +544,7 @@ NativeReadiness WaitForNativeCode(HANDLE Process, DWORD ProcessId, const std::ws
 {
     // NBA2K22.exe starts in .bind with encrypted .text. Do not load Module.dll
     // or create a remote thread until the six supported native sites are restored.
-    // Keep these signatures consistent with SoloParkNative's supported build.
+    // Keep these signatures consistent with ParkCpu's supported build.
     struct Signature { std::uintptr_t Rva; const char* Bytes; SIZE_T Size; };
     constexpr Signature Signatures[] = {
         {0x166b330, "\x48\x8b\xc4\x55\x53\x56\x41\x55\x41\x56\x48\x8d\x68\x88\x48\x81\xec\x50\x01\x00\x00", 21},

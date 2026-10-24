@@ -102,6 +102,7 @@ function Build(Input, Context = {}) {
             if (typeof Context.SaveCareers === 'function') Context.SaveCareers();
         }
     }
+    Context.PlayerCards?.Remember(Context, Fields);
     // Resolve the build/slot first so a fresh save receives its own persisted budget.
     GrindPoints.StateFor(Context);
     const Reply = new Builder();

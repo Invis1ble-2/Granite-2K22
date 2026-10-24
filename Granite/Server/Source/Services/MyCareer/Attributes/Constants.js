@@ -192,7 +192,7 @@ function AttributesFor(Context = {}) {
             : [],
     );
     const Result = AttributeIds.map((Id, Index) => ById.get(Id) || Normalize({}, Index, Profile));
-    if (Key && Context.Careers instanceof Map) Context.Careers.set(Key, Result);
+    if (!Context.ReadOnly && Key && Context.Careers instanceof Map) Context.Careers.set(Key, Result);
     return Result;
 }
 

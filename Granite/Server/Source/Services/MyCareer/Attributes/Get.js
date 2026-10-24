@@ -6,6 +6,7 @@
 const { Builder } = require('../../../Codec/FieldList');
 const { Crc32 } = require('../../../Core/Crc32');
 const Logger = require('../../../Core/Logger');
+const { InventoryFor } = require('../../../Storage/AutomaticOwnership');
 const { Name, Level, CurrentCap, Cap, AttributesFor, CareerKey } = require('./Constants');
 const GrindPoints = require('../GrindPoints/State');
 const Badges = require('../Badges/State');
@@ -17,6 +18,7 @@ const JumpshotCreator = 0xf1a265a3;
 const JumpshotCreatorMinOvr = 75;
 const ShirtOff = 0x6e884a7f;
 const ShirtOffMinOvr = 91;
+const MascotUnlock = 0x8806fd39;
 const CareerStartOvr = 60;
 const ObservedCapOvr = 98;
 
@@ -77,6 +79,17 @@ function Build(Input, Context = {}) {
     if (ReportedOverall !== null && ReportedOverall >= ShirtOffMinOvr) {
         Reply.AddU32(FeatureUnlock, ShirtOff);
         Logger.Verbose(`career reported ${ReportedOverall} OVR: SHIRT_OFF supplied`);
+    }
+
+    const Agent = Input?.headers?.['user-agent'];
+    if (typeof Agent === 'string' && /^VISUAL_CONCEPTS_WIN64\/22(?:\.|$)/i.test(Agent)) {
+        const MascotIds = new Set((Context.StoreCatalog2K22?.groupItems?.Mascots || [])
+            .map(Item => Number(Item.item_id) >>> 0));
+        if (MascotIds.size && InventoryFor(Context).some(Item => MascotIds.has(Number(Item.item) >>> 0))) {
+            // 2K22 treats FeatureUnlock as a complete list. Omitting index 22
+            // clears ParkMascotId/MascotSignature in FUN_141225BE0 on reload.
+            Reply.AddU32(FeatureUnlock, MascotUnlock);
+        }
     }
 
     const Grind = GrindPoints.StateFor(Context);

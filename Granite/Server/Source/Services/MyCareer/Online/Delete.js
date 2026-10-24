@@ -12,6 +12,7 @@ const Status = 'MYCAREER_ONLINE_REMOTE_DELETE_REQUEST';
 function Build(Input, Context = {}) {
     const Key = CareerKey(Context);
     if (Key) {
+        Context.PlayerCards?.Forget(Context);
         if (Context.Careers instanceof Map) {
             Context.Careers.delete(Key);
             if (typeof Context.SaveCareers === 'function') Context.SaveCareers();

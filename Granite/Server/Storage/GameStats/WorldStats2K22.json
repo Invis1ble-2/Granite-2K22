@@ -1,0 +1,2150 @@
+{
+  "version": 1,
+  "recovered": true,
+  "games": {
+    "NBA:3169741939776459000": {
+      "mode": "NBA",
+      "session": "3169741939776459000",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 4,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 9,
+              "REB": 3,
+              "AST": 2,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 2,
+              "FGA": 6,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 5,
+              "FTA": 8
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:5405639280072825252": {
+      "mode": "NBA",
+      "session": "5405639280072825252",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 516,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 12,
+              "REB": 2,
+              "AST": 4,
+              "STL": 2,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 1,
+              "FGM": 4,
+              "FGA": 13,
+              "3PM": 1,
+              "3PA": 3,
+              "FTM": 3,
+              "FTA": 4
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:3827595308227138092": {
+      "mode": "NBA",
+      "session": "3827595308227138092",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 417,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 5,
+              "REB": 2,
+              "AST": 3,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 1,
+              "FGM": 1,
+              "FGA": 9,
+              "3PM": 0,
+              "3PA": 3,
+              "FTM": 3,
+              "FTA": 6
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:6978680623462444374": {
+      "mode": "NBA",
+      "session": "6978680623462444374",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 403,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 9,
+              "REB": 2,
+              "AST": 2,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 4,
+              "FGA": 10,
+              "3PM": 1,
+              "3PA": 3,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:13490666535576975730": {
+      "mode": "NBA",
+      "session": "13490666535576975730",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 463,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 5,
+              "REB": 1,
+              "AST": 3,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 2,
+              "FGM": 2,
+              "FGA": 7,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 1,
+              "FTA": 4
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:3382292800828993941": {
+      "mode": "NBA",
+      "session": "3382292800828993941",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 449,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 15,
+              "REB": 2,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 2,
+              "FGM": 6,
+              "FGA": 15,
+              "3PM": 3,
+              "3PA": 8,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:15508896807075324972": {
+      "mode": "NBA",
+      "session": "15508896807075324972",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 219,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 4,
+              "REB": 5,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 2,
+              "FGA": 6,
+              "3PM": 0,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:8551584977772237893": {
+      "mode": "NBA",
+      "session": "8551584977772237893",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 293,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 6,
+              "REB": 3,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 1,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 3,
+              "FGA": 9,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 1
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:4571681244323100338": {
+      "mode": "NBA",
+      "session": "4571681244323100338",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 392,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 9,
+              "REB": 1,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 2,
+              "FGA": 5,
+              "3PM": 1,
+              "3PA": 2,
+              "FTM": 4,
+              "FTA": 4
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:15178005189158173151": {
+      "mode": "NBA",
+      "session": "15178005189158173151",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 289,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 6,
+              "REB": 3,
+              "AST": 2,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 3,
+              "FGA": 8,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:12746296605555644248": {
+      "mode": "NBA",
+      "session": "12746296605555644248",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 1408,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 46,
+              "REB": 4,
+              "AST": 5,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 19,
+              "FGA": 34,
+              "3PM": 2,
+              "3PA": 6,
+              "FTM": 6,
+              "FTA": 6
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:2950209496021780815": {
+      "mode": "NBA",
+      "session": "2950209496021780815",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 376,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 17,
+              "REB": 0,
+              "AST": 3,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 0,
+              "FGM": 8,
+              "FGA": 13,
+              "3PM": 1,
+              "3PA": 3,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:10441057358183020252": {
+      "mode": "NBA",
+      "session": "10441057358183020252",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 938,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 29,
+              "REB": 4,
+              "AST": 2,
+              "STL": 0,
+              "BLK": 1,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 13,
+              "FGA": 21,
+              "3PM": 0,
+              "3PA": 5,
+              "FTM": 3,
+              "FTA": 4
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:7156974563479255676": {
+      "mode": "Ship",
+      "session": "7156974563479255676",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 319,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 2,
+              "REB": 1,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 1,
+              "FGA": 5,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 319,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 2,
+              "REB": 1,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 1,
+              "FGA": 5,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 319,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 6,
+              "REB": 3,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 3,
+              "FGA": 7,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 319,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 6,
+              "REB": 3,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 3,
+              "FGA": 7,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:10849831518442694212": {
+      "mode": "Ship",
+      "session": "10849831518442694212",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 1,
+              "TIME_PLAYED": 96,
+              "D": 0,
+              "W": 0,
+              "L": 0,
+              "PTS": 0,
+              "REB": 1,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 2,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 0,
+              "FGA": 1,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 96,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 0,
+              "REB": 0,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 0,
+              "FGA": 2,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:6466384452372997323": {
+      "mode": "NBA",
+      "session": "6466384452372997323",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 436,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 9,
+              "REB": 1,
+              "AST": 5,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 0,
+              "FGM": 4,
+              "FGA": 7,
+              "3PM": 1,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:6609019231567855360": {
+      "mode": "NBA",
+      "session": "6609019231567855360",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 151,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 6,
+              "REB": 3,
+              "AST": 5,
+              "STL": 0,
+              "BLK": 1,
+              "TO": 3,
+              "FLS": 0,
+              "FGM": 2,
+              "FGA": 9,
+              "3PM": 1,
+              "3PA": 3,
+              "FTM": 1,
+              "FTA": 2
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "NBA:17639416718995173810": {
+      "mode": "NBA",
+      "session": "17639416718995173810",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 944,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 26,
+              "REB": 3,
+              "AST": 1,
+              "STL": 2,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 10,
+              "FGA": 17,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 6,
+              "FTA": 6
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:2764112493141636358": {
+      "mode": "Ship",
+      "session": "2764112493141636358",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 350,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 4,
+              "REB": 1,
+              "AST": 1,
+              "STL": 1,
+              "BLK": 1,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 2,
+              "FGA": 5,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 350,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 4,
+              "REB": 1,
+              "AST": 1,
+              "STL": 1,
+              "BLK": 1,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 2,
+              "FGA": 5,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 350,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 8,
+              "REB": 2,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 3,
+              "FLS": 0,
+              "FGM": 4,
+              "FGA": 6,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 350,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 8,
+              "REB": 2,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 3,
+              "FLS": 0,
+              "FGM": 4,
+              "FGA": 6,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:10567657534346887913": {
+      "mode": "Ship",
+      "session": "10567657534346887913",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 449,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 0,
+              "REB": 2,
+              "AST": 4,
+              "STL": 0,
+              "BLK": 2,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 0,
+              "FGA": 8,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 449,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 0,
+              "REB": 2,
+              "AST": 4,
+              "STL": 0,
+              "BLK": 2,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 0,
+              "FGA": 8,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 449,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 14,
+              "REB": 6,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 2,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 7,
+              "FGA": 17,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 449,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 14,
+              "REB": 6,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 2,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 7,
+              "FGA": 17,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:5894115225858670665": {
+      "mode": "Ship",
+      "session": "5894115225858670665",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 394,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 18,
+              "REB": 3,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 9,
+              "FGA": 14,
+              "3PM": 0,
+              "3PA": 3,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 394,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 18,
+              "REB": 3,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 9,
+              "FGA": 14,
+              "3PM": 0,
+              "3PA": 3,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 394,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 4,
+              "REB": 7,
+              "AST": 8,
+              "STL": 1,
+              "BLK": 4,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 2,
+              "FGA": 7,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 394,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 4,
+              "REB": 7,
+              "AST": 8,
+              "STL": 1,
+              "BLK": 4,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 2,
+              "FGA": 7,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:16967894423386677258": {
+      "mode": "Ship",
+      "session": "16967894423386677258",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 561,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 14,
+              "REB": 5,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 0,
+              "FGM": 7,
+              "FGA": 13,
+              "3PM": 0,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 561,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 14,
+              "REB": 5,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 0,
+              "FGM": 7,
+              "FGA": 13,
+              "3PM": 0,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 561,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 4,
+              "REB": 7,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 8,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 2,
+              "FGA": 10,
+              "3PM": 0,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 561,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 4,
+              "REB": 7,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 8,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 2,
+              "FGA": 10,
+              "3PM": 0,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:13259768890004997661": {
+      "mode": "Ship",
+      "session": "13259768890004997661",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 394,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 5,
+              "REB": 0,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 2,
+              "FGA": 5,
+              "3PM": 1,
+              "3PA": 3,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 394,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 5,
+              "REB": 0,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 2,
+              "FGA": 5,
+              "3PM": 1,
+              "3PA": 3,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 394,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 10,
+              "REB": 1,
+              "AST": 1,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 5,
+              "FGA": 11,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 394,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 10,
+              "REB": 1,
+              "AST": 1,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 5,
+              "FGA": 11,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:13680824568540686670": {
+      "mode": "Ship",
+      "session": "13680824568540686670",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 2,
+              "TIME_PLAYED": 228,
+              "D": 1,
+              "W": 0,
+              "L": 0,
+              "PTS": 10,
+              "REB": 0,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 4,
+              "FGA": 7,
+              "3PM": 2,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 2,
+              "TIME_PLAYED": 228,
+              "D": 1,
+              "W": 0,
+              "L": 0,
+              "PTS": 6,
+              "REB": 0,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 1,
+              "FGM": 3,
+              "FGA": 7,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:6140657639237830765": {
+      "mode": "Ship",
+      "session": "6140657639237830765",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 481,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 10,
+              "REB": 2,
+              "AST": 2,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 2,
+              "FGM": 5,
+              "FGA": 13,
+              "3PM": 0,
+              "3PA": 3,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 481,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 10,
+              "REB": 2,
+              "AST": 2,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 2,
+              "FGM": 5,
+              "FGA": 13,
+              "3PM": 0,
+              "3PA": 3,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 481,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 16,
+              "REB": 4,
+              "AST": 3,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 8,
+              "FGA": 16,
+              "3PM": 0,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 481,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 16,
+              "REB": 4,
+              "AST": 3,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 8,
+              "FGA": 16,
+              "3PM": 0,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:4006588472633326166": {
+      "mode": "Ship",
+      "session": "4006588472633326166",
+      "players": {
+        "76561199028832498": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 2,
+              "TIME_PLAYED": 0,
+              "D": 1,
+              "W": 0,
+              "L": 0,
+              "PTS": 0,
+              "REB": 0,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 0,
+              "FGA": 0,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 2,
+              "TIME_PLAYED": 0,
+              "D": 1,
+              "W": 0,
+              "L": 0,
+              "PTS": 0,
+              "REB": 0,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 0,
+              "FGA": 0,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199081747937": {
+          "reports": {
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 2,
+              "TIME_PLAYED": 0,
+              "D": 1,
+              "W": 0,
+              "L": 0,
+              "PTS": 0,
+              "REB": 0,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 0,
+              "FGA": 0,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 2,
+              "TIME_PLAYED": 0,
+              "D": 1,
+              "W": 0,
+              "L": 0,
+              "PTS": 0,
+              "REB": 0,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 0,
+              "FGA": 0,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:18063739549920908672": {
+      "mode": "Ship",
+      "session": "18063739549920908672",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 540,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 10,
+              "REB": 3,
+              "AST": 4,
+              "STL": 2,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 4,
+              "FGA": 15,
+              "3PM": 2,
+              "3PA": 8,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 540,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 10,
+              "REB": 3,
+              "AST": 4,
+              "STL": 2,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 4,
+              "FGA": 15,
+              "3PM": 2,
+              "3PA": 8,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 540,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 19,
+              "REB": 4,
+              "AST": 0,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 1,
+              "FGM": 9,
+              "FGA": 20,
+              "3PM": 1,
+              "3PA": 7,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 540,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 19,
+              "REB": 4,
+              "AST": 0,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 1,
+              "FGM": 9,
+              "FGA": 20,
+              "3PM": 1,
+              "3PA": 7,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:4533069291219945431": {
+      "mode": "Ship",
+      "session": "4533069291219945431",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 509,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 10,
+              "REB": 4,
+              "AST": 3,
+              "STL": 1,
+              "BLK": 1,
+              "TO": 3,
+              "FLS": 1,
+              "FGM": 4,
+              "FGA": 15,
+              "3PM": 2,
+              "3PA": 7,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 509,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 10,
+              "REB": 4,
+              "AST": 3,
+              "STL": 1,
+              "BLK": 1,
+              "TO": 3,
+              "FLS": 1,
+              "FGM": 4,
+              "FGA": 15,
+              "3PM": 2,
+              "3PA": 7,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 509,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 18,
+              "REB": 2,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 1,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 9,
+              "FGA": 20,
+              "3PM": 0,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 509,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 18,
+              "REB": 2,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 1,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 9,
+              "FGA": 20,
+              "3PM": 0,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:2882613778997837592": {
+      "mode": "Ship",
+      "session": "2882613778997837592",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 381,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 17,
+              "REB": 0,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 8,
+              "FGA": 11,
+              "3PM": 1,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 381,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 17,
+              "REB": 0,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 8,
+              "FGA": 11,
+              "3PM": 1,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 381,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 16,
+              "REB": 1,
+              "AST": 3,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 7,
+              "FGA": 11,
+              "3PM": 2,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 381,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 16,
+              "REB": 1,
+              "AST": 3,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 7,
+              "FGA": 11,
+              "3PM": 2,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:8049491642450239726": {
+      "mode": "Ship",
+      "session": "8049491642450239726",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 393,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 10,
+              "REB": 3,
+              "AST": 5,
+              "STL": 1,
+              "BLK": 1,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 5,
+              "FGA": 12,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 393,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 10,
+              "REB": 3,
+              "AST": 5,
+              "STL": 1,
+              "BLK": 1,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 5,
+              "FGA": 12,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 393,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 13,
+              "REB": 2,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 2,
+              "TO": 2,
+              "FLS": 0,
+              "FGM": 6,
+              "FGA": 16,
+              "3PM": 1,
+              "3PA": 5,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 393,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 13,
+              "REB": 2,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 2,
+              "TO": 2,
+              "FLS": 0,
+              "FGM": 6,
+              "FGA": 16,
+              "3PM": 1,
+              "3PA": 5,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:4470426669239222850": {
+      "mode": "Ship",
+      "session": "4470426669239222850",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 491,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 7,
+              "REB": 0,
+              "AST": 5,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 1,
+              "FGM": 3,
+              "FGA": 9,
+              "3PM": 1,
+              "3PA": 5,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 491,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 7,
+              "REB": 0,
+              "AST": 5,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 1,
+              "FGM": 3,
+              "FGA": 9,
+              "3PM": 1,
+              "3PA": 5,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 491,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 10,
+              "REB": 7,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 5,
+              "FGA": 13,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 491,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 10,
+              "REB": 7,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 5,
+              "FGA": 13,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:3018275666688163535": {
+      "mode": "Ship",
+      "session": "3018275666688163535",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 285,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 7,
+              "REB": 1,
+              "AST": 5,
+              "STL": 3,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 3,
+              "FGA": 8,
+              "3PM": 1,
+              "3PA": 5,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 285,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 7,
+              "REB": 1,
+              "AST": 5,
+              "STL": 3,
+              "BLK": 0,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 3,
+              "FGA": 8,
+              "3PM": 1,
+              "3PA": 5,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 285,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 8,
+              "REB": 3,
+              "AST": 1,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 1,
+              "FGM": 4,
+              "FGA": 7,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 285,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 8,
+              "REB": 3,
+              "AST": 1,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 1,
+              "FGM": 4,
+              "FGA": 7,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:12878090935080917245": {
+      "mode": "Ship",
+      "session": "12878090935080917245",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 383,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 2,
+              "REB": 1,
+              "AST": 4,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 1,
+              "FGM": 1,
+              "FGA": 2,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 383,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 2,
+              "REB": 1,
+              "AST": 4,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 2,
+              "FLS": 1,
+              "FGM": 1,
+              "FGA": 2,
+              "3PM": 0,
+              "3PA": 1,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 383,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 12,
+              "REB": 3,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 6,
+              "FGA": 9,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 383,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 12,
+              "REB": 3,
+              "AST": 0,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 6,
+              "FGA": 9,
+              "3PM": 0,
+              "3PA": 0,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    },
+    "Ship:5163761933693651699": {
+      "mode": "Ship",
+      "session": "5163761933693651699",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 541,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 5,
+              "REB": 0,
+              "AST": 3,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 2,
+              "FGA": 8,
+              "3PM": 1,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 541,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 5,
+              "REB": 0,
+              "AST": 3,
+              "STL": 1,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 1,
+              "FGM": 2,
+              "FGA": 8,
+              "3PM": 1,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        },
+        "76561199028832498": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 541,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 8,
+              "REB": 6,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 2,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 4,
+              "FGA": 10,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            },
+            "76561199028832498": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 541,
+              "D": 0,
+              "W": 0,
+              "L": 1,
+              "PTS": 8,
+              "REB": 6,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 2,
+              "TO": 1,
+              "FLS": 0,
+              "FGM": 4,
+              "FGA": 10,
+              "3PM": 0,
+              "3PA": 2,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false
+        }
+      }
+    }
+  }
+}

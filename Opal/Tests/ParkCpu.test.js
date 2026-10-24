@@ -1,6 +1,6 @@
 'use strict';
 const Test=require('node:test'),A=require('node:assert/strict'),Fs=require('node:fs'),Path=require('node:path'),Z=require('node:zlib');
-const N=require('../Source/Protocol/NativeSoloPark'),G=require('../Source/Protocol/GotNext'),C=require('../Source/Protocol/CourtData');
+const N=require('../Source/Protocol/ParkCpu'),G=require('../Source/Protocol/GotNext'),C=require('../Source/Protocol/CourtData');
 const B=require('../Source/Protocol/PlayerBody2K22'),P=require('../Source/Protocol/PlayerObject'),R=require('../Source/Protocol/Roster');
 const Slots=require('../Source/Protocol/Slots'),Tables=require('../Source/Activity/CourtTables'),Courts=require('../Source/Protocol/Courts');
 const FL=require('../Source/Codec/FieldList'),F=require('../Source/Codec/Frame'),U=require('../Source/Protocol/Userdata');
@@ -15,7 +15,7 @@ function ReceiptProfile(Seed, Id) {
 }
 function Setup(Run, Queue = 0) {
     const Saved=Fs.readFileSync(Config),Settings=JSON.parse(Saved);
-    Settings.NativePark={Enabled:true,TwoOnTwo:true,ThreeOnThree:true};Fs.writeFileSync(Config,JSON.stringify(Settings));
+    Settings.ParkCpu={Enabled:true,TwoOnTwo:true,ThreeOnThree:true};Fs.writeFileSync(Config,JSON.stringify(Settings));
     const Entry=C.ParkEntries('2K22').find(E=>E.TeamSize===2),World=Tables.For('neighborhood',{ProtocolGeneration:'2K22'});
     const Raw=World.Courts.find(E=>E.Name===Entry.name),Groups=Courts.GroupsFor(Raw,World.Room,World.SeqBase).filter(G=>G.Kind==='gotnext');
     const Events=[],Id=9400,Puid=0x0110000100009000n,Body=P.StampIdentity(H.Body,H.PlayerId,Puid).Body;
@@ -27,7 +27,7 @@ function Setup(Run, Queue = 0) {
     function Receipt(Value={}) {
         const Pending=N.Pending.get(X.Id),Created=Value.created || [];
         const Profiles=Value.profiles || (Pending ? Created.map(Id=>{const I=Pending.Cpu.findIndex(Cpu=>Cpu.toString(16)===Id);return ReceiptProfile(Pending.Seeds[I],Id);}) : []);
-        return N.OnReport(Puid,{version:3,module:'00010213',installed:true,pid:process.pid,match:'0',
+        return N.OnSoloReport(Puid,{version:3,module:'00010213',installed:true,pid:process.pid,match:'0',
             teamSize:Pending?.TeamSize || 2,cpuCount:Pending?.Cpu.length || 3,created:Created,profiles:Profiles,error:null,
             instance:'1',epoch:Pending?.Epoch || '0',armed:true,started:false,...Value});
     }

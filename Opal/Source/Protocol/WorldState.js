@@ -34,8 +34,7 @@ function Echo(Connection, Bytes) {
     if (!Connection.PlayerBody) return false;
 
     const { From, Key } = Build(Bytes);
-    if (!Mine(Connection, Key)) return require('./NativePark').HandleUpdate(Connection, Bytes) ||
-        require('./NativeSoloPark').HandleUpdate(Connection, Bytes);
+    if (!Mine(Connection, Key)) return require('./ParkCpu').HandleUpdate(Connection, Bytes);
 
     // Native pending requests require both received-ACK and a newer object.
     // Echoing PLAYER alone leaves updates beyond the legacy 1..16 ACK range

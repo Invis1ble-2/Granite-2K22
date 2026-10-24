@@ -11,8 +11,8 @@ function Read() {
     }
     catch (_) { return {}; }
 }
-function NativePark() {
-    const Config = Read().NativePark;
+function ParkCpu() {
+    const Config = Read().ParkCpu;
     return Config && typeof Config === 'object' && !Array.isArray(Config) && Config.Enabled === true ? Config : null;
 }
 
@@ -29,11 +29,11 @@ function FrameRate() {
     }
     if (!Config || typeof Config !== 'object' || Array.isArray(Config))
         throw new Error('Opal/Config.json must be an object');
-    const Value = Config.NativePark?.FrameRate ?? 120;
+    const Value = Config.ParkCpu?.FrameRate ?? 120;
     if (Value !== 60 && Value !== 120)
-        throw new Error('Opal/Config.json NativePark.FrameRate must be 60 or 120');
+        throw new Error('Opal/Config.json ParkCpu.FrameRate must be 60 or 120');
     FrameRateValue = Value;
     return Value;
 }
 
-module.exports = { Read, NativePark, FrameRate };
+module.exports = { Read, ParkCpu, FrameRate };
