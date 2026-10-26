@@ -14,12 +14,13 @@ const Bit = Object.freeze({
     GotnextCount:82, Gotnext0x48Records:[83,84,85], Gotnext0x90Records:[86,87,88],
     WinnersLocation:[89,90,91], LosersLocation:[92,93,94],
     GameRelayToken:12, GameRelayAddress:13, GameRelayPort:14, GameRelayId:15,
+    GameParameter:19,
     GamePreparedValid:81,
     GamblingIndex:126,
 });
 // The fields emitted by the initial queue bootstrap. Unsupported variable
 // userdata remains outside this decoder; never infer its boundaries.
-const Widths = new Map([[0,4],[1,1],[4,64],[8,4],[9,4],[11,1],[12,16],[13,4],[14,2],[15,2],[17,8],[20,4],[22,1],[24,1],[28,1],[55,1],[81,1],[82,1],
+const Widths = new Map([[0,4],[1,1],[4,64],[8,4],[9,4],[11,1],[12,16],[13,4],[14,2],[15,2],[17,8],[19,4],[20,4],[22,1],[24,1],[28,1],[55,1],[81,1],[82,1],
     ...[30,31,32,33,34,56,57,58,59,60].map(I=>[I,8]),
     ...[83,84,85].map(I=>[I,72]), ...[86,87,88].map(I=>[I,144]),
     ...[89,90,92,93].map(I=>[I,16]),[91,4],[94,4],[126,1]]);

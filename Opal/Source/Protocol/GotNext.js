@@ -4,6 +4,13 @@
 'use strict';
 
 const Log = require('../Core/Log');
+// TEMPORARY: gym workout JOIN probes. OPAL_PROBE=0 silences them; remove once the
+// gym JOIN path is settled.
+const ProbeOn = process.env.OPAL_PROBE !== '0';
+function Probe(Text) {
+    if (ProbeOn) Log.Info(`[probe] ${Text}`);
+}
+
 const { Hex } = require('../Core/Crc32');
 const { Crc } = require('../Core/Names');
 const FieldList = require('../Codec/FieldList');
@@ -144,7 +151,12 @@ function Handle(Connection, Bytes) {
         `  granted by putting GOT_NEXT (${Hex(State.GotNext)}) into the player object the ` +
             `client reads its own state out of; correlated REQUEST_ACK follows the warp`,
     );
-    Deliver(Connection, Bytes);
+    try {
+        Deliver(Connection, Bytes);
+    } catch (Failure) {
+        Probe(`Deliver threw for ${Connection.Identifier}: ${Failure && Failure.stack ? Failure.stack : Failure}`);
+        throw Failure;
+    }
     return true;
 }
 
@@ -285,6 +297,11 @@ function QueueFacingUnits(Group, Spot) {
 }
 
 function Deliver(Connection, RequestBuffer = null) {
+    Probe(
+        `Deliver ${Connection.Identifier} court=${Connection.GotNext && Connection.GotNext.Court} ` +
+            `slot=${Connection.GotNext && Connection.GotNext.Slot} activity=${Connection.ActivityName} ` +
+            `request=${RequestBuffer !== null}`,
+    );
     if (!Connection.PlayerBody) {
         Log.Error(
             `${Connection.Identifier} has next but no player body has arrived yet, so the ` +
@@ -296,6 +313,7 @@ function Deliver(Connection, RequestBuffer = null) {
     const Native22 = PlayerBody.GenerationForConnection(Connection) === '2K22';
     // Allocate first: a taken nearest mat may assign a different free seat.
     if (Native22 && !Seat(Connection)) {
+        Probe(`Seat failed for ${Connection.Identifier}: ack only, no grant`);
         Connection.GotNext = null;
         if (RequestBuffer) require('./Requests').AckCorrelated(Connection, RequestBuffer);
         return false;
@@ -304,6 +322,10 @@ function Deliver(Connection, RequestBuffer = null) {
         ? QueueFor(Connection, Connection.GotNext?.Court, Connection.GotNext?.Slot)
         : GroupFor(Connection, Connection.GotNext && Connection.GotNext.Court);
     const CourtId = Group ? Courts.IdentityOf(Group) : null;
+    const GymSpot = Native22 && Connection.ActivityName === 'neighborhood'
+        ? require('./GymSpots2K22').GroupFor(Connection.GotNext.Court)
+        : null;
+    Probe(`Group=${Group ? Group.CourtName : 'none'} courtId=${CourtId === null ? 'null' : Hex(CourtId)}`);
 
     const Spot = SpotFor(
         Connection,
@@ -313,7 +335,12 @@ function Deliver(Connection, RequestBuffer = null) {
     const WriteLocation = process.env.OPAL_GOTNEXT_LOCATION === '0' ? null : Spot;
     const Facing = WriteLocation ? QueueFacingUnits(Group, WriteLocation) : null;
     if (WriteLocation) Connection.GotNext.Location = WriteLocation;
+    Probe(`Spot=${Spot ? Spot.join(',') : 'none'} write=${WriteLocation ? WriteLocation.join(',') : 'no'}`);
     const Patch = Grant(Connection.PlayerBody, State.GotNext, CourtId, WriteLocation, Facing);
+    Probe(
+        `Grant patched=${Patch.Patched} at=${Patch.At} courtAt=${Patch.CourtAt} ` +
+            `locAt=${Patch.LocAt} locReason=${Patch.LocReason}`,
+    );
     if (!Patch.Patched) {
         Log.Error(
             `${Connection.Identifier} has next but their player body carries no ` +
@@ -324,15 +351,20 @@ function Deliver(Connection, RequestBuffer = null) {
 
     Connection.PlayerBody = Patch.Frame;
     const Frame = PlayerObject.FrameFor(Connection);
+    Probe(`Frame=${Frame ? `${Frame.length}B` : 'null'}`);
     if (!Frame) return false;
     let Granted = 0;
-    if (Connection.SendObject(Frame)) Granted++;
+    const GrantedSelf = Connection.SendObject(Frame);
+    if (GrantedSelf) Granted++;
     try {
         for (const Peer of Roster.Peers(Connection)) {
             if (Peer.SendObject(Frame)) Granted++;
         }
     } catch (_) {}
-    if (!Granted) return false;
+    if (!Granted) {
+        Probe(`Granted 0 recipients for ${Connection.Identifier}`);
+        return false;
+    }
 
     Log.Verbose(
         `  ${Connection.Identifier} sent their own player object with GOT_NEXT at ` +
@@ -376,12 +408,17 @@ function Deliver(Connection, RequestBuffer = null) {
     if (Connection.GotNext && !BitstreamGrab) {
         Courts.Republish(Connection, Connection.GotNext.Court);
     }
-    Warp(Connection);
+    const Warped = Warp(Connection);
+    Probe(`Warped ${Connection.Identifier}, ack=${RequestBuffer !== null}`);
 
+    let Acknowledged = false;
     if (RequestBuffer) {
         try {
-            require('./Requests').AckCorrelated(Connection, RequestBuffer);
-        } catch (_) {}
+            Acknowledged = require('./Requests').AckCorrelated(Connection, RequestBuffer);
+            Probe(`Ack=${Acknowledged}`);
+        } catch (Failure) {
+            Probe(`Ack threw: ${Failure && Failure.message ? Failure.message : Failure}`);
+        }
         try {
             const GrantedSpot = Connection.GotNext;
             const Timer = setTimeout(() => {
@@ -397,6 +434,24 @@ function Deliver(Connection, RequestBuffer = null) {
             if (Timer.unref) Timer.unref();
         } catch (_) {}
     }
+    if (GymSpot) {
+        if (!GrantedSelf || Patch.CourtAt < 0 || Patch.LocAt < 0 || !Warped || !Acknowledged) {
+            Log.Error(`${Connection.Identifier}: gym start withheld; player, destination, warp and Ack must succeed`);
+            return false;
+        }
+        // Entering description state 3 arms native workout selection. Gym seats
+        // do not create the park GAME/teams used by MaybeStartMatch.
+        const GrantedWorkout = GrantPlaying(Connection);
+        if (GrantedWorkout) {
+            Log.Info(
+                `${Connection.Identifier} granted gym PLAYING for ${GymSpot.CourtName}, ` +
+                    `machine ${Hex(CourtId)} @ ${Log.Clock()}`,
+            );
+        } else {
+            Log.Error(`${Connection.Identifier}: gym PLAYING could not be delivered`);
+        }
+        return GrantedWorkout;
+    }
 
     try {
         MaybeStartMatch(Connection);
@@ -408,6 +463,10 @@ function Deliver(Connection, RequestBuffer = null) {
 
 function GroupFor(Connection, Court) {
     if (Court === null || Court === undefined) return null;
+    // Gym workout regions are single-seat spots with no ship court table entry;
+    // GymSpots2K22 supplies the same group shape so JOIN can be seated.
+    const GymSpot = require('./GymSpots2K22').GroupFor(Court);
+    if (GymSpot) return GymSpot;
     const World = CourtTables.For(Connection.ActivityName, Connection);
     if (!World) return null;
 
@@ -494,6 +553,11 @@ function Seat(Connection) {
     if (!Connection.GotNext || Connection.Puid === null) return false;
 
     const Group = QueueFor(Connection, Connection.GotNext.Court, Connection.GotNext.Slot);
+    Probe(
+        `Seat ${Connection.Identifier} group=` +
+            (Group ? `${Group.CourtName}/${Hex(Number(Group.SlotObjectId & 0xffffffffn))}` : 'none') +
+            ` anchors=${Group ? Group.Anchors.length : 0}`,
+    );
     if (!Group) return false;
     AdvanceLine(Connection, Group);
 
@@ -502,6 +566,11 @@ function Seat(Connection) {
         Connection.Puid,
         Group.Anchors.length,
         Group.QueueFunction === 1 ? -1 : MatIndexFor(Connection, Group),
+    );
+    Probe(
+        `Seat ${Connection.Identifier} occupy=` +
+            (SeatData ? `${SeatData.Index}/${Group.Anchors.length}` : 'null') +
+            ` freed=${SeatData ? SeatData.Freed.length : 0}`,
     );
     if (!SeatData) {
         Log.Error(
@@ -519,6 +588,7 @@ function Seat(Connection) {
     Connection.GotNext.Location = Group.Anchors[SeatData.Index];
     if (SeatData.Freed.length) {
         const World = CourtTables.For(Connection.ActivityName, Connection);
+        Probe(`Freed=${SeatData.Freed.length} worldCourts=${World ? World.Courts.length : 'none'}`);
         for (const Raw of World.Courts) {
             for (const FreedGroup of Courts.GroupsFor(Raw, World.Room, World.SeqBase)) {
                 if (FreedGroup.QueueFunction !== 1 || !SeatData.Freed.includes(FreedGroup.SlotObjectId)) continue;
@@ -531,6 +601,9 @@ function Seat(Connection) {
 
     if (require('./CourtData').IsBitstreamWorld(Connection.ActivityName)) {
         require('./CourtData').BroadcastCourtGroup(Connection, Group);
+        // Gym groups have no ship court table entry, so the rebroadcast above is a
+        // no-op for them and the device would stay "free" while we hold its spot.
+        Probe(`GymSpot published=${require('./GymEquipment2K22').PublishSpot(Connection, Group.SlotObjectId)}`);
     }
 
     Log.Verbose(
@@ -855,6 +928,21 @@ function HandleGameEnd(Connection, Bytes) {
     if (!Ended || !require('./CourtData').IsBitstreamWorld(Connection.ActivityName)) return false;
 
     require('./Requests').AckCorrelated(Connection, Bytes);
+    const GymSpot = Connection.ActivityName === 'neighborhood' &&
+        PlayerBody.GenerationForConnection(Connection) === '2K22' && Connection.GotNext?.Playing
+        ? require('./GymSpots2K22').GroupFor(Connection.GotNext.Court)
+        : null;
+    if (GymSpot) {
+        // Gym workouts have no public GAME/teams record. Ack alone leaves the
+        // authoritative PLAYER in PLAYING, which Reapply would keep restoring.
+        if (Release(Connection)) {
+            Log.Info(`${Connection.Identifier} ended gym workout ${GymSpot.CourtName}; WALKING restored @ ${Log.Clock()}`);
+        } else {
+            Log.Error(`${Connection.Identifier}: gym end cleanup could not publish WALKING`);
+        }
+        return true;
+    }
+
     let Found = Ended.Court === null ? null : CourtGroupsForMatch(Connection, Ended.Court);
     if (!Found && Connection.GotNext) Found = CourtGroupsForMatch(Connection, Connection.GotNext.Court);
     if (!Found) {
@@ -1054,6 +1142,7 @@ function Vacate(Connection) {
     }
 
     const Freed = Slots.Release(Connection.Puid);
+    for (const SlotId of Freed) require('./GymEquipment2K22').PublishSpot(Connection, SlotId);
     Connection.GotNext = null;
     NotifyQueueChanges(Connection, Freed);
     if (Freed.length) {
@@ -1113,6 +1202,7 @@ function Release(Connection) {
             require('./CourtData').ClearGameTeams(Connection.ActivityName, Held.Raw.Name, PlayerBody.GenerationForConnection(Connection));
     }
     const Freed = Slots.Release(Connection.Puid);
+    for (const SlotId of Freed) require('./GymEquipment2K22').PublishSpot(Connection, SlotId);
     const World = CourtTables.For(Connection.ActivityName, Connection);
     if (World && Freed.length) {
         for (const Raw of World.Courts) {
@@ -1148,10 +1238,25 @@ function Reapply(Connection) {
     if (!Connection.GotNext || !Connection.PlayerBody) return false;
 
     if (Connection.GotNext.Playing) {
-        if (FindState(Connection.PlayerBody, State.Playing) >= 0) return false;
-        let At = FindState(Connection.PlayerBody, State.GotNext);
+        const PlayingAt = FindState(Connection.PlayerBody, State.Playing);
+        let At = PlayingAt;
+        if (At < 0) At = FindState(Connection.PlayerBody, State.GotNext);
         if (At < 0) At = FindState(Connection.PlayerBody, State.None);
         if (At < 0) return false;
+        const GymSpot = Connection.ActivityName === 'neighborhood' &&
+            PlayerBody.GenerationForConnection(Connection) === '2K22'
+            ? require('./GymSpots2K22').GroupFor(Connection.GotNext.Court)
+            : null;
+        if (GymSpot) {
+            // Cached/client bodies may already say PLAYING with an old anchor key.
+            const Patch = require('./PlayerBody2K22').SetGameState(
+                Connection.PlayerBody, State.Playing, GymSpot.CourtId,
+            );
+            if (!Patch.Ok || Patch.Body.equals(Connection.PlayerBody)) return false;
+            Connection.PlayerBody = PlayerBody.Mark(Patch.Body, '2K22');
+            return true;
+        }
+        if (PlayingAt >= 0) return false;
         const Body = Buffer.from(Connection.PlayerBody);
         Body.writeUInt32LE(State.Playing >>> 0, At);
         const GroupValue = GroupFor(Connection, Connection.GotNext.Court);

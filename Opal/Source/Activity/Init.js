@@ -89,6 +89,7 @@ function BuildMachineDataEntry() {
     return new FieldList.Builder().AddU64(0x6875d146, 0n).Build();
 }
 
+const DefaultRelayId = 0x0a;
 function Build({
     SessionId,
     SessionVerify,
@@ -96,7 +97,7 @@ function Build({
     IncludeMatchType = true,
     Variant: VariantValue = Variant.Standard,
     Relay = RetiredRelay,
-    RelayId = 0x0an,
+    RelayId = DefaultRelayId,
     SelfMachineId = null,
     RelayToken = null,
 } = {}) {
@@ -142,6 +143,7 @@ module.exports = {
     Success,
     Variant,
     PackEndpoint,
+    DefaultRelayId,
     RetiredRelay,
     BuildSportsUserFields,
     BuildUserDataEntry,

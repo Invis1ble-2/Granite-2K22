@@ -114,4 +114,4 @@ function CreateHandler() {
         return true;
     };
 }
-module.exports = { CreateHandler };
+module.exports = { CreateHandler, SessionOptions, SessionPlayer };

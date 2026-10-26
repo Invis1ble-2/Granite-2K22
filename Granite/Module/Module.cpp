@@ -277,7 +277,9 @@ HINTERNET WINAPI OpenRequestHook(HINTERNET Connection, LPCWSTR Verb, LPCWSTR Obj
         const size_t Query = Object.find(L'?');
         const std::wstring Path = Object.substr(0, Query);
         if (Path.ends_with(L"/session/login") || Path.ends_with(L"/session/destroy"))
+        {
             ParkCpu::Multiplayer::ResetLogin(++ParkLoginGeneration);
+        }
         ParkRequests[Request] = ParkLoginGeneration;
         // Classify attribute requests for logging even when budget reporting is disabled.
         if (Path.ends_with(L"/mycareer/attributes/get")) BadgeRequests.insert(Request);
@@ -702,9 +704,14 @@ DWORD WINAPI CareerPriceWatchdog(void*)
 }
 
 #include "OnlineFrameRate.h"
+#include "NativeMatchInit.h"
+#include "MyCourt2v2Fix.h"
 #include "ParkCpu.h"
 #include "AnimationUnlock.h"
 #include "CareerProgressionSync.h"
+#if defined(GRANITE_GYM_TRACE22)
+#include "GymTrainingTrace22.h"
+#endif
 
 DWORD WINAPI Initialise(void*)
 {
@@ -753,9 +760,14 @@ DWORD WINAPI Initialise(void*)
         ParkCpu::BeforeStart = OnlineFrameRate::ObserveMatch;
         ParkCpu::FrameTimingReady = OnlineFrameRate::IsReady;
         OnlineFrameRate::Install(Executable);
-        ParkCpu::Install(Executable);
+        MyCourt2v2Fix::Install();
+        NativeMatchInit::OnReady = &ParkCpu::Install;
+        NativeMatchInit::Install(Executable);
         AnimationUnlock::Install(Executable);
         CareerProgressionSync::Install(Executable);
+#if defined(GRANITE_GYM_TRACE22)
+        GymTrainingTrace22::Install(Executable);
+#endif
         if (ModuleConfig::EnablePriceWatchdog)
         {
             void* Target = reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(Executable) + 0x5f5950);

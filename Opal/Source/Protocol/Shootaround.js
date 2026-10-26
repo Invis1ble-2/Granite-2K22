@@ -15,6 +15,11 @@ const PlayerBody = require('./PlayerBody');
 const PlayerBody2K22 = require('./PlayerBody2K22');
 const CourtLayout2K22 = require('./CourtLayout2K22');
 const Requests = require('./Requests');
+const { randomBytes: RandomBytes } = require('node:crypto');
+const Init = require('../Activity/Init');
+
+// One shared online game per private room, including its final revision for retries.
+const OnlineGames = new Map();
 
 const CourtClass = 0x2c4d49e3;
 const CourtFlags = 116;
@@ -22,6 +27,7 @@ const CourtFlags = 116;
 // court_marker "main". FUN_14148AD80 keys graphics baskets by its name CRC,
 // not the session COURT ID or the transform reference "main_marker".
 const MyCourtArtBinding2K22 = Crc32('main') >>> 0;
+const OnlineGameParameter2K22 = Init.DefaultRelayId;
 const CourtType = Object.freeze({ None: 0, OneVOne: 6, Couch: 27, Blacktop: 28, Shootaround: 29 });
 const CourtTypeCount = 44;
 const CourtTypeName = Object.freeze({
@@ -90,7 +96,9 @@ const MenuModes2K22 = Object.freeze({
     4: Object.freeze({ CourtType: 52, Teams: 'together', MinPlayers: 2, MaxPlayers: 5 }),
     5: Object.freeze({ CourtType: 53, Teams: 'together', MinPlayers: 2, MaxPlayers: 5 }),
     6: Object.freeze({ CourtType: 9, Teams: 'versus', MinPlayers: 2, MaxPlayers: 2 }),
-    7: Object.freeze({ CourtType: 8, Teams: 'versus', MinPlayers: 4, MaxPlayers: 4 }),
+    // Type 6 selects the correct native MyCOURT camera; keep a real 2+2 roster.
+    // Module scopes the native default 3/3 AI counts to 2/2 during initialization.
+    7: Object.freeze({ CourtType: 6, Teams: 'versus', MinPlayers: 4, MaxPlayers: 4 }),
     8: Object.freeze({ CourtType: 6, Teams: 'versus', MinPlayers: 6, MaxPlayers: 6 }),
     11: Object.freeze({ CourtType: 54, Teams: 'together', MinPlayers: 2, MaxPlayers: 5 }),
     12: Object.freeze({ CourtType: 55, Teams: 'together', MinPlayers: 1, MaxPlayers: 1 }),
@@ -125,13 +133,20 @@ function ValidateGame2K22(Connection, Game) {
     if (Mode.LocalSlot !== undefined && BigInt(Ids[Mode.LocalSlot]) !== BigInt(Connection.Puid)) {
         return { Ok: false, Reason: `menu mode ${Game.GameSlot} requires the local player in slot ${Mode.LocalSlot}` };
     }
-    // FUN_14168C4B0: this flag means more than one non-AI participant,
-    // not "solo". A local COURT without native synchronization/transport must
-    // not silently start a multiplayer-human request as an offline game.
-    if (Game.SoloFlag !== 0n && Game.SoloFlag !== 0) {
-        return { Ok: false, Reason: 'MyCOURT multiplayer-human synchronization is not supported; expected request flag 0' };
+    // FUN_14168C4B0 +0x384 is (non-AI participants > 1), not a solo flag.
+    const Flag = Game.SoloFlag;
+    if (Flag !== 0n && Flag !== 0 && Flag !== 1n && Flag !== 1) {
+        return { Ok: false, Reason: 'invalid MyCOURT multiplayer-human flag' };
     }
-    return { Ok: true, Mode };
+    if (Flag === 1n || Flag === 1) {
+        if (Count < 2) return { Ok: false, Reason: 'online MyCOURT needs at least two human participants' };
+        return { Ok: true, Mode, Online: true };
+    }
+    const Humans = PlayersFor(Connection, Ids);
+    if (Humans.length > 1) {
+        return { Ok: false, Reason: 'multiple human participants require the online flag' };
+    }
+    return { Ok: true, Mode, Online: false };
 }
 const CourtIndex = 0x000d4d10;
 const CourtBit = Object.freeze({
@@ -254,7 +269,7 @@ function Reapply(Connection) {
     return PatchPlayer(Connection, GotNext.State.Playing, Connection.Shootaround.GameId);
 }
 
-function BuildCourt(ObjectId, Version, Players, Type = null, Away = [], Generation = '2K19') {
+function BuildCourt(ObjectId, Version, Players, Type = null, Away = [], Generation = '2K19', Online = null) {
     Type = Type === null ? TypesFor(Generation).Shootaround : Type;
     const U32 = (Value) => {
         const Out = Buffer.alloc(4);
@@ -277,12 +292,42 @@ function BuildCourt(ObjectId, Version, Players, Type = null, Away = [], Generati
         Fields.set(Bit.IsActive, Buffer.from([1]));
         Fields.set(Bit.ArtBinding, U32(MyCourtArtBinding2K22));
         Fields.set(Bit.CourtType, U32(Type));
-        Fields.set(Bit.SetupGate, Buffer.from([0]));
-        Fields.set(Bit.MatchId, U64(Key));
+        Fields.set(Bit.SetupGate, Buffer.from([Online && !Online.Ended ? 1 : 0]));
+        Fields.set(Bit.MatchId, U64(Online ? Online.MatchId : Key));
+        if (Online) {
+            // FUN_14173D480 waits for state 2 before building the online description.
+            Fields.set(Bit.GameState, U32(Online.Ended ? 0 : Online.Ready ? 3 : 2));
+            const Transport = Online.Transport;
+            Fields.set(Bit.GameRelayToken, Online.Ended ? Buffer.alloc(16) : Transport.Token);
+            Fields.set(Bit.GameRelayAddress, U32(Online.Ended ? 0 : Transport.address));
+            for (const [Id, Value] of [[Bit.GameRelayPort, Transport.port], [Bit.GameRelayId, Transport.RelayId]]) {
+                const Out = Buffer.alloc(2);
+                Out.writeUInt16LE(Online.Ended ? 0 : Value);
+                Fields.set(Id, Out);
+            }
+            const Parameter = Buffer.alloc(4);
+            Parameter.writeUInt32LE(Online.Ended ? 0 : Online.GameParameter >>> 0);
+            Fields.set(Bit.GameParameter, Parameter);
+            for (const Side of ['Home', 'Away']) {
+                const Blobs = Online.Ended ? [] : Online.Profiles[Side];
+                const Ids = Side === 'Home' ? Team : Other;
+                if (!Online.Ended && (!Array.isArray(Blobs) || Blobs.length !== Ids.length ||
+                    Blobs.some((Blob, Index) => !Buffer.isBuffer(Blob) || Blob.length > 0x70000 ||
+                        (Online.NativeCpuIds?.has(Ids[Index]) ? Blob.length !== 0 : !Blob.length)))) {
+                    throw new Error(`invalid MyCOURT ${Side} USERDATA lineup`);
+                }
+                // Reusing a court across modes must not retain old IDs or profiles.
+                Bit[`${Side}Players`].forEach((Id, Index) => Fields.set(Id, U64(Ids[Index] || 0n)));
+                Bit[`${Side}Userdata`].forEach((Id, Index) => {
+                    const Blob = Blobs[Index] || Buffer.alloc(0);
+                    Fields.set(Id, Buffer.concat([U32(Blob.length), Blob]));
+                });
+            }
+        }
         Fields.set(Bit.AwayCount, Buffer.from([Other.length]));
-        Other.forEach((Player, Index) => Fields.set(Bit.AwayPlayers[Index], U64(Player)));
+        if (!Online) Other.forEach((Player, Index) => Fields.set(Bit.AwayPlayers[Index], U64(Player)));
         Fields.set(Bit.HomeCount, Buffer.from([Team.length]));
-        Team.forEach((Player, Index) => Fields.set(Bit.HomePlayers[Index], U64(Player)));
+        if (!Online) Team.forEach((Player, Index) => Fields.set(Bit.HomePlayers[Index], U64(Player)));
     } else {
         Fields.set(CourtBit.Type, U32(Type));
         Fields.set(CourtBit.CourtId, U32(Number(Key & 0xffffffffn)));
@@ -408,8 +453,270 @@ function AckRequest2K22(Connection, Request) {
     return !!Sent;
 }
 
+function OnlineRoomKey(Connection) {
+    if (!MyCourt.IsMyCourt(Connection) || !Connection.RoomScope ||
+        PlayerBody.GenerationForConnection(Connection) !== '2K22') return null;
+    return `${Connection.ActivityKey}:${Connection.RoomScope}`;
+}
+
+function OnlineMembers(Game) {
+    return Roster.InActivity(Game.ActivityKey, Game.RoomScope).filter((Peer) =>
+        MyCourt.IsMyCourt(Peer) && !MyCourt.IsRoomClosed(Peer) && PlayerBody.GenerationForConnection(Peer) === '2K22');
+}
+
+function PublishOnlineCourt(Game) {
+    Game.Version += 1n;
+    const Frame = BuildCourt(Game.CourtKey, Game.Version, Game.Ended ? [] : Game.Home,
+        Game.CourtType, Game.Ended ? [] : Game.Away, '2K22', Game);
+    const Sent = new Set();
+    for (const Peer of OnlineMembers(Game)) {
+        Peer.ShootaroundCourtVersion = Game.Version;
+        if (Peer.SendObject(Frame)) Sent.add(Peer);
+    }
+    return Sent;
+}
+
+function PublishOnlinePlayer(Player, Game, Playing) {
+    Player.Shootaround = Playing ? { GameId: CourtIndex, Since: Date.now() } : null;
+    if (!PatchPlayer(Player, Playing ? GotNext.State.Playing : GotNext.State.None, Playing ? CourtIndex : 0))
+        return false;
+    if (Player.Closed) return true;
+    const Frame = PlayerObject.FrameFor(Player);
+    if (!Frame) return false;
+    let OwnSent = false;
+    for (const Peer of OnlineMembers(Game)) {
+        const Sent = Peer.SendObject(Frame);
+        if (Peer === Player) OwnSent = !!Sent;
+    }
+    return OwnSent;
+}
+
+function ReplayOnlineGame(Connection, Game) {
+    PublishOnlineCourt(Game);
+    MyCourt.RepublishRoom(Connection, Game.RoomKey);
+}
+
+function FinishOnlineGame(Connection, Game, Reason) {
+    if (Game.Ended) {
+        ReplayOnlineGame(Connection, Game);
+        return;
+    }
+    // End once for the whole game; late completion/ending retries must not revive it.
+    Game.Ended = true;
+    Game.Ready = false;
+    for (const Player of Game.Players) PublishOnlinePlayer(Player, Game, false);
+    PublishOnlineCourt(Game);
+    MyCourt.EndCribGame(Connection, Game.RoomKey);
+    Game.Profiles = null;
+    Game.Connected.clear();
+    Log.Info(`MyCourt ${CourtTypeLabel(Game.CourtType, '2K22')} match ${Game.MatchId.toString(16).toUpperCase()} ` +
+        `ended: ${Reason}; ${Game.Players.length} human participants released`);
+}
+
+function GamePeers(Connection) {
+    const Game = Connection && Connection.ShootaroundOnline;
+    if (!Game || Game.Ended || !Connection.Shootaround ||
+        OnlineGames.get(OnlineRoomKey(Connection)) !== Game) return [];
+    return Roster.Peers(Connection).filter((Peer) =>
+        Game.Players.includes(Peer) && Peer.ShootaroundOnline === Game && !!Peer.Shootaround);
+}
+
+function ClearOnlineConnection(Connection) {
+    delete Connection.ShootaroundOnline;
+    delete Connection.ShootaroundCourtKey;
+    delete Connection.ShootaroundCourtType;
+    delete Connection.ShootaroundTeam;
+    delete Connection.ShootaroundAway;
+    delete Connection.ShootaroundRoomKey;
+}
+
+function Disconnect(Connection) {
+    const Key = OnlineRoomKey(Connection);
+    const Game = Key && OnlineGames.get(Key);
+    if (!Game) return false;
+    if (!Game.Ended && Game.Players.includes(Connection)) {
+        FinishOnlineGame(Connection, Game, 'participant left MyCOURT');
+    }
+    ClearOnlineConnection(Connection);
+    if (!OnlineMembers(Game).some((Peer) => Peer !== Connection)) OnlineGames.delete(Key);
+    return true;
+}
+
+function CloseRoom(Connection) {
+    const Key = OnlineRoomKey(Connection);
+    if (!Key) return false;
+    const Game = OnlineGames.get(Key);
+    if (Game && !Game.Ended) FinishOnlineGame(Connection, Game, 'MyCOURT owner left');
+    OnlineGames.delete(Key);
+    const Members = new Set([Connection, ...Roster.Peers(Connection), ...(Game ? Game.Players : [])]);
+    for (const Member of Members) {
+        if (!MyCourt.IsMyCourt(Member) || Member.RoomScope !== Connection.RoomScope ||
+            Member.ActivityKey !== Connection.ActivityKey) continue;
+        if (Game && Member.ShootaroundOnline && Member.ShootaroundOnline !== Game) continue;
+        ClearOnlineConnection(Member);
+        Member.Shootaround = null;
+        delete Member.ShootaroundStartRequests;
+        delete Member.ShootaroundOnlineReceipts;
+    }
+    return !!Game;
+}
+
+function InvalidateNativeIdentity(Connection, Reason) {
+    const Game = OnlineGames.get(OnlineRoomKey(Connection));
+    if (Game && !Game.Ended && Game.NativeCpuIds?.size) FinishOnlineGame(Connection, Game, Reason);
+}
+
+function StartOnlineGame2K22(Connection, Request, Req) {
+    const Key = OnlineRoomKey(Connection);
+    if (!Key) {
+        Log.Error(`${Connection.Identifier} MyCourt start rejected: missing private room scope`);
+        MyCourt.RepublishRoom(Connection, Request.ObjectId);
+        return true;
+    }
+    const Members = Roster.InActivity(Connection.ActivityKey, Connection.RoomScope);
+    let Players;
+    let Game;
+    try {
+        const Mode = MenuModeFor(Req);
+        const Teams = TeamsFor(Connection, Req, Mode?.CourtType, []);
+        if (!Teams || Teams.Home.length > 5 || Teams.Away.length > 5)
+            throw new Error('invalid MyCOURT teams or native court roster capacity exceeded');
+        const Ids = Req.Players.map((Id) => BigInt(Id));
+        Players = Ids.map((Id) => Members.find((Peer) => Peer.Puid === Id)).filter(Boolean);
+        if (Players.length < 2 || Players.some((Peer) => Peer.Closed ||
+            !MyCourt.IsMyCourt(Peer) || PlayerBody.GenerationForConnection(Peer) !== '2K22' ||
+            Peer.Shootaround || Peer.GotNext?.Playing)) {
+            throw new Error('online human participants must be idle and in the same MyCOURT');
+        }
+        const HumanIds = new Set(Players.map((Peer) => BigInt(Peer.Puid)));
+        const UnknownIds = Ids.filter((Id) => !HumanIds.has(Id));
+        const NativeCpuIds = UnknownIds.length
+            ? require('./MyCourtIdentity').VerifiedIds(Connection, Players, UnknownIds) : new Set();
+        if (Members.some((Peer) => Peer.Shootaround)) throw new Error('another MyCOURT game is already active');
+        const Machines = Players.map((Peer) => Peer.MachineId);
+        if (Machines.some((Id) => Id == null || BigInt(Id) === 0n) ||
+            new Set(Machines.map(String)).size !== Players.length) throw new Error('missing or duplicate machine IDs');
+        const Userdata = require('./Userdata');
+        const Profiles = new Map(Players.map((Peer) => {
+            const Data = Peer.Userdata && Userdata.Read(Peer.Userdata);
+            if (!Userdata.Packaged(Peer) || !Data?.IsUserdata ||
+                !Data.Blob.length || Data.DeclaredLength !== Data.Blob.length) {
+                throw new Error(`complete USERDATA is not ready for ${Peer.Identifier}`);
+            }
+            if (!PlayerBody2K22.SetGameState(Peer.PlayerBody, GotNext.State.Playing, CourtIndex).Ok)
+                throw new Error(`complete PLAYER is not ready for ${Peer.Identifier}`);
+            const Blob = Userdata.CourtProfile(Peer, Data.Blob);
+            if (Blob.length > 0x70000) throw new Error('court USERDATA exceeds the native size limit');
+            return [BigInt(Peer.Puid), Blob];
+        }));
+        for (const Id of NativeCpuIds) Profiles.set(Id, Buffer.alloc(0));
+        const Relay = require('../Activity/Activities').Relay.Local;
+        if (!Number.isInteger(Relay.Port) || Relay.Port < 1 || Relay.Port > 65535)
+            throw new Error('GAME relay port must be in 1..65535');
+        const Previous = OnlineGames.get(Key);
+        let Version = Previous ? Previous.Version : 0n;
+        for (const Peer of Members) {
+            if ((Peer.ShootaroundCourtVersion || 0n) > Version) Version = Peer.ShootaroundCourtVersion;
+        }
+        const CourtKey = MyCourt.SessionObjectId(Connection.SessionId, BigInt(CourtIndex));
+        Game = {
+            ActivityKey: Connection.ActivityKey, RoomScope: Connection.RoomScope,
+            RoomKey: Request.ObjectId, CourtKey, Version,
+            MenuMode: Number(Req.GameSlot), CourtType: Mode.CourtType,
+            MatchId: RandomBytes(8).readBigUInt64LE() || 1n,
+            GameParameter: OnlineGameParameter2K22,
+            Transport: {
+                Token: RandomBytes(16),
+                address: Init.PackEndpoint(Relay.Ip, Relay.Port).Address,
+                // The endpoint relay ID and 32-bit GAME parameter are separate fields.
+                port: Relay.Port, RelayId: Init.DefaultRelayId,
+            },
+            Home: Teams.Home, Away: Teams.Away,
+            Profiles: {
+                Home: Teams.Home.map((Id) => Profiles.get(Id)),
+                Away: Teams.Away.map((Id) => Profiles.get(Id)),
+            },
+            Players, NativeCpuIds, Connected: new Set(), Ready: false, Ended: false,
+        };
+        // Complete packet construction before publishing any state to the clients.
+        BuildCourt(CourtKey, Version + 1n, Game.Home, Game.CourtType, Game.Away, '2K22', Game);
+    } catch (Failure) {
+        Log.Error(`${Connection.Identifier} MyCourt start rejected: ${Failure.message}`);
+        MyCourt.RepublishRoom(Connection, Request.ObjectId);
+        return true;
+    }
+
+    OnlineGames.set(Key, Game);
+    for (const Player of Players) {
+        Player.ShootaroundOnline = Game;
+        Player.ShootaroundCourtKey = Game.CourtKey;
+        Player.ShootaroundCourtType = Game.CourtType;
+        Player.ShootaroundTeam = Game.Home;
+        Player.ShootaroundAway = Game.Away;
+        Player.ShootaroundRoomKey = Game.RoomKey;
+    }
+    if (Request.Id !== 0n) {
+        let Starts = Connection.ShootaroundStartRequests;
+        if (!Starts || Starts.RoomKey !== Request.ObjectId)
+            Starts = Connection.ShootaroundStartRequests = { RoomKey: Request.ObjectId, Ids: new Set() };
+        Starts.Ids.add(Request.Id);
+    }
+    const Sent = PublishOnlineCourt(Game);
+    if (Players.some((Player) => !Sent.has(Player))) {
+        FinishOnlineGame(Connection, Game, 'court delivery failed');
+        return true;
+    }
+    for (const Player of Players) {
+        if (!PublishOnlinePlayer(Player, Game, true)) {
+            FinishOnlineGame(Connection, Game, 'PLAYER delivery failed');
+            return true;
+        }
+    }
+    if (!MyCourt.StartCribGame(Connection, Game.RoomKey, Req)) {
+        FinishOnlineGame(Connection, Game, 'room start failed');
+        return true;
+    }
+    Log.Info(`MyCourt online ${CourtTypeLabel(Game.CourtType, '2K22')} match ${Game.MatchId.toString(16).toUpperCase()} ` +
+        `(menu mode ${Game.MenuMode}): home ${TeamLabel(Game.Home)}, away ${TeamLabel(Game.Away)}; ` +
+        `${Players.length} human profiles, ${Game.NativeCpuIds.size} verified native NBA invitees; awaiting ${Players.length} connections`);
+    return true;
+}
+
+function IsPreviousOnlineRequest(Connection, Request, Game) {
+    if (Request.Id === 0n) return false;
+    const Receipts = Connection.ShootaroundOnlineReceipts ||
+        (Connection.ShootaroundOnlineReceipts = new Map());
+    const Key = `${Request.Command}:${Request.Id}`;
+    const Previous = Receipts.get(Key);
+    if (Previous !== undefined && Previous !== Game.MatchId) return true;
+    Receipts.set(Key, Game.MatchId);
+    // Bound the per-connection retransmission history; do not retain old game objects.
+    if (Receipts.size > 128) Receipts.delete(Receipts.keys().next().value);
+    return false;
+}
+
 function HandleConnected2K22(Connection, Request) {
     AckRequest2K22(Connection, Request);
+    const Online = Connection.ShootaroundOnline;
+    if (Online && OnlineGames.get(OnlineRoomKey(Connection)) === Online &&
+        Request.ObjectId === Online.CourtKey && Online.Players.includes(Connection)) {
+        if (IsPreviousOnlineRequest(Connection, Request, Online)) {
+            ReplayOnlineGame(Connection, Online);
+            return true;
+        }
+        if (!Online.Ended) {
+            Online.Connected.add(Connection.Puid);
+            Online.Ready = Online.Players.every((Player) => Online.Connected.has(Player.Puid));
+        }
+        PublishOnlineCourt(Online);
+        Log.Info(`MyCourt ${CourtTypeLabel(Online.CourtType, '2K22')} connections ${Online.Connected.size}/${Online.Players.length}; ` +
+            `court state ${Online.Ended ? 0 : Online.Ready ? 3 : 2}, revision ${Online.Version}`);
+        return true;
+    }
+    if (Online) {
+        Log.Verbose(`  stale MyCourt online connection-complete ignored`);
+        return true;
+    }
     if (Connection.ShootaroundCourtKey === undefined ||
         Request.ObjectId !== Connection.ShootaroundCourtKey ||
         Connection.ShootaroundCourtType === undefined || !Connection.ShootaroundTeam) {
@@ -431,10 +738,29 @@ function HandleEnd(Connection, Bytes) {
     const Modern = PlayerBody.GenerationForConnection(Connection) === '2K22';
     const Request = Modern ? ReadRequest2K22(Bytes) : null;
     if (Modern && (!Request || Request.Command !== EndCommand || Connection.Closed)) return false;
+    if (Modern && MyCourt.IsRoomClosed(Connection)) {
+        AckRequest2K22(Connection, Request);
+        MyCourt.PublishClosedRoom(Connection);
+        return true;
+    }
     const End = ReadEnd(Bytes, Request ? Request.List : null);
     if (!End) return false;
     if (Modern) {
         AckRequest2K22(Connection, Request);
+        const Online = Connection.ShootaroundOnline;
+        if (Online && OnlineGames.get(OnlineRoomKey(Connection)) === Online &&
+            (Request.ObjectId === 0n || Request.ObjectId === Online.CourtKey) && Online.Players.includes(Connection)) {
+            if (IsPreviousOnlineRequest(Connection, Request, Online)) {
+                ReplayOnlineGame(Connection, Online);
+                return true;
+            }
+            FinishOnlineGame(Connection, Online, `result ${End.Result === null ? 'unknown' : Hex(End.Result)}`);
+            return true;
+        }
+        if (Online) {
+            Log.Verbose(`  stale MyCourt online end ignored`);
+            return true;
+        }
         if (Request.ObjectId !== 0n && Request.ObjectId !== Connection.ShootaroundCourtKey) {
             Log.Error(`${Connection.Identifier} MyCourt end rejected: no matching court`);
             return true;
@@ -487,6 +813,12 @@ function Handle(Connection, Bytes) {
     const Modern = PlayerBody.GenerationForConnection(Connection) === '2K22';
     const Request = Modern ? ReadRequest2K22(Bytes) : null;
     if (Modern && (!Request || Connection.Closed)) return false;
+    if (Modern && MyCourt.IsRoomClosed(Connection)) {
+        if (![Command, ConnectedCommand, EndCommand].includes(Request.Command)) return false;
+        AckRequest2K22(Connection, Request);
+        MyCourt.PublishClosedRoom(Connection);
+        return true;
+    }
     if (Modern && Request.Command === ConnectedCommand) return HandleConnected2K22(Connection, Request);
     if (HandleEnd(Connection, Bytes)) return true;
     const Req = Read(Bytes, Request ? Request.List : null);
@@ -505,7 +837,9 @@ function Handle(Connection, Bytes) {
         }
         const Starts = Connection.ShootaroundStartRequests;
         if (Request.Id !== 0n && Starts && Starts.RoomKey === Request.ObjectId && Starts.Ids.has(Request.Id)) {
-            MyCourt.RepublishRoom(Connection, Request.ObjectId);
+            const Online = OnlineGames.get(OnlineRoomKey(Connection));
+            if (Online) ReplayOnlineGame(Connection, Online);
+            else MyCourt.RepublishRoom(Connection, Request.ObjectId);
             return true;
         }
         const Checked = ValidateGame2K22(Connection, Req);
@@ -514,6 +848,15 @@ function Handle(Connection, Bytes) {
             MyCourt.RepublishRoom(Connection, Request.ObjectId);
             return true;
         }
+        const Online = OnlineGames.get(OnlineRoomKey(Connection));
+        if (Online && !Online.Ended) {
+            Log.Verbose(`  MyCourt start ignored: a match is already active in this room`);
+            ReplayOnlineGame(Connection, Online);
+            return true;
+        }
+        if (Checked.Online) return StartOnlineGame2K22(Connection, Request, Req);
+        delete Connection.ShootaroundOnline;
+        OnlineGames.delete(OnlineRoomKey(Connection));
     }
     Log.Info(
         `${Connection.Identifier} asked for a MyCourt ${CourtTypeLabel(Type, Generation)} ` +
@@ -606,4 +949,8 @@ module.exports = {
     Release,
     Reapply,
     PlayersFor,
+    GamePeers,
+    Disconnect,
+    CloseRoom,
+    InvalidateNativeIdentity,
 };

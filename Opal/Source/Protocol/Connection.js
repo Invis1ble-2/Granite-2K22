@@ -149,6 +149,7 @@ class Connection {
         Requests.Stop(this);
         WorldState.CancelPending(this);
         require('./ParkCpu').Disconnect(this);
+        Shootaround.Disconnect(this);
         if (Array.isArray(this.CourtRefreshTimers)) {
             for (const Timer of this.CourtRefreshTimers) clearTimeout(Timer);
             this.CourtRefreshTimers = [];
@@ -224,6 +225,7 @@ function ReadConnect(Bytes) {
         PuidSource: Source,
         Derived: Derived,
         Unusual: Unusual,
+        HasTeamId: !!Team,
         TeamId: Team && Team.Value !== undefined ? Team.Value : 0n,
     };
 }
@@ -245,6 +247,14 @@ function Dispatch(Client, Bytes) {
     const First = !Client.Seen.has(FrameData.PacketId);
     let Handled = false;
     Client.Seen.set(FrameData.PacketId, (Client.Seen.get(FrameData.PacketId) || 0) + 1);
+    if (process.env.OPAL_PROBE !== '0' && Client.ProbeLast !== FrameData.PacketId) {
+        // TEMPORARY gym JOIN probe: proves whether the client is still talking.
+        Log.Info(
+            `[probe] pkt ${Packets.EngineName(FrameData.PacketId)} after ` +
+                `${Client.ProbeLast === undefined ? 'none' : Packets.EngineName(Client.ProbeLast)}`,
+        );
+        Client.ProbeLast = FrameData.PacketId;
+    }
 
     if (First) Log.PacketReceived(Packets.EngineName(FrameData.PacketId));
 
@@ -256,6 +266,13 @@ function Dispatch(Client, Bytes) {
     if (ChangeServer.IsTravelRequest(Bytes, FrameData.PacketId)) {
         OnTravelRequest(Client, FrameData, Bytes);
         Handled = true;
+    }
+    if (MyCourt.IsRoomClosed(Client)) {
+        // Permit native travel above, but do not publish late room/player/game
+        // traffic into the host's next room. Known requests still receive ACKs.
+        MyCourt.Relay(Client, Bytes, FrameData.PacketId);
+        Shootaround.Handle(Client, Bytes);
+        return;
     }
 
     if (FrameData.PacketId === 0x9e3471ed) {
@@ -318,6 +335,13 @@ function Dispatch(Client, Bytes) {
         }
     }
 
+    if (!Handled && process.env.OPAL_PROBE !== '0') {
+        // TEMPORARY gym JOIN probe: what the client keeps asking for and we ignore.
+        Log.Info(
+            `[probe] unhandled ${Packets.EngineName(FrameData.PacketId)} ` +
+                `(${FrameData.Length}B) from ${Client.Identifier}`,
+        );
+    }
     if (First && !Handled) {
         Log.Verbose(
             `  no handler for ${Packets.EngineName(FrameData.PacketId)} yet, ` +
@@ -363,6 +387,8 @@ function OnTravelRequest(Client, FrameData, Bytes) {
             url: Url,
             ConnectionId: FrameData.Buffer.slice(8, 16),
         });
+        Shootaround.Disconnect(Client);
+        MyCourt.ClearConnection(Client);
         Client.Send(Built.Frame);
         Log.Info(`${Client.Identifier} is travelling to ${Destination.Name} @ ${Log.Clock()}`);
         Log.Verbose(
@@ -474,12 +500,21 @@ function OnConnect(Client, FrameData, Bytes) {
     }
 
     const Repeat = Client.State === State.Active;
-    if (Repeat && ((Info.WorldKey !== null && Info.WorldKey !== Client.WorldKey) ||
-        (Info.ActivityKey !== null && Info.ActivityKey !== Client.ActivityKey))) {
+    const ChangingActivity = Repeat && ((Info.WorldKey !== null && Info.WorldKey !== Client.WorldKey) ||
+        (Info.ActivityKey !== null && Info.ActivityKey !== Client.ActivityKey));
+    const ChangingRoom = Repeat && Client.ActivityName === 'mycourt' && Info.HasTeamId &&
+        MyCourt.RoomScopeFor({ ...Client, TeamId: Info.TeamId }) !== Client.RoomScope;
+    if (ChangingActivity) {
+        Shootaround.Disconnect(Client);
+        MyCourt.ClearConnection(Client);
         const Park = require('./ParkCpu');
         const Held = Park.Stop(Client, 'participant changed activity');
         Park.Disconnect(Client);
         if (Held && Client.GotNext) GotNext.Release(Client);
+    }
+    if (ChangingRoom && !ChangingActivity) {
+        Shootaround.Disconnect(Client);
+        MyCourt.ClearConnection(Client);
     }
     if (Info.Puid && Client.ClaimedPuid === null) Client.ClaimedPuid = Info.Puid;
     if (Info.WorldKey !== null) Client.WorldKey = Info.WorldKey;
@@ -522,6 +557,11 @@ function OnConnect(Client, FrameData, Bytes) {
         );
         return;
     }
+    if (MyCourt.IsRoomClosed(Client) && !ChangingActivity && !ChangingRoom) {
+        MyCourt.PublishClosedRoom(Client);
+        return;
+    }
+    if (ChangingActivity || ChangingRoom) MyCourt.ResetConnection(Client);
     // The WORLD connection remains live during MyCOURT entry. Inherit only an
     // unambiguous, already decoded PLAYER generation for this account; never
     // infer it from the shared activity IDs.
@@ -544,7 +584,7 @@ function OnConnect(Client, FrameData, Bytes) {
             );
         }
     }
-    Client.TeamId = Info.TeamId;
+    if (!Repeat || ChangingActivity || Info.HasTeamId) Client.TeamId = Info.TeamId;
     if (Gambling.IsGambling({ WorldKey, ActivityKey })) {
         Log.Verbose(
             `  Ante-Up/GAMBLING entry accepted for world ${Hex(WorldKey)} ` +

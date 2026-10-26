@@ -6,6 +6,7 @@
 #include <sstream>
 #include <string>
 #include <xmmintrin.h>
+#include "NativeMatchInit.h"
 
 namespace ParkCpu
 {
@@ -1284,18 +1285,6 @@ inline bool AuthorizeProfile(const void* RequestData)
 
 // Shared hooks: generated player construction, guarded start, roster order and AI defense.
 using StartFn = void(__fastcall*)(void*, void*);
-using PlayingFn = uint64_t(__fastcall*)(void*);
-using CountFn = int(__fastcall*)();
-inline CountFn OriginalHomeCount = nullptr, OriginalAwayCount = nullptr;
-inline thread_local bool InitializingCpuMatch = false;
-inline thread_local uint32_t InitializingTeamSize = 0;
-struct InitScope
-{
-    bool Previous = InitializingCpuMatch;
-    uint32_t PreviousSize = InitializingTeamSize;
-    explicit InitScope(uint32_t TeamSize) { InitializingCpuMatch = true; InitializingTeamSize = TeamSize; }
-    ~InitScope() { InitializingCpuMatch = Previous; InitializingTeamSize = PreviousSize; }
-};
 struct RosterOrderScope
 {
     uint32_t* SortFlag;
@@ -1305,8 +1294,6 @@ struct RosterOrderScope
     RosterOrderScope(const RosterOrderScope&) = delete;
     RosterOrderScope& operator=(const RosterOrderScope&) = delete;
 };
-inline int __fastcall HomeCount() { return InitializingCpuMatch ? static_cast<int>(InitializingTeamSize) : OriginalHomeCount(); }
-inline int __fastcall AwayCount() { return InitializingCpuMatch ? static_cast<int>(InitializingTeamSize) : OriginalAwayCount(); }
 // FUN_1416B4A30 writes MatchId at uint32_t[0xb6], RandomSeed at [0xd0].
 inline constexpr size_t MatchOffset = 0xb6 * sizeof(uint32_t);
 static_assert(MatchOffset == 0x2d8);
@@ -1314,7 +1301,6 @@ inline constexpr size_t RosterSortOffset = 0x2bc;
 static_assert(0xcb0 + RosterSortOffset == 0xf6c);
 inline GenerateFn OriginalGenerate = nullptr;
 inline StartFn OriginalStart = nullptr;
-inline PlayingFn OriginalPlaying = nullptr;
 inline LookupFn Lookup = nullptr;
 inline void StartPrepared(void* Session, void* Info)
 {
@@ -1602,7 +1588,7 @@ inline uint64_t __fastcall Playing(void* Session)
                     Log(LogLevel::Error, L"PARK22 refused delayed generated roster without its match authorization");
                     SetLastError(NativeError); return 0;
                 }
-            SetLastError(NativeError); return OriginalPlaying(Session);
+            SetLastError(NativeError); return NativeMatchInit::CallNative(Session);
         }
         bool Ok = false;
         try
@@ -1621,17 +1607,17 @@ inline uint64_t __fastcall Playing(void* Session)
         TeamSize = R.TeamSize;
         Log(LogLevel::Info, L"SOLO22 InitPlayingGame validated: " + std::to_wstring(R.TeamSize * 2) + L" prepared native player rosters");
         Log(LogLevel::Info, L"SOLO22 AI initialization counts: native=" +
-            std::to_wstring(OriginalHomeCount()) + L"/" + std::to_wstring(OriginalAwayCount()) +
+            std::to_wstring(NativeMatchInit::OriginalHomeCount()) + L"/" + std::to_wstring(NativeMatchInit::OriginalAwayCount()) +
             L" roster=" + std::to_wstring(R.TeamSize) + L"/" + std::to_wstring(R.TeamSize));
     }
     uint64_t Result = 0;
     SetLastError(NativeError);
     {
         // Restrict roster-derived AI counts to this validated initialization thread.
-        InitScope Scope(TeamSize);
+        NativeMatchInit::InitScope Scope(TeamSize);
         // Keep model slots in the same court order as park nameplates.
         RosterOrderScope Order(reinterpret_cast<uint32_t*>(static_cast<unsigned char*>(Info) + RosterSortOffset), SortRoster);
-        Result = OriginalPlaying(Session);
+        Result = NativeMatchInit::CallNative(Session);
     }
     const DWORD Error = GetLastError();
     if (!Result) ClearDefense();
@@ -1646,19 +1632,13 @@ inline uint64_t __fastcall Playing(void* Session)
 }
 
 // Single installation entry for all CPU park modes.
-inline constexpr unsigned HookCount = 6;
+inline constexpr unsigned HookCount = 3;
 struct Site { size_t Rva; const char* Bytes; size_t Size; void* Detour; void** Original; };
 inline const Site Sites[] = {
     {0x166b330, "\x48\x8b\xc4\x55\x53\x56\x41\x55\x41\x56\x48\x8d\x68\x88\x48\x81\xec\x50\x01\x00\x00", 21,
         reinterpret_cast<void*>(&Generate), reinterpret_cast<void**>(&OriginalGenerate)},
     {0x16ff0c0, "\x40\x55\x56\x41\x54\x41\x56\x48\x8d\xac\x24\x48\xfd\xff\xff\x48\x81\xec\xb8\x03\x00\x00", 22,
         reinterpret_cast<void*>(&Start), reinterpret_cast<void**>(&OriginalStart)},
-    {0x169da60, "\x40\x55\x56\x41\x56\x48\x8d\xac\x24\x40\xfa\xff\xff\x48\x81\xec\xc0\x06\x00\x00", 20,
-        reinterpret_cast<void*>(&Playing), reinterpret_cast<void**>(&OriginalPlaying)},
-    {0x10d3e80, "\x8b\x05\x0a\x06\x1b\x05\xc3", 7,
-        reinterpret_cast<void*>(&HomeCount), reinterpret_cast<void**>(&OriginalHomeCount)},
-    {0x10d3e70, "\x8b\x05\x1e\x06\x1b\x05\xc3", 7,
-        reinterpret_cast<void*>(&AwayCount), reinterpret_cast<void**>(&OriginalAwayCount)},
     {0x1de3450, "\x40\x57\x41\x55\x41\x56\x48\x83\xec\x30\x48\x89\x6c\x24\x58\x49\x8b\xf8\x4c\x8b\x41\x10", 22,
         reinterpret_cast<void*>(&BuildDefense), reinterpret_cast<void**>(&OriginalDefense)},
     {0x167d3c0, "\x48\x89\x5c\x24\x18\x48\x89\x6c\x24\x20\x57\x48\x83\xec\x20", 15, nullptr, nullptr},
@@ -1777,6 +1757,7 @@ inline void InstallHooks(HMODULE Executable)
                << Sites[Made != HookCount ? Made : Enabled].Rva << std::dec << L" status=" << Status;
         Log(LogLevel::Error, Detail.str()); return;
     }
+    NativeMatchInit::PlayingHandler = &Playing;
     try { InstallControl(Executable); }
     catch (...) { Log(LogLevel::Error, L"PARK22 enhanced CPU hook installation failed"); }
     { std::lock_guard<std::mutex> Lock(Solo::ReceiptMutex); Solo::Receipt(); }

@@ -1,4 +1,4 @@
-// NBA 2K22 park 60/120 Hz, selected by authenticated server timing. No executable-file patches.
+// NBA 2K22 online-match 60/120 Hz, selected by authenticated server timing. No executable-file patches.
 #pragma once
 #include <array>
 #include <atomic>
@@ -16,13 +16,11 @@ using EndFn = void(__fastcall*)(int);
 using BeginFn = int(__fastcall*)(void*);
 using RequestFn = void(__fastcall*)(int, int, int);
 using RecomputeFn = void(__fastcall*)();
-using ParkFn = int(__fastcall*)();
 inline SyncFn OriginalSync = nullptr;
 inline EndFn OriginalEnd = nullptr;
 inline BeginFn OriginalBegin = nullptr;
 inline RequestFn OriginalRequest = nullptr;
 inline RecomputeFn OriginalRecompute = nullptr;
-inline ParkFn IsPark = nullptr;
 inline unsigned char* Base = nullptr;
 inline std::atomic_bool Ready = false, InstallStarted = false;
 inline thread_local bool InSupportedSync = false;
@@ -31,7 +29,7 @@ inline std::recursive_mutex TimingMutex;
 inline bool Armed = false, OwnRate = false, OwnTiming = false, OwnDelay = false;
 inline float SavedRate = 60.0f, SavedStep = 0.0f, SavedDelay = 0.0f, AppliedDelay = 0.0f;
 inline uint64_t SavedPeriod = 0, TargetPeriod = 0;
-struct MatchContext { unsigned char* Session = nullptr; uint64_t Match = 0; int TeamSize = 0; };
+struct MatchContext { unsigned char* Session = nullptr; uint64_t Match = 0; int Home = 0, Away = 0; };
 inline MatchContext Candidate{};
 inline unsigned ServerRate = 0, ServerBuffer = 0;
 inline bool ServerVerified = false;
@@ -77,29 +75,58 @@ template<class T> inline T Value(const unsigned char* Bytes, size_t Offset)
 {
     T Result{}; memcpy(&Result, Bytes + Offset, sizeof(Result)); return Result;
 }
+// FUN_1416B4A30: type 49..54/59/61 -> these game/rule pairs, practice family 5.
+// Only MyCOURT's verified single-side multiplayer lineups bypass the symmetric-team guard.
+inline bool IsMyCourtTogether(const unsigned char* Bytes, int Count)
+{
+    if (Value<uint32_t>(Bytes, 4) != 5) return false;
+    uint32_t Rule = 0; int Min = 2, Max = 5;
+    switch (Value<uint32_t>(Bytes, 0))
+    {
+    case 0x25: Rule = 0x1b; Max = 4; break; // Best of ten
+    case 0x20: Rule = 0x14; Max = 4; break; // Around the world
+    case 0x24: Rule = 0x19; Max = 2; break; // Partner shooting
+    case 0x26: Rule = 0x1d; break;          // Seven on board
+    case 0x27: Rule = 0x1e; break;          // HORSE
+    case 0x21: Rule = 0x15; break;          // Sign out
+    case 0x2b: Rule = 0x22; Min = Max = 3; break; // Fullcourt press
+    case 0x2d: Rule = 0x24; Min = Max = 3; break; // Defensive press
+    default: return false;
+    }
+    return Value<uint32_t>(Bytes, 8) == Rule && Count >= Min && Count <= Max;
+}
 // These are the same game-info fields used by the existing guarded park roster code.
-inline bool Describe(const void* Info, uint64_t& Match, int& TeamSize)
+inline bool Describe(const void* Info, uint64_t& Match, int& Home, int& Away)
 {
     std::array<unsigned char, 0x308> Bytes{};
     if (!Read(Info, Bytes.data(), Bytes.size())) return false;
-    const int Home = Value<int>(Bytes.data(), 0x118), Away = Value<int>(Bytes.data(), 0x11c);
+    Home = Value<int>(Bytes.data(), 0x118); Away = Value<int>(Bytes.data(), 0x11c);
     Match = Value<uint64_t>(Bytes.data(), 0x2d8);
-    if (!Match || (Home != 2 && Home != 3) || Away != Home || !Value<uint32_t>(Bytes.data(), 0x304)) return false;
-    uint64_t Ids[6]{};
-    for (int I = 0; I < Home * 2; ++I)
+    if (!Match || Home < 1 || Home > 5 || Away < 0 || Away > 5 || !Value<uint32_t>(Bytes.data(), 0x304)) return false;
+    if (Away != Home && (Away != 0 || !IsMyCourtTogether(Bytes.data(), Home))) return false;
+    uint64_t Ids[10]{};
+    for (int I = 0; I < Home + Away; ++I)
     {
-        Ids[I] = Value<uint64_t>(Bytes.data(), (I < Home ? 0x48 : 0xb0) + (I % Home) * sizeof(uint64_t));
+        const size_t Offset = I < Home ? 0x48 + I * sizeof(uint64_t) : 0xb0 + (I - Home) * sizeof(uint64_t);
+        Ids[I] = Value<uint64_t>(Bytes.data(), Offset);
         if (!Ids[I]) return false;
         for (int J = 0; J < I; ++J) if (Ids[J] == Ids[I]) return false;
     }
-    TeamSize = Home; return true;
+    return true;
+}
+inline bool IsSupportedSyncCaller(void* Caller)
+{
+    if (Caller == Base + 0xca1ae8) return true;
+    if (Caller != Base + 0x169db15) return false;
+    using IsParkFn = int(__fastcall*)();
+    return reinterpret_cast<IsParkFn>(Base + 0x170d910)() != 0;
 }
 inline bool CurrentMatch()
 {
     if (!Candidate.Session) return false;
-    uint64_t Match = 0; int TeamSize = 0;
-    return Describe(Candidate.Session + GameInfoOffset, Match, TeamSize) &&
-        Match == Candidate.Match && TeamSize == Candidate.TeamSize;
+    uint64_t Match = 0; int Home = 0, Away = 0;
+    return Describe(Candidate.Session + GameInfoOffset, Match, Home, Away) &&
+        Match == Candidate.Match && Home == Candidate.Home && Away == Candidate.Away;
 }
 inline void RestoreTiming()
 {
@@ -143,9 +170,9 @@ inline void ObserveMatch(void* Session, void* Info)
 {
     std::lock_guard<std::recursive_mutex> Lock(TimingMutex);
     Reset(true);
-    uint64_t Match = 0; int TeamSize = 0;
-    if (Session && Describe(Info, Match, TeamSize))
-        Candidate = {static_cast<unsigned char*>(Session), Match, TeamSize};
+    uint64_t Match = 0; int Home = 0, Away = 0;
+    if (Session && Describe(Info, Match, Home, Away))
+        Candidate = {static_cast<unsigned char*>(Session), Match, Home, Away};
 }
 inline void __fastcall Request(int Slot, int Multiplier, int Fixed)
 {
@@ -199,7 +226,7 @@ inline int __fastcall Begin(void* Parameters)
         else
         {
             const float Delay = At<float>(ParameterRva + 0x10);
-            Log(LogLevel::Info, L"FPS22 active: park " + std::to_wstring(ActiveHz) +
+            Log(LogLevel::Info, L"FPS22 active: online match " + std::to_wstring(ActiveHz) +
                 (ActiveHz == 60 ? L" Hz, native timing retained; configured input lookahead " :
                     L" Hz, fixed dt 1/120; configured input lookahead ") +
                 std::to_wstring(static_cast<int>(std::ceil(Delay * static_cast<float>(ActiveHz)))) + L" frames (" +
@@ -213,7 +240,8 @@ inline uint64_t __fastcall Synchronize()
     const bool Previous = InSupportedSync;
     {
         std::lock_guard<std::recursive_mutex> Lock(TimingMutex);
-        InSupportedSync = Ready && IsPark() != 0 && At<int>(0x3fa424c) == 0 && CurrentMatch();
+        InSupportedSync = Ready && IsSupportedSyncCaller(_ReturnAddress()) &&
+            At<int>(0x3fa424c) == 0 && CurrentMatch();
     }
     const bool Supported = InSupportedSync;
     if (Supported && !IsReady())
@@ -273,7 +301,6 @@ inline bool InstallHooks()
     LARGE_INTEGER Frequency{};
     if (!QueryPerformanceFrequency(&Frequency) || Frequency.QuadPart < 120) return false;
     TargetPeriod = static_cast<uint64_t>(Frequency.QuadPart) / 120;
-    IsPark = reinterpret_cast<ParkFn>(Base + 0x170d910);
     size_t Made = 0, Enabled = 0;
     MH_STATUS Status = MH_OK;
     for (; Made < 5; ++Made)
@@ -295,7 +322,7 @@ inline bool InstallHooks()
         return false;
     }
     Ready = true;
-    Log(LogLevel::Info, L"FPS22 hooks ready: scoped park 2v2/3v3; waiting for server 60/120 Hz configuration; native 30 Hz modes are not promoted");
+    Log(LogLevel::Info, L"FPS22 hooks ready: authenticated online match callsites; native 30 Hz lockstep is not promoted");
     return true;
 }
 inline DWORD WINAPI WaitAndInstall(void*)

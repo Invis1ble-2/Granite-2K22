@@ -458,6 +458,9 @@ function PublishPark(Connection) {
                 `(${require('./PlayerBody').GenerationForConnection(Connection) === '2K22' ? '2K22 ship markers; provisional queue spacing' : CourtData.ParkFormat()} recipe) @ ${Log.Clock()}`, 
         );
     }
+    if (require('./PlayerBody').GenerationForConnection(Connection) === '2K22') {
+        require('./GymEquipment2K22').Publish(Connection);
+    }
     Connection.CourtsPublished = Sent > 0;
     return Sent;
 }
@@ -518,6 +521,9 @@ function RefreshPark(Connection) {
     Log.Info(
         `${Connection.Identifier} was re-sent ${Sent} park courts ` + `(${Legacy} legacy objects) @ ${Log.Clock()}`,
     );
+    if (require('./PlayerBody').GenerationForConnection(Connection) === '2K22') {
+        require('./GymEquipment2K22').Publish(Connection);
+    }
     return Sent;
 }
 

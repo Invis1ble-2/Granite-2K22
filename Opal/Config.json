@@ -1,6 +1,7 @@
 {
   "ParkCpu": {
     "Enabled": true,
+    "FrameRate": 120,
     "TwoOnTwo": true,
     "ThreeOnThree": true,
     "CpuOverallMode": "random",

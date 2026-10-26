@@ -16,6 +16,7 @@ const GamePayloadField = 0x7d69940f;
 const CompressedDataField = 0x970e50df;
 
 function GamePeers(Connection) {
+    if (Connection?.ActivityName === 'mycourt') return require('./Shootaround').GamePeers(Connection);
     if (
         !Connection ||
         !require('./CourtData').IsBitstreamWorld(Connection.ActivityName) ||

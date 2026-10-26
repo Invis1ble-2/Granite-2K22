@@ -148,11 +148,46 @@ function DecodeRoomPayload(Payload, Generation = '2K19') {
 }
 
 const Rooms = new Map();
+const ClosedRooms = new WeakMap(); // Terminal state belongs to old connections, never a host PUID.
 let TemplateAttempted = false;
 let TemplateFrame = null;
 
 function IsMyCourt(Connection) {
     return !!Connection && String(Connection.ActivityName || '').toLowerCase() === 'mycourt';
+}
+
+function IsRoomClosed(Connection) {
+    const Closed = Connection && ClosedRooms.get(Connection);
+    return !!Closed && IsMyCourt(Connection) && Closed.ActivityKey === Connection.ActivityKey &&
+        Closed.RoomScope === Connection.RoomScope;
+}
+
+function ResetConnection(Connection) {
+    if (Connection.MyCourtBootstrapTimer) clearTimeout(Connection.MyCourtBootstrapTimer);
+    Connection.MyCourtBootstrapTimer = null;
+    Connection.MyCourtBootstrapSent = false;
+    ClosedRooms.delete(Connection);
+}
+
+function PublishClosedRoom(Connection, SeenObjectId = null, SeenVersion = 0n) {
+    if (!IsRoomClosed(Connection) || Connection.Closed || Connection.State !== 2 ||
+        Connection.Puid === null || Connection.Puid === undefined) return 0;
+    const Closed = ClosedRooms.get(Connection);
+    let Sent = 0;
+    for (const Record of Closed.Records.values()) {
+        const Seen = SeenObjectId === Record.ObjectId ? BigInt(SeenVersion) : 0n;
+        Record.Version = (Seen > Record.Version ? Seen : Record.Version) + 1n;
+        // NBA2K22 FUN_14161E460 (14161E5B6..14161E5E5): matching the
+        // local PUID in room +0xB1/+0xC0 enters native unavailable handling
+        // without waiting for the host-entity disappearance countdown.
+        // These fields are private to this visitor; never cache/broadcast them.
+        const Fields = { RelatedCount: 1, RelatedId0: BigInt(Connection.Puid) };
+        for (let Index = 1; Index < 6; Index++) Fields[`RelatedId${Index}`] = 0n;
+        if (Connection.SendObject(BuildRoomFrame({
+            ObjectId: Record.ObjectId, Version: Record.Version, Generation: '2K22', Fields,
+        }))) Sent++;
+    }
+    return Sent;
 }
 
 function ParseRoom(Bytes, Generation = '2K19') {
@@ -248,13 +283,26 @@ function RoomTemplate() {
     return TemplateFrame;
 }
 
+function OwnerFor(Connection) {
+    // 2K22 elevator visits carry the host in TEAM_ID, not the visitor identity.
+    if (PlayerBody.GenerationForConnection(Connection) === '2K22' && Connection.TeamId) {
+        return BigInt.asUintN(64, BigInt(Connection.TeamId));
+    }
+    return Connection.Puid !== null && Connection.Puid !== undefined
+        ? Connection.Puid
+        : Connection.ClaimedPuid !== null && Connection.ClaimedPuid !== undefined
+          ? Connection.ClaimedPuid
+          : null;
+}
+
+function IsGuest(Connection) {
+    const Owner = OwnerFor(Connection);
+    return Owner !== null && Connection.Puid !== null && Connection.Puid !== undefined &&
+        BigInt(Owner) !== BigInt(Connection.Puid);
+}
+
 function RoomScopeFor(Connection) {
-    const Owner =
-        Connection.Puid !== null && Connection.Puid !== undefined
-            ? Connection.Puid
-            : Connection.ClaimedPuid !== null && Connection.ClaimedPuid !== undefined
-              ? Connection.ClaimedPuid
-              : null;
+    const Owner = OwnerFor(Connection);
     if (Owner === null) return `mycourt:connection-${Connection.Id}`;
     return `mycourt:${BigInt.asUintN(64, BigInt(Owner)).toString(16).padStart(16, '0')}`;
 }
@@ -305,7 +353,7 @@ function BuildBootstrap(Connection) {
     const ObjectId = SessionObjectId(Connection.SessionId);
     const Values = Buffer.alloc(16);
     Values.writeUInt32LE(InitialWorldTime >>> 0, 0);
-    Values.writeBigUInt64LE(BigInt.asUintN(64, BigInt(Connection.Puid)), 4);
+    Values.writeBigUInt64LE(BigInt.asUintN(64, BigInt(OwnerFor(Connection))), 4);
     Values.writeUInt32LE(InitialState >>> 0, 12);
     const Payload = ObjectFrame.BuildPayload({
         key: ObjectId,
@@ -326,6 +374,7 @@ function BuildBootstrap(Connection) {
 }
 
 function PublishBootstrap(Connection) {
+    if (IsRoomClosed(Connection)) { PublishClosedRoom(Connection); return false; }
     if (!IsMyCourt(Connection) || Connection.State !== 2 || Connection.MyCourtBootstrapSent) return false;
     let Frame = BuildBootstrap(Connection);
     if (!Frame) {
@@ -342,6 +391,7 @@ function PublishBootstrap(Connection) {
         if (Existing.Fields.OwnerId !== undefined) {
             // A native snapshot already supplied ownership. Never reset it or
             // its version when the delayed bootstrap timer fires.
+            if (Generation === '2K22' && !Connection.SendObject(BuildRoomFrame(Existing))) return false;
             Connection.MyCourtBootstrapSent = true;
             return false;
         }
@@ -380,7 +430,7 @@ function PublishBootstrap(Connection) {
     });
     Log.Info(
         `${Connection.Identifier} received the NBA${Generation} MyCourt ownership bootstrap ` +
-            `(owner 0x${BigInt(Connection.Puid).toString(16).padStart(16, '0')}, ` +
+            `(owner 0x${BigInt(OwnerFor(Connection)).toString(16).padStart(16, '0')}, ` +
             `object ${Parsed.ObjectId.toString(16).toUpperCase()})`,
     );
     Log.Verbose(
@@ -391,7 +441,7 @@ function PublishBootstrap(Connection) {
 }
 
 function ScheduleBootstrap(Connection) {
-    if (!IsMyCourt(Connection) || Connection.MyCourtBootstrapSent || Connection.MyCourtBootstrapTimer) return false;
+    if (!IsMyCourt(Connection) || IsRoomClosed(Connection) || Connection.MyCourtBootstrapSent || Connection.MyCourtBootstrapTimer) return false;
     const Timer = setTimeout(() => {
         Connection.MyCourtBootstrapTimer = null;
         if (!Connection.Closed) PublishBootstrap(Connection);
@@ -459,12 +509,13 @@ function RoomStateFor(Connection, ObjectId) {
     return { Key: Key, State: State };
 }
 
-function CacheRoomState(Connection, Packet, Generation) {
+function CacheRoomState(Connection, Packet, Generation, Native = true) {
     const Parsed = Packet.Parsed;
     const Records = Packet.List ? Parsed.RoomList.Records : [{ ObjectId: Parsed.ObjectId, Parsed }];
     for (const Record of Records) {
         const { State } = RoomStateFor(Connection, Record.ObjectId);
         Object.assign(State.Fields, Record.Parsed.Room.Fields);
+        if (Generation === '2K22' && !IsGuest(Connection)) State.NativeHost = Native ? Connection : null;
         State.Generation = Generation;
         if (Record.Parsed.Version > State.Version) State.Version = Record.Parsed.Version;
     }
@@ -492,6 +543,7 @@ function BuildRoomFrame(State) {
 }
 
 function PublishRoomState(Connection, Key, State, SeenVersion = 0n) {
+    if (IsRoomClosed(Connection)) return { Frame: null, Sent: 0 };
     const Seen = BigInt(SeenVersion || 0n);
     State.Version = (Seen > State.Version ? Seen : State.Version) + 1n;
     const Frame = BuildRoomFrame(State);
@@ -505,13 +557,14 @@ function PublishRoomState(Connection, Key, State, SeenVersion = 0n) {
     });
     let Sent = Connection.SendObject(Frame) ? 1 : 0;
     for (const Peer of Roster.Peers(Connection)) {
-        if (IsMyCourt(Peer) && PlayerBody.GenerationForConnection(Peer) === (State.Generation || '2K19') && Peer.SendObject(Frame)) Sent++;
+        if (IsMyCourt(Peer) && !IsRoomClosed(Peer) && PlayerBody.GenerationForConnection(Peer) === (State.Generation || '2K19') && Peer.SendObject(Frame)) Sent++;
     }
     return { Frame: Frame, Sent: Sent };
 }
 
 function RepublishRoom(Connection, ObjectId) {
     if (!IsMyCourt(Connection)) return null;
+    if (IsRoomClosed(Connection)) { PublishClosedRoom(Connection); return null; }
     const Key = RoomKey(Connection, ObjectId);
     const State = RoomStates.get(Key);
     if (!State || State.Generation !== PlayerBody.GenerationForConnection(Connection)) return null;
@@ -521,26 +574,30 @@ function RepublishRoom(Connection, ObjectId) {
 }
 
 function StartCribGame(Connection, ObjectId, Game) {
-    if (!IsMyCourt(Connection)) return null;
+    if (!IsMyCourt(Connection) || IsRoomClosed(Connection)) return null;
     if (
         (ObjectId === null || ObjectId === undefined) &&
         (Connection.SessionId === null || Connection.SessionId === undefined)
     )
         return null;
     const { Key, State } = RoomStateFor(Connection, ObjectId);
-    const Players = (Game.Players || []).slice(0, 6).map((Player) => BigInt(Player));
     State.Fields.State = CribState.Scrimmage;
     State.Fields.GameType = Number(Game.GameSlot) >>> 0;
-    State.Fields.RelatedCount = Players.length;
-    for (let Index = 0; Index < 6; Index++) {
-        State.Fields[`RelatedId${Index}`] = Index < Players.length ? Players[Index] : 0n;
+    // NBA2K22 FUN_14161E460 checks this room list (+0xB1/+0xC0) to reject
+    // visitors. It is not the game roster; preserve it across start and end.
+    if (PlayerBody.GenerationForConnection(Connection) !== '2K22') {
+        const Players = (Game.Players || []).slice(0, 6).map((Player) => BigInt(Player));
+        State.Fields.RelatedCount = Players.length;
+        for (let Index = 0; Index < 6; Index++) {
+            State.Fields[`RelatedId${Index}`] = Index < Players.length ? Players[Index] : 0n;
+        }
     }
     const Out = PublishRoomState(Connection, Key, State);
     return { ObjectId: State.ObjectId, Version: State.Version, Sent: Out.Sent, Frame: Out.Frame };
 }
 
 function EndCribGame(Connection, ObjectId) {
-    if (!IsMyCourt(Connection)) return null;
+    if (!IsMyCourt(Connection) || IsRoomClosed(Connection)) return null;
     if (
         (ObjectId === null || ObjectId === undefined) &&
         (Connection.SessionId === null || Connection.SessionId === undefined)
@@ -548,8 +605,10 @@ function EndCribGame(Connection, ObjectId) {
         return null;
     const { Key, State } = RoomStateFor(Connection, ObjectId);
     State.Fields.State = CribState.None;
-    State.Fields.RelatedCount = 0;
-    for (let Index = 0; Index < 6; Index++) State.Fields[`RelatedId${Index}`] = 0n;
+    if (PlayerBody.GenerationForConnection(Connection) !== '2K22') {
+        State.Fields.RelatedCount = 0;
+        for (let Index = 0; Index < 6; Index++) State.Fields[`RelatedId${Index}`] = 0n;
+    }
     const Out = PublishRoomState(Connection, Key, State);
     return { ObjectId: State.ObjectId, Version: State.Version, Sent: Out.Sent, Frame: Out.Frame };
 }
@@ -569,11 +628,33 @@ function Relay(Connection, Bytes, PacketId = null) {
         const RequestId = Bytes.readBigUInt64BE(16);
         if (RequestId !== 0n && !Connection.Closed) Connection.Send(Requests.Build(RequestId));
     }
+    if (IsRoomClosed(Connection)) {
+        PublishClosedRoom(Connection, Packet.List ? null : Parsed.ObjectId, Parsed.Version || 0n);
+        return true;
+    }
+
+    if (Generation === '2K22' && IsGuest(Connection)) {
+        // A visitor can upload their own saved customization on entry. Do not
+        // merge it into the host's room; complete updates with authoritative data.
+        PublishBootstrap(Connection);
+        if (!Packet.List) {
+            const State = RoomStates.get(RoomKey(Connection, Parsed.ObjectId));
+            if (State && State.Generation === Generation) {
+                PublishRoomState(Connection, RoomKey(Connection, Parsed.ObjectId), State, Parsed.Version);
+            } else {
+                ReplayTo(Connection);
+            }
+        } else {
+            ReplayTo(Connection);
+        }
+        return true;
+    }
 
     if ((Id === ObjectUpdatePacket || Id === LegacyObjectUpdatePacket) && !Packet.List) {
         const { Key, State } = RoomStateFor(Connection, Parsed.ObjectId);
         Object.assign(State.Fields, Parsed.Room.Fields);
         State.Generation = Generation;
+        if (Generation === '2K22') State.NativeHost = Connection;
         const Out = PublishRoomState(Connection, Key, State, Parsed.Version);
         const Names = Parsed.Flags.map((Bit) => Schema[Bit].Name);
         Log.Info(
@@ -602,7 +683,7 @@ function Relay(Connection, Bytes, PacketId = null) {
 
     let Sent = Connection.SendObject(Bytes) ? 1 : 0;
     for (const Peer of Roster.Peers(Connection)) {
-        if (IsMyCourt(Peer) && PlayerBody.GenerationForConnection(Peer) === Generation && Peer.SendObject(Bytes)) Sent++;
+        if (IsMyCourt(Peer) && !IsRoomClosed(Peer) && PlayerBody.GenerationForConnection(Peer) === Generation && Peer.SendObject(Bytes)) Sent++;
     }
     const ObjectLabel = Packet.List
         ? 'object list containing room state'
@@ -634,6 +715,8 @@ function Relay(Connection, Bytes, PacketId = null) {
 
 function PublishTemplate(Connection) {
     if (!IsMyCourt(Connection) || Connection.State !== 2) return false;
+    if (IsRoomClosed(Connection)) return PublishClosedRoom(Connection) > 0;
+    if (IsGuest(Connection)) return ReplayTo(Connection) > 0;
     const Frame = RoomTemplate();
     if (!Frame) return false;
     const PacketId = Frame.readUInt32BE(4) >>> 0;
@@ -641,7 +724,7 @@ function PublishTemplate(Connection) {
     const Packet = PacketRoom(Frame, PacketId, Generation);
     if (!Packet) return false;
     const Parsed = Packet.Parsed;
-    CacheRoomState(Connection, Packet, Generation);
+    CacheRoomState(Connection, Packet, Generation, false);
     Rooms.set(RoomKey(Connection, Parsed.ObjectId), {
         Frame: Buffer.from(Frame),
         Generation,
@@ -655,7 +738,7 @@ function PublishTemplate(Connection) {
     });
     let Sent = Connection.SendObject(Frame) ? 1 : 0;
     for (const Peer of Roster.Peers(Connection)) {
-        if (IsMyCourt(Peer) && PlayerBody.GenerationForConnection(Peer) === Generation && Peer.SendObject(Frame)) Sent++;
+        if (IsMyCourt(Peer) && !IsRoomClosed(Peer) && PlayerBody.GenerationForConnection(Peer) === Generation && Peer.SendObject(Frame)) Sent++;
     }
     Log.Info(
         `${Connection.Identifier} received MyCourt room template (${Frame.length} bytes), ` +
@@ -666,6 +749,7 @@ function PublishTemplate(Connection) {
 
 function ReplayTo(Connection) {
     if (!IsMyCourt(Connection)) return 0;
+    if (IsRoomClosed(Connection)) return PublishClosedRoom(Connection);
     let Sent = 0;
     const ActivityKey =
         Connection.ActivityKey === null || Connection.ActivityKey === undefined ? null : Connection.ActivityKey >>> 0;
@@ -684,15 +768,55 @@ function ClearConnection(Connection) {
         clearTimeout(Connection.MyCourtBootstrapTimer);
         Connection.MyCourtBootstrapTimer = null;
     }
+    // A delayed close from the old connection must not close a re-entered room.
+    if (IsRoomClosed(Connection)) return;
+    const Generation = PlayerBody.GenerationForConnection(Connection);
+    const Scope = Generation === '2K22' ? Connection.RoomScope || null : null;
+    const Peers = Roster.Peers(Connection).filter((Peer) =>
+        IsMyCourt(Peer) && !IsRoomClosed(Peer) && PlayerBody.GenerationForConnection(Peer) === Generation);
+    const BelongsToRoom = (Room) => Scope
+        ? Room.RoomScope === Scope && Room.ActivityKey === Connection.ActivityKey &&
+          (Room.Generation || '2K19') === Generation
+        : Room.Source === Connection.Id;
+    const OwnerLeft = Scope && Scope === RoomScopeFor(Connection) && !IsGuest(Connection) &&
+        Connection.Puid !== null && Connection.Puid !== undefined;
+    if (OwnerLeft) {
+        // Finish before revoking membership, so the final COURT/PLAYER updates
+        // still reach every human. Normal match end does not enter this path.
+        require('./Shootaround').CloseRoom(Connection);
+        const States = [...RoomStates.values()].filter(BelongsToRoom);
+        let Notified = 0;
+        for (const Member of [Connection, ...Peers]) {
+            if (Member.MyCourtBootstrapTimer) {
+                clearTimeout(Member.MyCourtBootstrapTimer);
+                Member.MyCourtBootstrapTimer = null;
+            }
+            const Records = new Map(States.map((State) =>
+                [State.ObjectId, { ObjectId: State.ObjectId, Version: State.Version }]));
+            if (!Records.size && Member.SessionId !== null && Member.SessionId !== undefined) {
+                const ObjectId = SessionObjectId(Member.SessionId);
+                Records.set(ObjectId, { ObjectId, Version: 1n });
+            }
+            ClosedRooms.set(Member, { ActivityKey: Member.ActivityKey, RoomScope: Scope, Records });
+            if (Member !== Connection && PublishClosedRoom(Member)) Notified++;
+            // Keep the socket available for native travel, but not in the old
+            // room's roster, identity consensus, or a newly entered host room.
+            Roster.Remove(Member);
+        }
+        Log.Info(`MyCourt owner ${Connection.Identifier} left; room closed for ${Notified}/${Peers.length} visitors @ ${Log.Clock()}`);
+    } else if (Scope && Peers.length) {
+        return;
+    }
     for (const [Key, Room] of Rooms) {
-        if (Room.Source === Connection.Id) Rooms.delete(Key);
+        if (BelongsToRoom(Room)) Rooms.delete(Key);
     }
     for (const [Key, State] of RoomStates) {
-        if (State.Source === Connection.Id) RoomStates.delete(Key);
+        if (BelongsToRoom(State)) RoomStates.delete(Key);
     }
 }
 
 module.exports = {
+    OwnerFor,
     RoomScopeFor,
     RelayTokenFor,
     RoomClass,
@@ -727,6 +851,9 @@ module.exports = {
     Relay,
     ReplayTo,
     ClearConnection,
+    IsRoomClosed,
+    ResetConnection,
+    PublishClosedRoom,
     RoomStates,
     CribState,
     EncodeRoom,
