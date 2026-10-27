@@ -99,7 +99,7 @@ function Build(Opts) {
         const HalfCourt = Opts.IsHalfCourt === undefined ? Opts.CourtType===ParkCourtType.TwoOnTwo : Opts.IsHalfCourt;
         Values.set(Bit.IsHalfCourt,Buffer.from([HalfCourt?1:0]));
     }
-    Values.set(Bit.HasWaitingArea,Buffer.from([1]));
+    Values.set(Bit.HasWaitingArea,Buffer.from([Opts.HasWaitingArea === false ? 0 : 1]));
     Values.set(Bit.GotnextCount,Buffer.from([Opts.Count||0]));
     if((Opts.Count||0)>3) throw new Error('2K22 supports at most three queue groups');
     for(const [Name,Ids,Width] of [['SpotRecords',Bit.Gotnext0x48Records,72],['SetupRecords',Bit.Gotnext0x90Records,144]]) {
