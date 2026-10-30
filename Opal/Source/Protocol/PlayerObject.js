@@ -393,9 +393,10 @@ function RegisterBody(Connection, Handshake) {
 
     if (Shown || Seen) ScheduleRepublish(Connection);
 
-    // Only the successful handshake path releases Ante-Up courts. Shown may
+    // Only a successful handshake releases Ante-Up/cages courts. Shown may
     // legitimately be zero in a single-player room, so do not use it as readiness.
-    if (Connection.ActivityName === 'stage' && Connection.CourtProtocolPending && !Connection.Closed) {
+    if ((Connection.ActivityName === 'stage' || Connection.ActivityName === 'cages') &&
+        Connection.CourtProtocolPending && !Connection.Closed) {
         Connection.CourtProtocolPending = false;
         const Published = require('./Courts').Publish(Connection);
         if (Published > 0) {

@@ -549,8 +549,8 @@ function OnConnect(Client, FrameData, Bytes) {
         return;
     }
     if (ChangingActivity || ChangingRoom) MyCourt.ResetConnection(Client);
-    // MyCOURT loses roster membership before its socket closes. A park return
-    // may omit PLAYER, so retain the live source for protocol and player recovery.
+    // Park returns from MyCOURT/cages may omit PLAYER. MyCOURT also loses
+    // roster membership before its socket closes, so retain the live source.
     let ParkReturnPlayer = null;
     if ((Activity.Name === 'mycourt' || Activity.Name === 'neighborhood') &&
         !Client.ProtocolGeneration && Info.Puid) {
@@ -561,7 +561,8 @@ function OnConnect(Client, FrameData, Bytes) {
             Peer.Id !== Client.Id && !Peer.Closed && Peer.State === State.Active &&
             Peer.Puid === Info.Puid && Peer.ProtocolGeneration &&
             (Activity.Name === 'mycourt' ||
-                (Peer.ActivityName === 'mycourt' && Peer.ProtocolGeneration === '2K22')));
+                ((Peer.ActivityName === 'mycourt' || Peer.ActivityName === 'cages') &&
+                    Peer.ProtocolGeneration === '2K22')));
         const Generations = new Set(ProtocolPeers.map((Peer) => Peer.ProtocolGeneration));
         if (Generations.size === 1) {
             Client.ProtocolGeneration = Generations.values().next().value;
@@ -590,14 +591,14 @@ function OnConnect(Client, FrameData, Bytes) {
                 `and activity ${Hex(ActivityKey)}; court objects will be published`,
         );
     }
-    // Connect precedes scene readiness. Keep Ante-Up's first court publication
-    // behind a validated PLAYER handshake, without re-arming on repeat Connect.
-    const AwaitStageHandshake = Activity.Name === 'stage' &&
-        (Client.ActivityName !== 'stage' || Client.CourtProtocolPending);
+    // Connect precedes scene readiness. Publish Ante-Up/cages only after a
+    // validated PLAYER handshake, without re-arming on repeat Connect.
+    const AwaitCourtHandshake = (Activity.Name === 'stage' || Activity.Name === 'cages') &&
+        (Client.ActivityName !== Activity.Name || Client.CourtProtocolPending);
     Client.ActivityName = Activity.Name;
-    Client.CourtProtocolPending = AwaitStageHandshake ||
+    Client.CourtProtocolPending = AwaitCourtHandshake ||
         (Activity.Name === 'neighborhood' && !Client.ProtocolGeneration);
-    if (AwaitStageHandshake) {
+    if (AwaitCourtHandshake) {
         Client.CourtsPublished = false;
         Client.CourtsMoveRefreshed = false;
     }

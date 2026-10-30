@@ -171,9 +171,12 @@ const Worlds = {
 };
 
 const ShipWorld = {...Worlds.neighborhood, Courts:require('./StageSpots/ShipCourts2K22').Table()};
+const SlamballWorld = {...Worlds.cages, Courts:require('./StageSpots/SlamballCourts2K22').Table()};
 function For(ActivityName, Connection) {
     if (ActivityName === 'neighborhood' && Connection &&
         require('../Protocol/PlayerBody').GenerationForConnection(Connection) === '2K22') return ShipWorld;
+    if (ActivityName === 'cages' && Connection &&
+        require('../Protocol/PlayerBody').GenerationForConnection(Connection) === '2K22') return SlamballWorld;
     return Worlds[ActivityName] || null;
 }
 

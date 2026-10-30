@@ -8,6 +8,7 @@ const { Crc32 } = require('../Core/Crc32');
 const Packets = require('./Packets');
 const Boulevard = require('../Activity/StageSpots/BoulevardCourts2K19');
 const StageSpots = require('../Activity/StageSpots/GamblingCourts2K22');
+const SlamballSpots = require('../Activity/StageSpots/SlamballCourts2K22');
 const AnteUp = require('../../../Shared/AnteUp');
 const Zlib = require('node:zlib');
 
@@ -375,14 +376,14 @@ function WriteVec4(Record, Offset, V) {
 }
 
 function StageGeometry(Layout, Index) {
-    return StageSpots.Geometry(Layout.StageCourt, Index);
+    return StageSpots.Geometry(Layout.StageCourt || Layout.SlamballCourt, Index);
 }
 
 function BuildSetupRecord(Layout, Index) {
     if (Index < 0 || Index >= Layout.Locations.length) throw new Error('invalid Got Next setup index ' + Index);
     const Record = Buffer.alloc(0x90);
     const Location = Layout.Locations[Index];
-    const Geo = Layout.StageCourt ? StageGeometry(Layout, Index) : null;
+    const Geo = Layout.StageCourt || Layout.SlamballCourt ? StageGeometry(Layout, Index) : null;
     const Base0 = Geo ? Geo.Base : LocalBase(Layout, Location);
     const Exit0 = Geo ? Geo.Exit : LocalBase(Layout, ExitLocation(Location));
     const Step0 = Geo ? Geo.StepLocal : [0.0, 0.0, 120.0];
@@ -491,7 +492,7 @@ function BuildParkCourtByName(Name, Generation = '2K19') {
 }
 
 function IsBitstreamWorld(ActivityName) {
-    return ActivityName === 'neighborhood' || ActivityName === 'stage';
+    return ActivityName === 'neighborhood' || ActivityName === 'stage' || ActivityName === 'cages';
 }
 
 function ParkFormat() {
@@ -631,11 +632,11 @@ function BuildParkCourtMirror(Entry, Generation = '2K19') {
     return { Guid: BigInt.asUintN(64, BigInt(Retail)), Frame: BuildObjectFrame(BigInt(Retail), Payload) };
 }
 
-function StageSeats(MarkerCourt) {
+function QueueSeats(MarkerCourt, Activity = 'stage') {
     const CourtTables = require('../Activity/CourtTables');
     const Courts = require('./Courts');
     const Slots = require('./Slots');
-    const World = CourtTables.For('stage');
+    const World = CourtTables.For(Activity, {ProtocolGeneration:'2K22'});
     const Raw = World.Courts.find((C) => C.Name === MarkerCourt.name);
     const Groups = Raw ? Courts.GroupsFor(Raw, World.Room, World.SeqBase) : [];
     return MarkerCourt.Queues.map((Queue, Index) => {
@@ -695,6 +696,13 @@ function BroadcastCourtGroup(Connection, Group) {
         return { Court, Mirror: 0 };
     }
 
+    if (Connection.ActivityName === 'cages') {
+        const Entry = SlamballSpots.Courts.find((C) => C.name === Raw.Name);
+        if (!Entry) return { Court: 0, Mirror: 0 };
+        const { Frame } = BuildSlamballCourtOccupancy(Entry);
+        return { Court: SendToActivity(Connection, Frame), Mirror: 0 };
+    }
+
     return { Court: 0, Mirror: 0 };
 }
 function RepublishParkCourt(Connection, CourtKey) {
@@ -727,7 +735,7 @@ function BuildStageCourt(MarkerCourt, Profiles, OwnerId = 0n) {
     const Layout = StageLayoutFor(MarkerCourt);
     const Guid = StageGuidFor(MarkerCourt.name);
     const Low = StageLowFor(MarkerCourt.name);
-    const Payload = OccupancyPayload(Layout, Guid, OwnerId, Low, StageSeats(MarkerCourt), Profiles, true, '2K22');
+    const Payload = OccupancyPayload(Layout, Guid, OwnerId, Low, QueueSeats(MarkerCourt), Profiles, true, '2K22');
     return { Guid, Low, Frame: BuildObjectFrame(Guid, Payload) };
 }
 
@@ -738,6 +746,9 @@ function GameCourt(Activity, Name, Generation = '2K19') {
     } else if (Activity === 'neighborhood') {
         const Entry = ParkEntries(Generation).find((C) => C.name === Name);
         if (Entry) return { Entry, Guid: BigInt(Entry.id), Build: BuildParkCourtOccupancy };
+    } else if (Activity === 'cages') {
+        const Entry = SlamballSpots.Courts.find((C) => C.name === Name);
+        if (Entry) return { Entry, Guid: BigInt(Entry.id), Build: BuildSlamballCourtOccupancy };
     }
     throw new Error(`Unknown ${Activity} game court ${Name}`);
 }
@@ -762,7 +773,7 @@ function BuildSpectatorCourtFrame(Activity, Name, CourtType, Generation = '2K19'
             Guid,
             BigInt(NextOwner++),
             StageLowFor(MarkerCourt.name),
-            StageSeats(MarkerCourt),
+            QueueSeats(MarkerCourt),
             undefined,
             true,
             '2K22',
@@ -912,6 +923,35 @@ function RepublishStageCourt(Connection, CourtKey) {
     return Sent > 0;
 }
 
+function BuildSlamballCourt(Entry, Profiles, OwnerId = 0n) {
+    const Guid = BigInt(Entry.id);
+    const Payload = OccupancyPayload(SlamballSpots.LayoutFor(Entry), Guid, OwnerId, Entry.id,
+        QueueSeats(Entry, 'cages'), Profiles, true, '2K22');
+    return { Guid, Frame: BuildObjectFrame(Guid, Payload) };
+}
+
+function BuildSlamballCourtOccupancy(Entry, Profiles) {
+    return BuildSlamballCourt(Entry, Profiles, BigInt(NextOwner++));
+}
+
+function PublishSlamballCourts(Connection, Refresh = false) {
+    let Sent = 0;
+    for (const Entry of SlamballSpots.Courts) {
+        if (Connection.SendObject(BuildSlamballCourt(Entry).Frame)) Sent++;
+    }
+    Log.Info(
+        `${Connection.Identifier} ${Refresh ? 'was re-sent' : 'was given'} ` +
+        `${Sent}/${SlamballSpots.Courts.length} cages courts (2K22; six trampoline courts + FULL1 moat) @ ${Log.Clock()}`,
+    );
+    return Sent;
+}
+
+function RepublishSlamballCourt(Connection, CourtKey) {
+    const Low = Number(BigInt.asUintN(64, BigInt(CourtKey)) & 0xffffffffn) >>> 0;
+    const Entry = SlamballSpots.Courts.find((C) => C.id === Low);
+    return Entry ? SendToActivity(Connection, BuildSlamballCourt(Entry).Frame) > 0 : false;
+}
+
 module.exports = {
     PrepareGameTeams,
     ClearGameTeams,
@@ -933,6 +973,8 @@ module.exports = {
     PublishStageCourts,
     RefreshStageCourts,
     RepublishStageCourt,
+    PublishSlamballCourts,
+    RepublishSlamballCourt,
     ParkFormat,
     ParkCourtFormat,
     BuildParkCourtByName,

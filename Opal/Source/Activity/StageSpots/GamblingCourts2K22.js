@@ -65,7 +65,7 @@ const Dimensions = Object.freeze({
     6:Object.freeze({Length:2255.52001953125, Offset:0}),
 });
 function LocalBase(Court, Location, Count) {
-    const Dim = Dimensions[Court.CourtType];
+    const Dim = Court.QueueDimensions || Dimensions[Court.CourtType];
     if (!Dim || !/^(NEARSIDE|FARSIDE)_(OFFCOURT_)?(LEFT|RIGHT|CENTER)$/.test(Location))
         throw new Error(`Unsupported Ante-Up location ${Location}`);
     const Span = 120*(Count-1);

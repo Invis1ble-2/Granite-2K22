@@ -388,6 +388,12 @@ function Publish(Connection) {
         Connection.CourtsPublished = SentValue > 0;
         return SentValue;
     }
+    if (Connection.ActivityName === 'cages' &&
+        require('./PlayerBody').GenerationForConnection(Connection) === '2K22') {
+        const Sent = require('./CourtData').PublishSlamballCourts(Connection);
+        Connection.CourtsPublished = Sent > 0;
+        return Sent;
+    }
 
     if (Connection.ActivityName === 'neighborhood') {
         return PublishPark(Connection);
@@ -471,6 +477,11 @@ function RepublishAll(Connection) {
         if (!Connection.CourtsPublished) return 0;
         return require('./CourtData').RefreshStageCourts(Connection);
     }
+    if (Connection.ActivityName === 'cages' &&
+        require('./PlayerBody').GenerationForConnection(Connection) === '2K22') {
+        if (!Connection.CourtsPublished) return 0;
+        return require('./CourtData').PublishSlamballCourts(Connection, true);
+    }
     if (Connection.ActivityName === 'neighborhood') {
         return RefreshPark(Connection);
     }
@@ -531,6 +542,11 @@ function Republish(Connection, Court) {
     if (Connection.ActivityName === 'stage') {
         if (Connection.CourtProtocolPending || !Connection.CourtsPublished) return false;
         return require('./CourtData').RepublishStageCourt(Connection, Court);
+    }
+    if (Connection.ActivityName === 'cages' &&
+        require('./PlayerBody').GenerationForConnection(Connection) === '2K22') {
+        if (Connection.CourtProtocolPending || !Connection.CourtsPublished) return false;
+        return require('./CourtData').RepublishSlamballCourt(Connection, Court);
     }
     if (Connection.ActivityName === 'neighborhood') {
         const Key = BigInt.asUintN(64, BigInt(Court));

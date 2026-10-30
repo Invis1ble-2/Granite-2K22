@@ -200,9 +200,9 @@ function Note(Connection, Bytes) {
         Previous.Z !== Position.Z ||
         Previous.Heading !== Position.Heading;
 
-    const StageCourtsPending = Connection.ActivityName === 'stage' &&
+    const CourtsPending = (Connection.ActivityName === 'stage' || Connection.ActivityName === 'cages') &&
         (Connection.CourtProtocolPending || !Connection.CourtsPublished);
-    if (Connection.PositionDirty && !Connection.CourtsMoveRefreshed && !Connection.Closed && !StageCourtsPending) {
+    if (Connection.PositionDirty && !Connection.CourtsMoveRefreshed && !Connection.Closed && !CourtsPending) {
         try {
             if (require('./CourtData').IsBitstreamWorld(Connection.ActivityName)) {
                 Connection.CourtsMoveRefreshed = true;

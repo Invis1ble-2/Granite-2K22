@@ -84,9 +84,9 @@ function Handle(Connection, Bytes) {
         }
         let Resolved = null;
         for (const Key of Candidates) {
-            // Ante-Up JOIN addresses a court plus a queue index, not an internal
+            // Native queued courts JOIN by court plus queue index, not an internal
             // queue object. Select before canonicalizing, or both sides become queue 0.
-            const Group = Connection.ActivityName === 'stage' && !Grab.Leaving
+            const Group = (Connection.ActivityName === 'stage' || Connection.ActivityName === 'cages') && !Grab.Leaving
                 ? QueuesFor(Connection, Key).find((G) => G.QueueIndex === Slot)
                 : GroupFor(Connection, Key) || GroupForLoose(Connection, Key);
             if (Group) {
@@ -301,7 +301,7 @@ function Deliver(Connection, RequestBuffer = null) {
         if (RequestBuffer) require('./Requests').AckCorrelated(Connection, RequestBuffer);
         return false;
     }
-    const Group = Connection.ActivityName === 'stage'
+    const Group = Connection.ActivityName === 'stage' || Connection.ActivityName === 'cages'
         ? QueueFor(Connection, Connection.GotNext?.Court, Connection.GotNext?.Slot)
         : GroupFor(Connection, Connection.GotNext && Connection.GotNext.Court);
     const CourtId = Group ? Courts.IdentityOf(Group) : null;
@@ -1225,7 +1225,7 @@ function Reapply(Connection) {
         Connection.PlayerBody = Body;
         return true;
     }
-    const Group = Connection.ActivityName === 'stage'
+    const Group = Connection.ActivityName === 'stage' || Connection.ActivityName === 'cages'
         ? QueueFor(Connection, Connection.GotNext.Court, Connection.GotNext.Slot)
         : GroupFor(Connection, Connection.GotNext.Court);
     const Location =
