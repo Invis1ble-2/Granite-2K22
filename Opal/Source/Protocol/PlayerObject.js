@@ -187,7 +187,11 @@ function PuidCollision(Connection) {
 function Register(Connection, Frame) {
     const Handshake = ExtractHandshakeBody(Frame);
     if (!Handshake) return 0;
+    return RegisterBody(Connection, Handshake) ?? 0;
+}
 
+function RegisterBody(Connection, Handshake) {
+    // Zero published peers is still success; reserve null for registration failure.
     const Claimed =
         Connection.ClaimedPuid !== null && Connection.ClaimedPuid !== undefined
             ? Connection.ClaimedPuid
@@ -197,7 +201,7 @@ function Register(Connection, Frame) {
             `${Connection.Identifier} sent a handshake body for ` +
                 `${Handshake.PlayerId.toString(16)}, which is not itself.`,
         );
-        return 0;
+        return null;
     }
     if (Connection.ClaimedPuid === null || Connection.ClaimedPuid === undefined) {
         Connection.ClaimedPuid = Handshake.PlayerId;
@@ -229,7 +233,7 @@ function Register(Connection, Frame) {
             `${Connection.Identifier}'s player body did not contain its claimed PUID in ` +
                 `the NBA2K19 header, so an inconsistent peer object was not sent.`,
         );
-        return 0;
+        return null;
     }
 
     const NativeLayout = PlayerBody.LayoutFor(Stamped.Body);
@@ -260,7 +264,7 @@ function Register(Connection, Frame) {
         Log.Error(
             `${Connection.Identifier}'s ${GenerationName} PLAYER creation contract failed: ${Generation.Reason}`, 
         );
-        return 0;
+        return null;
     }
     if (Generation.Ok) {
         if (Generation.Puid === 0n || Generation.Puid !== Connection.Puid) {
@@ -269,7 +273,7 @@ function Register(Connection, Frame) {
                     `${Generation.Puid.toString(16)} does not match assigned World PUID ` +
                     `${Connection.Puid.toString(16)}; object was not published.`,
             );
-            return 0;
+            return null;
         }
         if (!Generation.RealPeer) {
             Log.Error(
@@ -277,7 +281,7 @@ function Register(Connection, Frame) {
                     `generation branch (field ${NativeLayout.Field.FakePlayerFlag}=${Generation.FakePlayerFlag}, ` +
                     `field ${NativeLayout.Field.FakePlayerData}=${Generation.FakePlayerDataBytes} bytes); object was not published.`, 
             );
-            return 0;
+            return null;
         }
         Log.Verbose(
             `  ${GenerationName} PLAYER creation contract: field 0=${Generation.Puid.toString(16)}, ` +
@@ -292,7 +296,16 @@ function Register(Connection, Frame) {
     const Grew = !Previous || Stamped.Body.length > Previous.length;
     if (Grew) BestBodies.set(Key, Stamped.Body);
     Connection.PlayerBody = BestBodies.get(Key);
-    if (!AuthoritativeBody(Connection)) return 0;
+    if (!AuthoritativeBody(Connection)) return null;
+    // Appearance may outlive a connection; a granted game state must not.
+    if (GenerationName === '2K22' && !Connection.GotNext && !Connection.Shootaround) {
+        const Idle = PlayerBody2K22.SetGameState(Connection.PlayerBody, require('./GotNext').State.None, 0);
+        if (!Idle.Ok) {
+            Log.Error(`${Connection.Identifier}: idle PLAYER restoration failed: ${Idle.Reason}`);
+            return null;
+        }
+        Connection.PlayerBody = PlayerBody.Mark(Idle.Body, '2K22');
+    }
     BestBodies.set(Key, Connection.PlayerBody);
 
     if (Connection.CourtProtocolPending && Connection.ActivityName === 'neighborhood') {
@@ -395,6 +408,22 @@ function Register(Connection, Frame) {
     }
 
     return Shown;
+}
+
+function RestoreParkReturn(Connection, Source) {
+    if (Connection.PlayerBody || Connection.Puid !== Source.Puid) return false;
+    if (Source.PlayerRevision > Connection.PlayerRevision) Connection.PlayerRevision = Source.PlayerRevision;
+    const Published = RegisterBody(Connection, {
+        PlayerId: Source.Puid,
+        BlobKey: DataBlobKey,
+        Body: Buffer.from(Source.PlayerBody),
+    });
+    if (Published === null) return false;
+    Log.Info(
+        `${Connection.Identifier} restored their PLAYER for park return ` +
+            `from connection ${Source.Id} @ ${Log.Clock()}`,
+    );
+    return true;
 }
 
 const RepublishDelaysMs = [2000, 10000];
@@ -582,6 +611,7 @@ module.exports = {
     RepublishDelaysMs,
     PuidCollision,
     Register,
+    RestoreParkReturn,
     ReplayTo,
     PlayerBody,
 };

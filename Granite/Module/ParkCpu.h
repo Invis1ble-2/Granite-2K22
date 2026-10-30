@@ -561,6 +561,10 @@ struct Manifest
     uint32_t Seeds[6], Templates[6];
     Profile::Parameters Profiles[6];
 };
+#if defined(GRANITE_SOLO_CPU_TRACE)
+using PlayingObserver = void(*)(void*, const Manifest&);
+inline std::atomic<PlayingObserver> AfterPlaying = nullptr;
+#endif
 struct Report
 {
     uint32_t Magic = ReportMagic, Protocol = Version, Module = ModuleVersion, Flags = 0;
@@ -1627,6 +1631,10 @@ inline uint64_t __fastcall Playing(void* Session)
         std::lock_guard<std::mutex> Lock(Solo::ReceiptMutex);
         Solo::Receipt(Result ? nullptr : "native-playing-init-failed", Result != 0);
     }
+#if defined(GRANITE_SOLO_CPU_TRACE)
+    if (Result && IsMixed)
+        if (const auto Observe = Multiplayer::AfterPlaying.load()) Observe(Session, Mixed);
+#endif
     Log(LogLevel::Info, std::wstring(IsMixed ? L"PARK22" : L"SOLO22") + L" InitPlayingGame returned " + std::to_wstring(Result));
     SetLastError(Error); return Result;
 }

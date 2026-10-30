@@ -367,6 +367,11 @@ function CourtTypeLabel(Type, Generation = '2K19') {
     return Names[Type] || `court type ${Type}`;
 }
 
+function MyCourtGameLabel(Type, Generation, MenuMode) {
+    if (Generation === '2K22' && Number(MenuMode) === 7) return 'TWO_V_TWO';
+    return CourtTypeLabel(Type, Generation);
+}
+
 function TeamLabel(Team) {
     return Team.length
         ? Team.map((Id) => `0x${BigInt(Id).toString(16).toUpperCase().padStart(16, '0')}`).join(', ')
@@ -509,7 +514,7 @@ function FinishOnlineGame(Connection, Game, Reason) {
     MyCourt.EndCribGame(Connection, Game.RoomKey);
     Game.Profiles = null;
     Game.Connected.clear();
-    Log.Info(`MyCourt ${CourtTypeLabel(Game.CourtType, '2K22')} match ${Game.MatchId.toString(16).toUpperCase()} ` +
+    Log.Info(`MyCourt ${MyCourtGameLabel(Game.CourtType, '2K22', Game.MenuMode)} match ${Game.MatchId.toString(16).toUpperCase()} ` +
         `ended: ${Reason}; ${Game.Players.length} human participants released`);
 }
 
@@ -676,7 +681,7 @@ function StartOnlineGame2K22(Connection, Request, Req) {
         FinishOnlineGame(Connection, Game, 'room start failed');
         return true;
     }
-    Log.Info(`MyCourt online ${CourtTypeLabel(Game.CourtType, '2K22')} match ${Game.MatchId.toString(16).toUpperCase()} ` +
+    Log.Info(`MyCourt online ${MyCourtGameLabel(Game.CourtType, '2K22', Game.MenuMode)} match ${Game.MatchId.toString(16).toUpperCase()} ` +
         `(menu mode ${Game.MenuMode}): home ${TeamLabel(Game.Home)}, away ${TeamLabel(Game.Away)}; ` +
         `${Players.length} human profiles, ${Game.NativeCpuIds.size} verified native NBA invitees; awaiting ${Players.length} connections`);
     return true;
@@ -709,7 +714,7 @@ function HandleConnected2K22(Connection, Request) {
             Online.Ready = Online.Players.every((Player) => Online.Connected.has(Player.Puid));
         }
         PublishOnlineCourt(Online);
-        Log.Info(`MyCourt ${CourtTypeLabel(Online.CourtType, '2K22')} connections ${Online.Connected.size}/${Online.Players.length}; ` +
+        Log.Info(`MyCourt ${MyCourtGameLabel(Online.CourtType, '2K22', Online.MenuMode)} connections ${Online.Connected.size}/${Online.Players.length}; ` +
             `court state ${Online.Ended ? 0 : Online.Ready ? 3 : 2}, revision ${Online.Version}`);
         return true;
     }
@@ -859,7 +864,7 @@ function Handle(Connection, Bytes) {
         OnlineGames.delete(OnlineRoomKey(Connection));
     }
     Log.Info(
-        `${Connection.Identifier} asked for a MyCourt ${CourtTypeLabel(Type, Generation)} ` +
+        `${Connection.Identifier} asked for a MyCourt ${MyCourtGameLabel(Type, Generation, Req.GameSlot)} ` +
             `(players ${Req.Players.length}, count ${Req.PlayerCount}, ` +
             `soloFlag ${Req.SoloFlag}, ${Generation === '2K22' ? 'menu mode' : 'type'} ${Req.GameSlot}, COURT type ${Type}) @ ${Log.Clock()}`,
     );
@@ -911,7 +916,7 @@ function Handle(Connection, Bytes) {
         Starts.Ids.add(Request.Id);
     }
     Log.Info(
-        `  NBA${Generation} MyCourt game start ${Hex(Command)} from ${Who}: ${CourtTypeLabel(Type, Generation)} court ` +
+        `  NBA${Generation} MyCourt game start ${Hex(Command)} from ${Who}: ${MyCourtGameLabel(Type, Generation, Req.GameSlot)} court ` +
             `${CourtKey.toString(16).toUpperCase()} (menu mode ${Req.GameSlot}, COURT type ${Type}, home ${TeamLabel(Teams.Home)}, ` +
             `away ${TeamLabel(Teams.Away)}) to ${Courts}, ` +
             `${Playing} player object${Playing === 1 ? '' : 's'} with PLAYING and game ${Hex(GameId)}, ` +

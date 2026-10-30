@@ -169,6 +169,7 @@ class Connection {
         const Activity = Activities.Lookup(this.ActivityKey, this.WorldKey);
         if (Activity) RefreshRosterForActivity(Activity, 'peer left', null, this.RoomScope || null);
         MyCourt.ClearConnection(this);
+        PlayerObject.ClearCachedBody(this);
         this.Farewell();
         Log.Info(`${this.Identifier} disconnected${Reason ? ' — ' + Reason : ''} @ ${Log.Clock()}`);
         Summarise(this);
@@ -247,14 +248,6 @@ function Dispatch(Client, Bytes) {
     const First = !Client.Seen.has(FrameData.PacketId);
     let Handled = false;
     Client.Seen.set(FrameData.PacketId, (Client.Seen.get(FrameData.PacketId) || 0) + 1);
-    if (process.env.OPAL_PROBE !== '0' && Client.ProbeLast !== FrameData.PacketId) {
-        // TEMPORARY gym JOIN probe: proves whether the client is still talking.
-        Log.Info(
-            `[probe] pkt ${Packets.EngineName(FrameData.PacketId)} after ` +
-                `${Client.ProbeLast === undefined ? 'none' : Packets.EngineName(Client.ProbeLast)}`,
-        );
-        Client.ProbeLast = FrameData.PacketId;
-    }
 
     if (First) Log.PacketReceived(Packets.EngineName(FrameData.PacketId));
 
@@ -268,8 +261,9 @@ function Dispatch(Client, Bytes) {
         Handled = true;
     }
     if (MyCourt.IsRoomClosed(Client)) {
-        // Permit native travel above, but do not publish late room/player/game
-        // traffic into the host's next room. Known requests still receive ACKs.
+        // Keep late traffic out of the next room, but complete self PLAYER
+        // requests: ACK alone leaves the native pending queue blocking travel.
+        if (FrameData.PacketId === WorldState.Packet) WorldState.CompleteClosedRoomPlayer(Client, Bytes);
         MyCourt.Relay(Client, Bytes, FrameData.PacketId);
         Shootaround.Handle(Client, Bytes);
         return;
@@ -335,13 +329,6 @@ function Dispatch(Client, Bytes) {
         }
     }
 
-    if (!Handled && process.env.OPAL_PROBE !== '0') {
-        // TEMPORARY gym JOIN probe: what the client keeps asking for and we ignore.
-        Log.Info(
-            `[probe] unhandled ${Packets.EngineName(FrameData.PacketId)} ` +
-                `(${FrameData.Length}B) from ${Client.Identifier}`,
-        );
-    }
     if (First && !Handled) {
         Log.Verbose(
             `  no handler for ${Packets.EngineName(FrameData.PacketId)} yet, ` +
@@ -562,14 +549,26 @@ function OnConnect(Client, FrameData, Bytes) {
         return;
     }
     if (ChangingActivity || ChangingRoom) MyCourt.ResetConnection(Client);
-    // The WORLD connection remains live during MyCOURT entry. Inherit only an
-    // unambiguous, already decoded PLAYER generation for this account; never
-    // infer it from the shared activity IDs.
-    if (Activity.Name === 'mycourt' && !Client.ProtocolGeneration && Info.Puid) {
-        const Generations = new Set(Roster.Active()
-            .filter((Peer) => Peer.Id !== Client.Id && Peer.Puid === Info.Puid && Peer.ProtocolGeneration)
-            .map((Peer) => Peer.ProtocolGeneration));
-        if (Generations.size === 1) Client.ProtocolGeneration = Generations.values().next().value;
+    // MyCOURT loses roster membership before its socket closes. A park return
+    // may omit PLAYER, so retain the live source for protocol and player recovery.
+    let ParkReturnPlayer = null;
+    if ((Activity.Name === 'mycourt' || Activity.Name === 'neighborhood') &&
+        !Client.ProtocolGeneration && Info.Puid) {
+        const Peers = Activity.Name === 'neighborhood'
+            ? [...require('../Net/Listener').Connections.values()]
+            : Roster.Active();
+        const ProtocolPeers = Peers.filter((Peer) =>
+            Peer.Id !== Client.Id && !Peer.Closed && Peer.State === State.Active &&
+            Peer.Puid === Info.Puid && Peer.ProtocolGeneration &&
+            (Activity.Name === 'mycourt' ||
+                (Peer.ActivityName === 'mycourt' && Peer.ProtocolGeneration === '2K22')));
+        const Generations = new Set(ProtocolPeers.map((Peer) => Peer.ProtocolGeneration));
+        if (Generations.size === 1) {
+            Client.ProtocolGeneration = Generations.values().next().value;
+            if (Activity.Name === 'neighborhood') {
+                ParkReturnPlayer = ProtocolPeers.find((Peer) => Peer.PlayerBody) || null;
+            }
+        }
     }
 
 
@@ -623,6 +622,8 @@ function OnConnect(Client, FrameData, Bytes) {
     Client.SessionId = Activity.SessionId;
 
     Requests.Start(Client);
+
+    if (ParkReturnPlayer) PlayerObject.RestoreParkReturn(Client, ParkReturnPlayer);
 
     if (Activity.Name === 'mycourt') {
         MyCourt.ScheduleBootstrap(Client);

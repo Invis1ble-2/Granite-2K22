@@ -4,12 +4,6 @@
 'use strict';
 
 const Log = require('../Core/Log');
-// TEMPORARY: gym workout JOIN probes. OPAL_PROBE=0 silences them; remove once the
-// gym JOIN path is settled.
-const ProbeOn = process.env.OPAL_PROBE !== '0';
-function Probe(Text) {
-    if (ProbeOn) Log.Info(`[probe] ${Text}`);
-}
 
 const { Hex } = require('../Core/Crc32');
 const { Crc } = require('../Core/Names');
@@ -151,12 +145,7 @@ function Handle(Connection, Bytes) {
         `  granted by putting GOT_NEXT (${Hex(State.GotNext)}) into the player object the ` +
             `client reads its own state out of; correlated REQUEST_ACK follows the warp`,
     );
-    try {
-        Deliver(Connection, Bytes);
-    } catch (Failure) {
-        Probe(`Deliver threw for ${Connection.Identifier}: ${Failure && Failure.stack ? Failure.stack : Failure}`);
-        throw Failure;
-    }
+    Deliver(Connection, Bytes);
     return true;
 }
 
@@ -297,11 +286,6 @@ function QueueFacingUnits(Group, Spot) {
 }
 
 function Deliver(Connection, RequestBuffer = null) {
-    Probe(
-        `Deliver ${Connection.Identifier} court=${Connection.GotNext && Connection.GotNext.Court} ` +
-            `slot=${Connection.GotNext && Connection.GotNext.Slot} activity=${Connection.ActivityName} ` +
-            `request=${RequestBuffer !== null}`,
-    );
     if (!Connection.PlayerBody) {
         Log.Error(
             `${Connection.Identifier} has next but no player body has arrived yet, so the ` +
@@ -313,7 +297,6 @@ function Deliver(Connection, RequestBuffer = null) {
     const Native22 = PlayerBody.GenerationForConnection(Connection) === '2K22';
     // Allocate first: a taken nearest mat may assign a different free seat.
     if (Native22 && !Seat(Connection)) {
-        Probe(`Seat failed for ${Connection.Identifier}: ack only, no grant`);
         Connection.GotNext = null;
         if (RequestBuffer) require('./Requests').AckCorrelated(Connection, RequestBuffer);
         return false;
@@ -325,7 +308,6 @@ function Deliver(Connection, RequestBuffer = null) {
     const GymSpot = Native22 && Connection.ActivityName === 'neighborhood'
         ? require('./GymSpots2K22').GroupFor(Connection.GotNext.Court)
         : null;
-    Probe(`Group=${Group ? Group.CourtName : 'none'} courtId=${CourtId === null ? 'null' : Hex(CourtId)}`);
 
     const Spot = SpotFor(
         Connection,
@@ -335,12 +317,7 @@ function Deliver(Connection, RequestBuffer = null) {
     const WriteLocation = process.env.OPAL_GOTNEXT_LOCATION === '0' ? null : Spot;
     const Facing = WriteLocation ? QueueFacingUnits(Group, WriteLocation) : null;
     if (WriteLocation) Connection.GotNext.Location = WriteLocation;
-    Probe(`Spot=${Spot ? Spot.join(',') : 'none'} write=${WriteLocation ? WriteLocation.join(',') : 'no'}`);
     const Patch = Grant(Connection.PlayerBody, State.GotNext, CourtId, WriteLocation, Facing);
-    Probe(
-        `Grant patched=${Patch.Patched} at=${Patch.At} courtAt=${Patch.CourtAt} ` +
-            `locAt=${Patch.LocAt} locReason=${Patch.LocReason}`,
-    );
     if (!Patch.Patched) {
         Log.Error(
             `${Connection.Identifier} has next but their player body carries no ` +
@@ -351,7 +328,6 @@ function Deliver(Connection, RequestBuffer = null) {
 
     Connection.PlayerBody = Patch.Frame;
     const Frame = PlayerObject.FrameFor(Connection);
-    Probe(`Frame=${Frame ? `${Frame.length}B` : 'null'}`);
     if (!Frame) return false;
     let Granted = 0;
     const GrantedSelf = Connection.SendObject(Frame);
@@ -362,7 +338,6 @@ function Deliver(Connection, RequestBuffer = null) {
         }
     } catch (_) {}
     if (!Granted) {
-        Probe(`Granted 0 recipients for ${Connection.Identifier}`);
         return false;
     }
 
@@ -409,16 +384,12 @@ function Deliver(Connection, RequestBuffer = null) {
         Courts.Republish(Connection, Connection.GotNext.Court);
     }
     const Warped = Warp(Connection);
-    Probe(`Warped ${Connection.Identifier}, ack=${RequestBuffer !== null}`);
 
     let Acknowledged = false;
     if (RequestBuffer) {
         try {
             Acknowledged = require('./Requests').AckCorrelated(Connection, RequestBuffer);
-            Probe(`Ack=${Acknowledged}`);
-        } catch (Failure) {
-            Probe(`Ack threw: ${Failure && Failure.message ? Failure.message : Failure}`);
-        }
+        } catch (_) {}
         try {
             const GrantedSpot = Connection.GotNext;
             const Timer = setTimeout(() => {
@@ -553,11 +524,6 @@ function Seat(Connection) {
     if (!Connection.GotNext || Connection.Puid === null) return false;
 
     const Group = QueueFor(Connection, Connection.GotNext.Court, Connection.GotNext.Slot);
-    Probe(
-        `Seat ${Connection.Identifier} group=` +
-            (Group ? `${Group.CourtName}/${Hex(Number(Group.SlotObjectId & 0xffffffffn))}` : 'none') +
-            ` anchors=${Group ? Group.Anchors.length : 0}`,
-    );
     if (!Group) return false;
     AdvanceLine(Connection, Group);
 
@@ -566,11 +532,6 @@ function Seat(Connection) {
         Connection.Puid,
         Group.Anchors.length,
         Group.QueueFunction === 1 ? -1 : MatIndexFor(Connection, Group),
-    );
-    Probe(
-        `Seat ${Connection.Identifier} occupy=` +
-            (SeatData ? `${SeatData.Index}/${Group.Anchors.length}` : 'null') +
-            ` freed=${SeatData ? SeatData.Freed.length : 0}`,
     );
     if (!SeatData) {
         Log.Error(
@@ -588,7 +549,6 @@ function Seat(Connection) {
     Connection.GotNext.Location = Group.Anchors[SeatData.Index];
     if (SeatData.Freed.length) {
         const World = CourtTables.For(Connection.ActivityName, Connection);
-        Probe(`Freed=${SeatData.Freed.length} worldCourts=${World ? World.Courts.length : 'none'}`);
         for (const Raw of World.Courts) {
             for (const FreedGroup of Courts.GroupsFor(Raw, World.Room, World.SeqBase)) {
                 if (FreedGroup.QueueFunction !== 1 || !SeatData.Freed.includes(FreedGroup.SlotObjectId)) continue;
@@ -603,7 +563,7 @@ function Seat(Connection) {
         require('./CourtData').BroadcastCourtGroup(Connection, Group);
         // Gym groups have no ship court table entry, so the rebroadcast above is a
         // no-op for them and the device would stay "free" while we hold its spot.
-        Probe(`GymSpot published=${require('./GymEquipment2K22').PublishSpot(Connection, Group.SlotObjectId)}`);
+        require('./GymEquipment2K22').PublishSpot(Connection, Group.SlotObjectId);
     }
 
     Log.Verbose(

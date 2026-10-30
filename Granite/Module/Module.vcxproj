@@ -22,22 +22,21 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(ProjectDir)..\Build\$(Configuration)\</OutDir><IntDir>$(ProjectDir)..\Build\obj\Module\$(Configuration)\</IntDir><TargetName>Module</TargetName>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(SoloCpuTrace)'=='true'">
+    <SoloCpuTraceDefinition>GRANITE_SOLO_CPU_TRACE;</SoloCpuTraceDefinition>
+    <OutDir>$(ProjectDir)..\Build\SoloCpuTrace\</OutDir>
+    <IntDir>$(ProjectDir)..\Build\obj\SoloCpuTrace\</IntDir>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <ClCompile><WarningLevel>Level4</WarningLevel><FunctionLevelLinking>true</FunctionLevelLinking><IntrinsicFunctions>true</IntrinsicFunctions><SDLCheck>true</SDLCheck><PreprocessorDefinitions>NDEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp20</LanguageStandard><RuntimeLibrary>MultiThreaded</RuntimeLibrary></ClCompile>
+    <ClCompile><WarningLevel>Level4</WarningLevel><FunctionLevelLinking>true</FunctionLevelLinking><IntrinsicFunctions>true</IntrinsicFunctions><SDLCheck>true</SDLCheck><PreprocessorDefinitions>$(SoloCpuTraceDefinition)NDEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp20</LanguageStandard><RuntimeLibrary>MultiThreaded</RuntimeLibrary></ClCompile>
     <Link><SubSystem>Windows</SubSystem><EnableCOMDATFolding>true</EnableCOMDATFolding><OptimizeReferences>true</OptimizeReferences><AdditionalDependencies>winhttp.lib;dbghelp.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies><GenerateDebugInformation>true</GenerateDebugInformation><ProgramDatabaseFile>$(OutDir)Module_v00010222.pdb</ProgramDatabaseFile></Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <ClCompile><WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck><PreprocessorDefinitions>_DEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp20</LanguageStandard><RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary></ClCompile>
+    <ClCompile><WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck><PreprocessorDefinitions>$(SoloCpuTraceDefinition)_DEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp20</LanguageStandard><RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary></ClCompile>
     <Link><SubSystem>Windows</SubSystem><AdditionalDependencies>winhttp.lib;dbghelp.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies><GenerateDebugInformation>true</GenerateDebugInformation></Link>
   </ItemDefinitionGroup>
-  <ItemGroup><ClCompile Include="Module.cpp" /><ClInclude Include="ModuleConfig.h" /><ClInclude Include="OnlineFrameRate.h" /><ClInclude Include="ParkCpu.h" /><ClInclude Include="NativeMatchInit.h" /><ClInclude Include="MyCourt2v2Fix.h" /><ClInclude Include="AnimationUnlock.h" /><ClInclude Include="CareerProgressionSync.h" /><ClInclude Include="GymTrainingTrace22.h" /></ItemGroup>
+  <ItemGroup><ClCompile Include="Module.cpp" /><ClInclude Include="ModuleConfig.h" /><ClInclude Include="OnlineFrameRate.h" /><ClInclude Include="ParkCpu.h" /><ClInclude Include="NativeMatchInit.h" /><ClInclude Include="MyCourt2v2Fix.h" /><ClInclude Include="AnimationUnlock.h" /><ClInclude Include="CareerProgressionSync.h" /></ItemGroup>
+  <ItemGroup><ClInclude Include="SoloCpuTrace22.h" /></ItemGroup>
   <ItemGroup><None Include="Granite.ini" /></ItemGroup>
-  <PropertyGroup Condition="'$(GymTrace22)'=='true'">
-    <OutDir>$(ProjectDir)..\Build\GymTrace22\</OutDir><IntDir>$(ProjectDir)..\Build\obj\Module\GymTrace22\</IntDir>
-  </PropertyGroup>
-  <ItemDefinitionGroup Condition="'$(GymTrace22)'=='true'">
-    <ClCompile><PreprocessorDefinitions>GRANITE_GYM_TRACE22;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
-    <Link><ProgramDatabaseFile>$(OutDir)Module.pdb</ProgramDatabaseFile></Link>
-  </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

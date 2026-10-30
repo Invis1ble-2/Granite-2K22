@@ -709,8 +709,8 @@ DWORD WINAPI CareerPriceWatchdog(void*)
 #include "ParkCpu.h"
 #include "AnimationUnlock.h"
 #include "CareerProgressionSync.h"
-#if defined(GRANITE_GYM_TRACE22)
-#include "GymTrainingTrace22.h"
+#if defined(GRANITE_SOLO_CPU_TRACE)
+#include "SoloCpuTrace22.h"
 #endif
 
 DWORD WINAPI Initialise(void*)
@@ -765,8 +765,8 @@ DWORD WINAPI Initialise(void*)
         NativeMatchInit::Install(Executable);
         AnimationUnlock::Install(Executable);
         CareerProgressionSync::Install(Executable);
-#if defined(GRANITE_GYM_TRACE22)
-        GymTrainingTrace22::Install(Executable);
+#if defined(GRANITE_SOLO_CPU_TRACE)
+        SoloCpuTrace22::Install(Executable);
 #endif
         if (ModuleConfig::EnablePriceWatchdog)
         {

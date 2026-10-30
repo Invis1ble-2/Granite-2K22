@@ -21,6 +21,8 @@ const ObjectFrame = require('../Codec/ObjectFrame');
 const Packets = require('./Packets');
 const Layout22 = require('./CourtLayout2K22');
 const CourtData = require('./CourtData');
+const Roster = require('./Roster');
+const PlayerBody = require('./PlayerBody');
 
 const CourtClass = 0x2c4d49e3;
 const DataPacket = Packets.Wire('OBJECT_DATA');
@@ -153,7 +155,12 @@ function PublishSpot(Connection, SlotId) {
     const Region = ByKey.get(Number(Id & 0xffffffffn));
     if (!Region) return 0;
     const Seats = require('./Slots').SeatsOf(Id);
-    return PublishRegion(Connection, Region, Seats) ? 1 : 0;
+    // The departing connection can already be closed; update every live observer.
+    let Sent = 0;
+    for (const Peer of [Connection, ...Roster.Peers(Connection)]) {
+        if (PlayerBody.GenerationForConnection(Peer) === '2K22' && PublishRegion(Peer, Region, Seats)) Sent++;
+    }
+    return Sent;
 }
 
 module.exports = { Regions, LayoutFor, SpotLayout, Build, Publish, PublishSpot };

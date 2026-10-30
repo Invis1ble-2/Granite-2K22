@@ -110,6 +110,7 @@ function Start({ port: Port = Number(process.env.OPAL_PORT) || 20054, Certificat
         }
         Socket.write(WebSocket.HandshakeResponse(Key));
         Socket.setNoDelay(true);
+        Socket.setKeepAlive(true, 30_000);
 
         const Client = new Connection(Socket, Req, Port);
         Log.Verbose(`  connection ${Client.Id} upgraded from ` + `${Socket.remoteAddress}:${Socket.remotePort}`);

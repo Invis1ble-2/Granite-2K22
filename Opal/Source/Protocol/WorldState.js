@@ -73,6 +73,48 @@ function Echo(Connection, Bytes) {
     return Reply(Connection, From, '');
 }
 
+function CompleteClosedRoomPlayer(Connection, Bytes) {
+    if (Connection.Closed || !Connection.PlayerBody ||
+        require('./PlayerBody').GenerationForConnection(Connection) !== '2K22') return false;
+    if (!Buffer.isBuffer(Bytes) || Bytes.length < ObjectFrame.Layout.Player.Payload ||
+        Bytes.readUInt32BE(4) !== Packet) return false;
+
+    const Update = ObjectFrame.Parse(Bytes);
+    if (!Update || Update.Layout !== ObjectFrame.Layout.Player ||
+        Update.Class !== PlayerObject.PlayerClass || !Mine(Connection, Update.ObjectId) ||
+        !Mine(Connection, Update.Key) || !require('./PlayerBody2K22').Decode(Update.Payload).Ok) return false;
+    const RequestId = Bytes.readBigUInt64BE(ObjectFrame.Layout.Player.Sequence);
+    if (RequestId === 0n) return false;
+    const Revision = (Update.Version > Connection.PlayerRevision ? Update.Version : Connection.PlayerRevision) + 1n;
+    if (Revision > 0xffffffffffffffffn) return false;
+
+    // The park handoff may already exist. Finish only this old socket's pending
+    // request, without FrameFor's shared-cache writes or merging late fields.
+    const BodyData = Buffer.from(Connection.PlayerBody);
+    BodyData.writeBigUInt64BE(Revision, ObjectFrame.Body.Version);
+    const Frame = ObjectFrame.Build({
+        PacketId: PlayerObject.ObjectDataPacket,
+        ConnectionId: null,
+        ObjectId: Connection.Puid,
+        ClassCrc: PlayerObject.PlayerClass,
+        Payload: BodyData,
+        Layout: ObjectFrame.Layout.Nineteen,
+    });
+    CancelPending(Connection);
+    if (!Connection.Send(require('./Requests').Build(RequestId))) return false;
+    if (!Connection.SendObject(Frame)) {
+        Log.Error(`closed-room player reply to ${Connection.Identifier} could not be written.`);
+        return false;
+    }
+    Connection.PlayerRevision = Revision;
+    Connection.LastEchoMs = Date.now();
+    Log.Verbose(
+        `  completed closed-room PLAYER request ${RequestId} for ${Connection.Identifier} ` +
+            `at revision ${Revision} (old connection only)`,
+    );
+    return true;
+}
+
 function CancelPending(Connection) {
     if (Connection && Connection.PendingEchoTimer) {
         clearTimeout(Connection.PendingEchoTimer);
@@ -107,5 +149,6 @@ module.exports = {
     Mine,
     Build,
     Echo,
+    CompleteClosedRoomPlayer,
     CancelPending,
 };
