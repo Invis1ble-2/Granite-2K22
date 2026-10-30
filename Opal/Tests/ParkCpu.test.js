@@ -1,7 +1,7 @@
 'use strict';
 const Test=require('node:test'),A=require('node:assert/strict'),Fs=require('node:fs'),Path=require('node:path'),Z=require('node:zlib');
 const N=require('../Source/Protocol/ParkCpu'),G=require('../Source/Protocol/GotNext'),C=require('../Source/Protocol/CourtData');
-const B=require('../Source/Protocol/PlayerBody2K22'),P=require('../Source/Protocol/PlayerObject'),R=require('../Source/Protocol/Roster');
+const B=require('../Source/Protocol/PlayerBody'),P=require('../Source/Protocol/PlayerObject'),R=require('../Source/Protocol/Roster');
 const Slots=require('../Source/Protocol/Slots'),Tables=require('../Source/Activity/CourtTables'),Courts=require('../Source/Protocol/Courts');
 const FL=require('../Source/Codec/FieldList'),F=require('../Source/Codec/Frame'),U=require('../Source/Protocol/Userdata');
 require('../Source/Core/Log').SetLevel(0);
@@ -19,7 +19,7 @@ function Setup(Run, Queue = 0) {
     const Entry=C.ParkEntries('2K22').find(E=>E.TeamSize===2),World=Tables.For('neighborhood',{ProtocolGeneration:'2K22'});
     const Raw=World.Courts.find(E=>E.Name===Entry.name),Groups=Courts.GroupsFor(Raw,World.Room,World.SeqBase).filter(G=>G.Kind==='gotnext');
     const Events=[],Id=9400,Puid=0x0110000100009000n,Body=P.StampIdentity(H.Body,H.PlayerId,Puid).Body;
-    require('../Source/Protocol/PlayerBody').Mark(Body,'2K22');Body.writeUInt32LE(G.State.GotNext,B.Decode(Body).Offsets.get(4));
+    Body.writeUInt32LE(G.State.GotNext,B.Decode(Body).Offsets.get(4));
     const X={Id,Puid,MachineId:1n,Identifier:'solo-native-test',State:2,ActivityKey:0x3cf672c2,ActivityName:'neighborhood',
         ProtocolGeneration:'2K22',PlayerBody:Body,PlayerRevision:1n,GotNext:{Court:Groups[0].ObjectId,Slot:Queue,Seat:1,Since:Date.now()-11000},
         Userdata:F.Build(0x9e3471ed,Buffer.alloc(8),new FL.Builder().AddBlob('COMPRESSED_DATA',Z.deflateSync(Buffer.alloc(223256)))

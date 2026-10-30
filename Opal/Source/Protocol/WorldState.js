@@ -82,7 +82,7 @@ function CompleteClosedRoomPlayer(Connection, Bytes) {
     const Update = ObjectFrame.Parse(Bytes);
     if (!Update || Update.Layout !== ObjectFrame.Layout.Player ||
         Update.Class !== PlayerObject.PlayerClass || !Mine(Connection, Update.ObjectId) ||
-        !Mine(Connection, Update.Key) || !require('./PlayerBody2K22').Decode(Update.Payload).Ok) return false;
+        !Mine(Connection, Update.Key) || !require('./PlayerBody').Decode(Update.Payload).Ok) return false;
     const RequestId = Bytes.readBigUInt64BE(ObjectFrame.Layout.Player.Sequence);
     if (RequestId === 0n) return false;
     const Revision = (Update.Version > Connection.PlayerRevision ? Update.Version : Connection.PlayerRevision) + 1n;

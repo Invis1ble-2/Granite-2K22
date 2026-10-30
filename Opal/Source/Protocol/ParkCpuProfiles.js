@@ -166,7 +166,7 @@ function ProfileDigest(Players, Profiles) {
     return Hash.digest();
 }
 function Select(Count, Opts) {
-    if (!Number.isInteger(Count) || Count < 1 || Count > 5 || Count > Unique.length)
+    if (!Number.isInteger(Count) || Count < 1 || Count > 9 || Count > Unique.length)
         throw new Error('invalid CPU count for unique player selection');
     if (!Opts || typeof Opts !== 'object') throw new Error('native CPU configuration unavailable');
     const Mode = Opts.CpuOverallMode === undefined ? 'random' : Opts.CpuOverallMode;

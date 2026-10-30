@@ -7,8 +7,8 @@ const Path = require('node:path');
 const Crypto = require('node:crypto');
 const Log = require('../Core/Log');
 const Wire = require('../Protocol/ParkCpuWire');
-const Endpoint = '/native-park/v5/poll';
-const SoloEndpoint = '/native-solo/v4/poll', SoloReportLimit = 8192;
+const Endpoint = '/native-park/v6/poll';
+const SoloEndpoint = '/native-solo/v5/poll', SoloReportLimit = 8192;
 
 function SessionOptions() {
     // Same installation/configuration as Granite; there is no park credential file.
@@ -41,7 +41,7 @@ function CreateHandler() {
     let Options = null;
     try { Options = SessionOptions(); }
     catch (_) { Log.Error('ParkCpu control unavailable: existing Granite session configuration could not be read'); }
-    if (Options) Log.Info('ParkCpu v5 uses existing Granite login sessions; CPU generation and ratings are server-authored');
+    if (Options) Log.Info('ParkCpu v6 uses existing Granite login sessions; CPU generation and ratings are server-authored');
     const Peers = new Map();
     return function Handle(Req, Res) {
         const Solo = Req.url === SoloEndpoint;

@@ -28,15 +28,10 @@ const Result = Crc32('RESULT');
 const Success = Crc32('SUCCESS');
 const InsufficientFunds = 0xf4e7a9b4;
 
-const CartToLevelFields = Object.freeze([
-    0xb2080f36, 0x5dca6408, 0xb6fddf0b, 0x593fb435, 0xbbe3af4c, 0x5421c472, 0xbf167f71, 0x50d4144f, 0xa1df4fc2,
-    0x4e1d24fc, 0x42049ca6, 0xadc6f798, 0x46f14c9b, 0xa93327a5, 0x4bef3cdc, 0xa42d57e2,
-]);
-const CartPriceFields = Object.freeze([
-    0xfee529c4, 0x58922270, 0x697a38ed, 0xcf0d3359, 0x0aaa0dd7, 0xacdd0663, 0x9d351cfe, 0x3b42174a, 0xcd0a67a3,
-    0x6b7d6c17, 0xae5496fb, 0x08239d4f, 0x39cb87d2, 0x9fbc8c66, 0x5a1bb2e8, 0xfc6cb95c,
-]);
-const CartFromLevelFields = Object.freeze([0x97aadcfc, 0x0c0f9093]);
+// Native carts name each item's fields independently, including items after slot 15.
+const CartField = (Index, Name) => Crc32(`ITEM${Index}_${Name}`);
+const CartToLevelFields = Object.freeze(AttributeIds.map((_, Index) => CartField(Index, 'TO_LEVEL')));
+const CartPriceFields = Object.freeze(AttributeIds.map((_, Index) => CartField(Index, 'PRICE')));
 
 function U64(Field) {
     return Field ? (BigInt(Field.Data1 >>> 0) << 32n) | BigInt(Field.Data2 >>> 0) : null;
@@ -58,8 +53,7 @@ function PriceFor(Item, Index, Fields, Context = {}) {
         const Expected = U64(GetField(Fields, ExpectedPriceField(Index)));
         if (Expected !== null && Expected > 0n) return Expected;
     }
-    const SubmittedCrc = CartPriceFields[Index];
-    const Submitted = SubmittedCrc === undefined ? null : U64(GetField(Fields, SubmittedCrc));
+    const Submitted = U64(GetField(Fields, CartField(Index, 'PRICE')));
     if (Submitted !== null) return Submitted;
     const Catalog = Context.VcPrices;
     if (Catalog instanceof Map && Catalog.has(Item)) {
@@ -105,16 +99,8 @@ function AppendMissingU64(Records, Fields, Crc, Values) {
     }
 }
 
-function RequestLevel(Fields, Crc, Index) {
-    if (Crc === RequestToLevel) {
-        const SlotCrc = CartToLevelFields[Index];
-        return SlotCrc === undefined ? null : U64(GetField(Fields, SlotCrc));
-    }
-    if (Crc === FromLevel) {
-        const SlotCrc = CartFromLevelFields[Index];
-        return SlotCrc === undefined ? null : U64(GetField(Fields, SlotCrc));
-    }
-    return U64(GetField(Fields, Crc, Index));
+function RequestLevel(Fields, Name, Index) {
+    return U64(GetField(Fields, CartField(Index, Name)));
 }
 
 function AttributeForItem(Item, Context) {
@@ -130,8 +116,8 @@ function ApplyKnownAttribute(Item, Index, Fields, Context, Price, Attributes) {
     }
     const AttributeId = AttributeForItem(Item, Context);
     if (AttributeId === null) return { Ok: true, Changed: false };
-    const From = RequestLevel(Fields, FromLevel, Index);
-    const Target = RequestLevel(Fields, RequestToLevel, Index);
+    const From = RequestLevel(Fields, 'FROM_LEVEL', Index);
+    const Target = RequestLevel(Fields, 'TO_LEVEL', Index);
     const Attribute = Attributes.find((Candidate) => Candidate.id === Number(AttributeId) >>> 0);
     if (!Attribute) return { Ok: false, Reason: 'unknown attribute' };
 
@@ -276,7 +262,7 @@ function Build(Input, Context = {}) {
         for (const Record of Echo) Reply.Record(Record.Crc, Record.Type, Record.Data1, Record.Data2);
         return Reply.Build();
     }
-    return new Builder().AddU32(Result, Success).Build();
+    return new Builder().AddU64(BalanceCrc, BalanceFor(Context)).AddU32(Result, Success).Build();
 }
 
 function BuildConsumable(Input, Context = {}) {

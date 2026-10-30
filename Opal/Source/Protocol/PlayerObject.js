@@ -10,7 +10,6 @@ const ObjectFrame = require('../Codec/ObjectFrame');
 const Roster = require('./Roster');
 const Userdata = require('./Userdata');
 const PlayerBody = require('./PlayerBody');
-const PlayerBody2K22 = require('./PlayerBody2K22');
 
 const PlayerClass = 0x2c5d2702;
 const ObjectDataPacket = 0x9c72247c;
@@ -100,14 +99,14 @@ function AuthoritativeBody(Connection) {
     }
     let BodyData = Stamped.Body;
     const Activity = Connection.Position && Connection.Position.World;
-    if (PlayerBody.LayoutFor(BodyData) === PlayerBody2K22 && Activity !== null && Activity !== undefined) {
+    if (Activity !== null && Activity !== undefined) {
         // The packed movement message carries Activity separately from MOVEMENT objects.
-        const Updated = PlayerBody2K22.SetActivity(BodyData, Activity);
+        const Updated = PlayerBody.SetActivity(BodyData, Activity);
         if (!Updated.Ok) {
             Log.Error(`${Connection.Identifier}: PLAYER Activity publication blocked: ${Updated.Reason}`);
             return null;
         }
-        BodyData = PlayerBody.Mark(Updated.Body, '2K22');
+        BodyData = Updated.Body;
         if (Updated.Changed) BestBodies.set(Connection.Puid.toString(16).padStart(16, '0'), BodyData);
     }
     Connection.PlayerBody = BodyData;
@@ -220,23 +219,26 @@ function RegisterBody(Connection, Handshake) {
         );
     }
 
-    // Activity IDs are shared with the legacy Boulevard service. The native
-    // body, including matching PUID and decoded boundaries, identifies 2K22.
-    const GenerationName = PlayerBody.Decode(Handshake.Body).Generation === '2K22' ? '2K22' : '2K19';
+    // Activity IDs are shared with the legacy Boulevard service.
+    // Only successfully decoded NBA2K22 PLAYER bodies are supported.
+    const Decoded = PlayerBody.Decode(Handshake.Body);
+    if (!Decoded.Ok) {
+        Log.Error(`${Connection.Identifier}'s PLAYER body is not a valid NBA2K22 layout: ${Decoded.Reason}`);
+        return null;
+    }
+    const GenerationName = Decoded.Generation;
     const GenerationChanged = Connection.ProtocolGeneration !== GenerationName;
     Connection.ProtocolGeneration = GenerationName;
-    PlayerBody.Mark(Handshake.Body, GenerationName);
     const Stamped = StampIdentity(Handshake.Body, Handshake.PlayerId, Connection.Puid);
-    PlayerBody.Mark(Stamped.Body, GenerationName);
     if (Connection.Puid !== Handshake.PlayerId && Stamped.PuidOffset < 0) {
         Log.Error(
             `${Connection.Identifier}'s player body did not contain its claimed PUID in ` +
-                `the NBA2K19 header, so an inconsistent peer object was not sent.`,
+                `the NBA2K22 header, so an inconsistent peer object was not sent.`,
         );
         return null;
     }
 
-    const NativeLayout = PlayerBody.LayoutFor(Stamped.Body);
+    const NativeLayout = PlayerBody;
     const Show = PlayerBody.SetShow(Stamped.Body);
     if (Show.Ok) {
         Stamped.Body = Show.Body;
@@ -299,12 +301,12 @@ function RegisterBody(Connection, Handshake) {
     if (!AuthoritativeBody(Connection)) return null;
     // Appearance may outlive a connection; a granted game state must not.
     if (GenerationName === '2K22' && !Connection.GotNext && !Connection.Shootaround) {
-        const Idle = PlayerBody2K22.SetGameState(Connection.PlayerBody, require('./GotNext').State.None, 0);
+        const Idle = PlayerBody.SetGameState(Connection.PlayerBody, require('./GotNext').State.None, 0);
         if (!Idle.Ok) {
             Log.Error(`${Connection.Identifier}: idle PLAYER restoration failed: ${Idle.Reason}`);
             return null;
         }
-        Connection.PlayerBody = PlayerBody.Mark(Idle.Body, '2K22');
+        Connection.PlayerBody = Idle.Body;
     }
     BestBodies.set(Key, Connection.PlayerBody);
 
@@ -537,7 +539,6 @@ function MergeBodies(Cached, Partial) {
         ...Ordered.map((Field) => Values.get(Field)),
         Cached.subarray(CachedDecoded.Length),
     ]);
-    PlayerBody.Mark(BodyData, CachedDecoded.Generation);
     return { Body: BodyData, Fields: Merged };
 }
 
@@ -555,7 +556,6 @@ function ApplyAppearanceUpdate(Connection, Frame) {
             : Connection.Puid;
     if (Owner === null || Partial.readBigUInt64BE(0) !== Owner) return 0;
 
-    PlayerBody.Mark(Partial, PlayerBody.Decode(Cached).Generation);
     const Result = MergeBodies(Cached, Partial);
     if (!Result) return 0;
 

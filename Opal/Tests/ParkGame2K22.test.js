@@ -3,7 +3,7 @@ const Test=require('node:test'), A=require('node:assert/strict');
 const Fs=require('node:fs'),Path=require('node:path'),Z=require('node:zlib');
 const G=require('../Source/Protocol/GotNext'),C=require('../Source/Protocol/CourtData');
 const P=require('../Source/Protocol/PlayerObject'),B=require('../Source/Protocol/PlayerBody');
-const Native=require('../Source/Protocol/PlayerBody2K22'),Layout=require('../Source/Protocol/CourtLayout2K22');
+const Native=require('../Source/Protocol/PlayerBody'),Layout=require('../Source/Protocol/CourtLayout2K22');
 const Tables=require('../Source/Activity/CourtTables'),Courts=require('../Source/Protocol/Courts');
 const Slots=require('../Source/Protocol/Slots'),Roster=require('../Source/Protocol/Roster');
 const F=require('../Source/Codec/Frame'),FL=require('../Source/Codec/FieldList'),U=require('../Source/Protocol/Userdata');
@@ -11,7 +11,7 @@ require('../Source/Core/Log').SetLevel(0);
 const H=P.ExtractHandshakeBody(Fs.readFileSync(Path.join(__dirname,'Fixtures/NBA2K22/PlayerHandshake.bin')));
 function Player(Id,Events) {
     const Puid=0x110000100000000n+BigInt(Id);
-    const Body=P.StampIdentity(H.Body,H.PlayerId,Puid).Body;B.Mark(Body,'2K22');
+    const Body=P.StampIdentity(H.Body,H.PlayerId,Puid).Body;
     const Data=Z.deflateSync(Buffer.alloc(223256,Id&255));
     return {Id,Puid,MachineId:BigInt(Id),State:2,ActivityKey:0x3cf672c2,ActivityName:'neighborhood',
         ProtocolGeneration:'2K22',Identifier:String(Id),PlayerRevision:1n,PlayerBody:Body,

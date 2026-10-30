@@ -12,6 +12,8 @@ const AttributeIds2K22 = Object.freeze([
 ]);
 
 const AttributeIds = AttributeIds2K22;
+// NBA 2K22 FUN_14195B5D0: the first 19 attributes have explicit levels; the last 5 are derived.
+const ExplicitAttributeIds = new Set(AttributeIds.slice(0, 19));
 
 const Name = 0x68b693b2;
 const Level = 0x6dbe0ea3;
@@ -86,8 +88,7 @@ const DefaultCapValues = Object.freeze(
         DefaultCap2K22,
     ),
 );
-// Keep the legacy archetype limits until the 2K22 level semantics are
-// confirmed. A level is a purchased increment, not automatically a rating cap.
+// Preserve existing archetype limits; correcting the level baseline does not change caps.
 const DefaultMaxLevelValues = Object.freeze(AttributeIds.map(() => 25n));
 const DefaultInitial = DefaultInitialValues[0];
 const DefaultCap = DefaultCapValues[0];
@@ -161,10 +162,13 @@ function Normalize(Item, Index, Profile = null) {
         ConfiguredMaxLevels[Index],
     );
     const MaxLevel = ConfiguredMax < 0n ? 0n : ConfiguredMax;
-    const LevelValue = AsBigInt(Source.level ?? Source.purchased ?? Source.purchasedLevels, 0n);
+    const Id = Number(Source.id ?? Source.AttributeId ?? AttributeIds[Index]) >>> 0;
+    // FUN_14195AE70 clamps explicit levels to 1, so 0 -> 1 must not be a paid upgrade.
+    const MinimumLevel = ExplicitAttributeIds.has(Id) ? 1n : 0n;
+    const LevelValue = AsBigInt(Source.level ?? Source.purchased ?? Source.purchasedLevels, MinimumLevel);
     return {
-        id: Number(Source.id ?? Source.AttributeId ?? AttributeIds[Index]) >>> 0,
-        level: LevelValue < 0n ? 0n : LevelValue,
+        id: Id,
+        level: LevelValue < MinimumLevel ? MinimumLevel : LevelValue,
         initial: Initial,
         cap: SafeCap,
         maxLevel: MaxLevel,

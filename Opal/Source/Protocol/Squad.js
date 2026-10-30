@@ -296,7 +296,7 @@ function Reapply(Connection) {
     }
     const Squad = SquadOf(Connection.Puid);
     const Body = Connection.PlayerBody;
-    const HasSquadField = PlayerBody.IsPresent(Body, PlayerBody.LayoutFor(Body).Field.SquadId);
+    const HasSquadField = PlayerBody.IsPresent(Body, PlayerBody.Field.SquadId);
     if (Squad || HasSquadField) {
         const Patched = PlayerBody.SetSquadId(Body, Squad ? Squad.Id : 0n);
         if (Patched.Ok) Connection.PlayerBody = Patched.Body;

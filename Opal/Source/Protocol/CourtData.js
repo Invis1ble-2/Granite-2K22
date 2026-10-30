@@ -795,7 +795,8 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
         const Mixed = Options.NativePark, Ids = [...Teams.Home, ...Teams.Away];
         const Cpu = Ids.filter(Id => require('./ParkCpuWire').IsCpu(Id));
         const Humans = Ids.filter(Id => !Cpu.includes(Id));
-        if (Activity !== 'neighborhood' || Generation !== '2K22' || ![2, 3].includes(Teams.Home.length) ||
+        if (!['neighborhood', 'cages'].includes(Activity) || Generation !== '2K22' ||
+            !(Activity === 'cages' ? [2, 3, 5] : [2, 3]).includes(Teams.Home.length) ||
             !Cpu.length || Humans.length < 2 || !Mixed.MatchId || !Array.isArray(Mixed.Humans) ||
             Mixed.Humans.length !== Humans.length || new Set(Mixed.Humans).size !== Humans.length ||
             Mixed.Humans.some(Id => !Humans.includes(Id)))
@@ -807,9 +808,10 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
         const Solo = Options.NativeSolo;
         const Cpu = [...Teams.Home, ...Teams.Away].filter(Id => (Id & 0xfffff00000000000n) === 0x0222c00000000000n);
         const Humans = [...Teams.Home, ...Teams.Away].filter(Id => !Cpu.includes(Id));
-        if (Activity !== 'neighborhood' || Generation !== '2K22' || ![2,3].includes(Teams.Home.length) ||
+        if (!['neighborhood', 'cages'].includes(Activity) || Generation !== '2K22' ||
+            !(Activity === 'cages' ? [2, 3, 5] : [2, 3]).includes(Teams.Home.length) ||
             Cpu.length !== Teams.Home.length * 2 - 1 || Humans.length !== 1 || Humans[0] !== Solo.Owner || !Solo.MatchId)
-            throw new Error('Native solo court requires one human and native CPU fill in 2K22 2v2/3v3');
+            throw new Error('Native solo court requires one human and native CPU fill in a supported 2K22 court');
         Teams.NativeSolo = { Owner: Solo.Owner, Cpu, MatchId: Solo.MatchId };
         Teams.MatchId = Solo.MatchId;
     }

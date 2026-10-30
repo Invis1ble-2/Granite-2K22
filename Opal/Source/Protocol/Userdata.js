@@ -243,7 +243,7 @@ function CourtProfile(Connection, Blob) {
     if (!Connection?.PlayerBody || require('./PlayerBody').GenerationForConnection(Connection) !== '2K22')
         return Blob;
 
-    const Decoded = require('./PlayerBody2K22').Decode(Connection.PlayerBody);
+    const Decoded = require('./PlayerBody').Decode(Connection.PlayerBody);
     if (!Decoded.Ok) throw new Error(`invalid PLAYER for court appearance: ${Decoded.Reason}`);
     const At = Decoded.Offsets.get(CourtMascot2K22.Field);
     // An absent field is not an explicit unequip; preserve the native profile.

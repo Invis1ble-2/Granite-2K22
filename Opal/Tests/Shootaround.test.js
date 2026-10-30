@@ -10,7 +10,7 @@ const ObjectFrame = require('../Source/Codec/ObjectFrame');
 const Shootaround = require('../Source/Protocol/Shootaround');
 const MyCourt = require('../Source/Protocol/MyCourt');
 const PlayerBody = require('../Source/Protocol/PlayerBody');
-const PlayerBody2K22 = require('../Source/Protocol/PlayerBody2K22');
+const PlayerBody2K22 = require('../Source/Protocol/PlayerBody');
 const CourtLayout2K22 = require('../Source/Protocol/CourtLayout2K22');
 const Requests = require('../Source/Protocol/Requests');
 
@@ -329,8 +329,8 @@ function BuildPlayerBody2K22(Puid, MachineId) {
     // Deliberately omit fields 4/5; retain MiniGameId/MiniObjectId and opaque data.
     for (const Bit of [0, 1, 2, 3, 144]) Header[16 + (Bit >> 3)] |= 0x80 >> (Bit & 7);
     const Blob = Buffer.from([3, 0, 0, 0, 0xab, 0xcd, 0xef]);
-    return PlayerBody.Mark(Buffer.concat([Header, U64(Puid), U64(MachineId),
-        U64(0x1122334455667788n), U64(0x8877665544332211n), Blob]), '2K22');
+    return Buffer.concat([Header, U64(Puid), U64(MachineId),
+        U64(0x1122334455667788n), U64(0x8877665544332211n), Blob]);
 }
 function BuildStart2K22(Players, Type, Count = Players.length, RequestId = 4n, SoloFlag = 0n) {
     const Builder = new FieldList.Builder()

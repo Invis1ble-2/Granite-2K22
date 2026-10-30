@@ -3,9 +3,11 @@
 'use strict';
 
 // Fixed little-endian wire contract shared with Granite/Module/ParkCpu.h.
-// Seats 0..2 are Home, 3..5 are Away; seats 2 and 5 are zero in 2v2.
+// Preserve Home 0..2 / Away 3..5 for 2v2/3v3; 5v5 uses Home 0..4 / Away 5..9.
 const CpuTemplates = require('./ParkCpuProfiles');
-const Version = 5, ModuleVersion = 0x00010222, ManifestBytes = 184 + 6 * CpuTemplates.ProfileBytes, ReportBytes = 120;
+const MaxPlayers = 10, MaxCpu = 9;
+const SideStride = TeamSize => TeamSize === 5 ? 5 : 3;
+const Version = 6, ModuleVersion = 0x00010223, ManifestBytes = 248 + MaxPlayers * CpuTemplates.ProfileBytes, ReportBytes = 120;
 const ManifestMagic = 0x3232504d, ReportMagic = 0x3452504d;
 const LeaseMs = 8000, HeartbeatMs = 10000, MaxTemplates = 72, RelayId = 0x0a;
 const Flag = Object.freeze({ Installed: 1, Armed: 2, Started: 4 });
@@ -31,14 +33,14 @@ function ReadReport(Bytes) {
         Digest: Buffer.from(Bytes.subarray(56, 88)),
         ProfileDigest: Buffer.from(Bytes.subarray(88, 120)),
     };
-    if (!R.Instance || (R.Flags & ~7) || (R.Created & ~63) || R.Error >= ErrorNames.length ||
+    if (!R.Instance || (R.Flags & ~7) || (R.Created & ~((1 << MaxPlayers) - 1)) || R.Error >= ErrorNames.length ||
         R.PoolCount > MaxTemplates || ((R.Flags & Flag.Installed) && !R.PoolCount))
         throw new Error('invalid native park report');
     return R;
 }
 
 function BuildManifest(P, Client) {
-    if (!Phase[P.Phase] || !Client.Epoch || !P.MatchId || ![2, 3].includes(P.TeamSize) ||
+    if (!Phase[P.Phase] || !Client.Epoch || !P.MatchId || ![2, 3, 5].includes(P.TeamSize) ||
         !Buffer.isBuffer(P.Digest) || P.Digest.length !== 32 || P.PoolCount < 1 || P.PoolCount > MaxTemplates)
         throw new Error('invalid native park manifest');
     const B = Buffer.alloc(ManifestBytes);
@@ -48,11 +50,11 @@ function BuildManifest(P, Client) {
     B.writeBigUInt64LE(Client.Connection.Puid, 32);
     B.writeUInt32LE(P.TeamSize, 40); B.writeUInt32LE(P.HumanMask, 44); B.writeUInt32LE(P.PoolCount, 48);
     P.Digest.copy(B, 56);
-    for (let I = 0; I < 6; I++) {
+    for (let I = 0; I < MaxPlayers; I++) {
         B.writeBigUInt64LE(P.Players[I], 88 + I * 8);
-        B.writeUInt32LE(P.Seeds[I], 136 + I * 4);
-        B.writeUInt32LE(P.Templates[I], 160 + I * 4);
-        if (P.Profiles[I]) CpuTemplates.EncodeProfile(P.Profiles[I]).copy(B, 184 + I * CpuTemplates.ProfileBytes);
+        B.writeUInt32LE(P.Seeds[I], 168 + I * 4);
+        B.writeUInt32LE(P.Templates[I], 208 + I * 4);
+        if (P.Profiles[I]) CpuTemplates.EncodeProfile(P.Profiles[I]).copy(B, 248 + I * CpuTemplates.ProfileBytes);
     }
     return B;
 }
@@ -69,7 +71,7 @@ function Matches(R, P, Client) {
 }
 
 module.exports = {
-    Version, ModuleVersion, ManifestBytes, ReportBytes, ManifestMagic, ReportMagic,
+    Version, ModuleVersion, ManifestBytes, ReportBytes, ManifestMagic, ReportMagic, MaxPlayers, MaxCpu, SideStride,
     LeaseMs, HeartbeatMs, MaxTemplates, RelayId, Flag, Phase, IsCpu, ErrorNames,
     ReadReport, BuildManifest, HasPool, Matches,
 };

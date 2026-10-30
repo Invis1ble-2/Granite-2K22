@@ -509,7 +509,7 @@ function AdvanceLine(Connection, Group) {
 }
 
 function NotifyQueueChanges(Connection, SlotIds) {
-    if (Connection.ActivityName !== 'neighborhood' || !SlotIds.length) return;
+    if (!['neighborhood', 'cages'].includes(Connection.ActivityName) || !SlotIds.length) return;
     const World = CourtTables.For(Connection.ActivityName, Connection);
     if (!World) return;
     const Changed = new Set(SlotIds);
@@ -1209,11 +1209,11 @@ function Reapply(Connection) {
             : null;
         if (GymSpot) {
             // Cached/client bodies may already say PLAYING with an old anchor key.
-            const Patch = require('./PlayerBody2K22').SetGameState(
+            const Patch = require('./PlayerBody').SetGameState(
                 Connection.PlayerBody, State.Playing, GymSpot.CourtId,
             );
             if (!Patch.Ok || Patch.Body.equals(Connection.PlayerBody)) return false;
-            Connection.PlayerBody = PlayerBody.Mark(Patch.Body, '2K22');
+            Connection.PlayerBody = Patch.Body;
             return true;
         }
         if (PlayingAt >= 0) return false;

@@ -10,9 +10,12 @@
 
 namespace ParkCpu
 {
-inline constexpr uint32_t ModuleVersion = 0x00010222;
+inline constexpr uint32_t ModuleVersion = 0x00010223;
 inline constexpr uint64_t CpuMask = 0xfffff00000000000ULL, CpuPrefix = 0x0222c00000000000ULL;
 inline constexpr uint32_t MaxTemplates = 72, MaxLeaseMs = 8000;
+inline constexpr unsigned MaxPlayers = 10;
+inline bool SupportedTeamSize(uint32_t Size) { return Size == 2 || Size == 3 || Size == 5; }
+inline unsigned SideStride(uint32_t TeamSize) { return TeamSize == 5 ? 5 : 3; }
 inline unsigned char* ExeBase = nullptr;
 inline void (*BeforeStart)(void*, void*) = nullptr;
 inline bool (*FrameTimingReady)() = nullptr;
@@ -28,7 +31,7 @@ template<class T> inline bool At(const void* Base, size_t Offset, T& Value)
 {
     return Base && Read(static_cast<const unsigned char*>(Base) + Offset, &Value, sizeof(Value));
 }
-inline uint32_t ActiveMask(uint32_t TeamSize) { return TeamSize == 2 ? 0x1bU : 0x3fU; }
+inline uint32_t ActiveMask(uint32_t TeamSize) { return TeamSize == 5 ? 0x3ffU : TeamSize == 2 ? 0x1bU : 0x3fU; }
 
 // Profile: apply server-authored parameters and verify native data. No local generation policy.
 namespace Profile
@@ -378,25 +381,25 @@ inline bool HasRoster(void* Player, uint64_t Id, bool Cpu)
 struct RosterExpectation
 {
     uint32_t TeamSize = 0;
-    std::array<uint64_t, 6> Players{}; // Home 0..2, away 3..5; inactive 2v2 slots remain zero.
-    std::array<Profile::Snapshot, 6> Profiles{};
+    std::array<uint64_t, MaxPlayers> Players{}; // Preserve the six-slot 2v2/3v3 order; 5v5 uses stride five.
+    std::array<Profile::Snapshot, MaxPlayers> Profiles{};
     bool ExactSlots = false, RequireOnline = false;
 };
 inline bool ValidateRoster(void* Session, void* Info, const RosterExpectation& E, bool Prepared, LookupFn Lookup)
 {
-    if (!Lookup || (E.TeamSize != 2 && E.TeamSize != 3)) return false;
+    if (!Lookup || !SupportedTeamSize(E.TeamSize)) return false;
     int Home = 0, Away = 0; uint32_t Online = 0;
-    std::array<uint64_t, 6> Ids{};
+    std::array<uint64_t, MaxPlayers> Ids{};
     const size_t SideBytes = E.TeamSize * sizeof(uint64_t);
     const bool Ok = At(Info, 0x118, Home) && At(Info, 0x11c, Away) &&
         Home == static_cast<int>(E.TeamSize) && Away == static_cast<int>(E.TeamSize) &&
         (!E.RequireOnline || (At(Info, 0x304, Online) && Online)) &&
         Read(static_cast<unsigned char*>(Info) + 0x48, Ids.data(), SideBytes) &&
-        Read(static_cast<unsigned char*>(Info) + 0xb0, Ids.data() + 3, SideBytes);
+        Read(static_cast<unsigned char*>(Info) + 0xb0, Ids.data() + SideStride(E.TeamSize), SideBytes);
     if (!E.ExactSlots)
         Log(LogLevel::Info, L"SOLO22 roster check home=" + std::to_wstring(Home) + L" away=" + std::to_wstring(Away));
     if (!Ok) return false;
-    for (unsigned I = 0; I < 6; ++I)
+    for (unsigned I = 0; I < MaxPlayers; ++I)
     {
         if (!(ActiveMask(E.TeamSize) & (1U << I))) continue;
         const uint64_t Expected = E.Players[I];
@@ -404,7 +407,7 @@ inline bool ValidateRoster(void* Session, void* Info, const RosterExpectation& E
         else
         {
             unsigned Matches = 0;
-            for (unsigned J = 0; J < 6; ++J)
+            for (unsigned J = 0; J < MaxPlayers; ++J)
                 if (ActiveMask(E.TeamSize) & (1U << J)) Matches += Ids[J] == Expected;
             if (Matches != 1) return false;
         }
@@ -547,7 +550,7 @@ inline void RevokeNetwork();
 // Multiplayer: exact court slots, online-session filtering and phase-bound authorization.
 namespace Multiplayer
 {
-inline constexpr uint32_t Version = 5;
+inline constexpr uint32_t Version = 6;
 inline constexpr uint32_t ManifestMagic = 0x3232504d, ReportMagic = 0x3452504d;
 struct Manifest
 {
@@ -557,9 +560,9 @@ struct Manifest
     uint64_t LocalPuid;
     uint32_t TeamSize, HumanMask, PoolCount, Reserved;
     unsigned char Digest[32];
-    uint64_t Players[6];
-    uint32_t Seeds[6], Templates[6];
-    Profile::Parameters Profiles[6];
+    uint64_t Players[MaxPlayers];
+    uint32_t Seeds[MaxPlayers], Templates[MaxPlayers];
+    Profile::Parameters Profiles[MaxPlayers];
 };
 #if defined(GRANITE_SOLO_CPU_TRACE)
 using PlayingObserver = void(*)(void*, const Manifest&);
@@ -573,8 +576,8 @@ struct Report
     unsigned char Digest[32]{};
     unsigned char ProfileDigest[32]{};
 };
-static_assert(sizeof(Manifest) == 4216 && offsetof(Manifest, Digest) == 56 && offsetof(Manifest, Players) == 88);
-static_assert(offsetof(Manifest, Seeds) == 136 && offsetof(Manifest, Templates) == 160 && offsetof(Manifest, Profiles) == 184);
+static_assert(sizeof(Manifest) == 6968 && offsetof(Manifest, Digest) == 56 && offsetof(Manifest, Players) == 88);
+static_assert(offsetof(Manifest, Seeds) == 168 && offsetof(Manifest, Templates) == 208 && offsetof(Manifest, Profiles) == 248);
 static_assert(sizeof(Report) == 120 && offsetof(Report, Digest) == 56 && offsetof(Report, ProfileDigest) == 88);
 inline std::atomic_bool Installed = false, OnlineHookReady = false;
 inline std::mutex StateMutex;
@@ -584,7 +587,7 @@ struct StateData
     ULONGLONG Deadline = 0;
     uint32_t Created = 0, Error = 0;
     bool Active = false, Started = false;
-    std::array<Profile::Snapshot, 6> Profiles{};
+    std::array<Profile::Snapshot, MaxPlayers> Profiles{};
 };
 inline StateData State;
 struct ControlData
@@ -597,7 +600,7 @@ struct ControlData
 };
 inline std::mutex ControlMutex;
 inline ControlData Control;
-inline constexpr wchar_t ControlPath[] = L"/native-park/v5/poll";
+inline constexpr wchar_t ControlPath[] = L"/native-park/v6/poll";
 inline uint32_t ActiveMask(const Manifest& M) { return ParkCpu::ActiveMask(M.TeamSize); }
 inline uint32_t CpuSlots(const Manifest& M) { return ActiveMask(M) & ~M.HumanMask; }
 inline bool SameRoster(Manifest A, Manifest B)
@@ -609,10 +612,10 @@ inline bool ValidManifest(const Manifest& M)
 {
     if (M.Magic != ManifestMagic || M.Protocol != Version || !M.Epoch || !M.Match || !M.LocalPuid ||
         !M.LeaseMs || M.LeaseMs > MaxLeaseMs || M.Phase < 1 || M.Phase > 4 || M.Reserved ||
-        (M.TeamSize != 2 && M.TeamSize != 3) || !M.PoolCount || M.PoolCount > MaxTemplates ||
+        !SupportedTeamSize(M.TeamSize) || !M.PoolCount || M.PoolCount > MaxTemplates ||
         (M.HumanMask & ~ActiveMask(M))) return false;
     unsigned Humans = 0, Local = 0;
-    for (unsigned I = 0; I < 6; ++I)
+    for (unsigned I = 0; I < MaxPlayers; ++I)
     {
         const bool Used = (ActiveMask(M) & (1U << I)) != 0;
         const bool Human = (M.HumanMask & (1U << I)) != 0;
@@ -708,7 +711,7 @@ struct Generation
 inline bool ForCpu(void* Session, uint64_t Id, Generation& G)
 {
     std::lock_guard<std::mutex> Lock(StateMutex);
-    for (unsigned I = 0; I < 6; ++I) if (Id && State.Request.Players[I] == Id && IsCpu(Id))
+    for (unsigned I = 0; I < MaxPlayers; ++I) if (Id && State.Request.Players[I] == Id && IsCpu(Id))
     {
         G.Request = State.Request; G.Slot = I; G.Valid = LiveLocked(G.Request);
         auto& P = G.Profile;
@@ -770,21 +773,21 @@ inline bool Prepare(const Descriptor& Input, const Manifest& M, Descriptor& Outp
 {
     const auto Check = [&](bool Ok, const char* Why) { if (!Ok && Error.empty()) Error = Why; return Ok; };
     uint32_t Humans = 0;
-    for (unsigned I = 0; I < 6; ++I) if (M.HumanMask & (1U << I)) ++Humans;
+    for (unsigned I = 0; I < MaxPlayers; ++I) if (M.HumanMask & (1U << I)) ++Humans;
     const auto Count = Value<uint32_t>(Input, CountOffset);
     if (!Check(Value<uint32_t>(Input, 0) == GameTag && Value<uint32_t>(Input, PrebuiltOffset) != 0, "online-session-kind") ||
         !Check(Value<uint64_t>(Input, MatchOffset) == M.Match, "online-match") ||
         !Check(Count == M.TeamSize * 2 || Count == Humans, "online-user-count")) return false;
     // Accept the original full view or an already-filtered retry, never a partial roster.
     const uint32_t Expected = Count == M.TeamSize * 2 ? ActiveMask(M) : M.HumanMask;
-    std::array<unsigned, 6> Source{};
+    std::array<unsigned, MaxPlayers> Source{};
     uint32_t Seen = 0;
     for (unsigned I = 0; I < Count; ++I)
     {
         const auto Id = Value<uint64_t>(Input, UsersOffset + I * 8);
         unsigned Slot = 0;
-        while (Slot < 6 && (!(Expected & (1U << Slot)) || M.Players[Slot] != Id)) ++Slot;
-        if (!Check(Slot < 6, "online-unexpected-user") ||
+        while (Slot < MaxPlayers && (!(Expected & (1U << Slot)) || M.Players[Slot] != Id)) ++Slot;
+        if (!Check(Slot < MaxPlayers, "online-unexpected-user") ||
             !Check(!(Seen & (1U << Slot)), "online-duplicate-user")) return false;
         Seen |= 1U << Slot; Source[Slot] = I;
     }
@@ -799,8 +802,8 @@ inline bool Prepare(const Descriptor& Input, const Manifest& M, Descriptor& Outp
     Output = Input;
     for (const auto& C : Columns) memset(Output.data() + C.Offset, 0, C.Width * Capacity);
     uint32_t Next = 0; bool Local = false;
-    std::array<uint64_t, 6> Machines{};
-    for (unsigned I = 0; I < 6; ++I) if (M.HumanMask & (1U << I))
+    std::array<uint64_t, MaxPlayers> Machines{};
+    for (unsigned I = 0; I < MaxPlayers; ++I) if (M.HumanMask & (1U << I))
     {
         const auto From = Source[I];
         const auto Machine = Value<uint64_t>(Input, MachinesOffset + From * 8);
@@ -910,7 +913,7 @@ inline Report Snapshot(uint64_t Instance)
     if (State.Created && (State.Created & CpuSlots(State.Request)) == CpuSlots(State.Request))
     {
         std::vector<unsigned char> Bytes;
-        for (unsigned I = 0; I < 6; ++I) if (CpuSlots(State.Request) & (1U << I))
+        for (unsigned I = 0; I < MaxPlayers; ++I) if (CpuSlots(State.Request) & (1U << I))
             Profile::Append(Bytes, State.Request.Players[I], State.Profiles[I]);
         if (!Sha256(Bytes, R.ProfileDigest) && !R.Error) State.Error = R.Error = 9;
     }
@@ -918,7 +921,7 @@ inline Report Snapshot(uint64_t Instance)
     if (State.Started) R.Flags |= 4;
     return R;
 }
-// One authenticated transport worker polls both unchanged protocols.
+// One authenticated transport worker polls both CPU authorization protocols.
 struct InternetHandle
 {
     HINTERNET Value = nullptr;
@@ -1031,7 +1034,7 @@ inline bool Poll(HINTERNET Connection, const Report& R, const ControlData& C, bo
     const auto SoloText = IsSolo ? Solo::NetworkReceipt(R.Instance) : std::string{};
     const void* Body = IsSolo ? static_cast<const void*>(SoloText.data()) : static_cast<const void*>(&R);
     const DWORD BodyBytes = IsSolo ? static_cast<DWORD>(SoloText.size()) : sizeof(R);
-    InternetHandle Request(WinHttpOpenRequest(Connection, L"POST", IsSolo ? L"/native-solo/v4/poll" : ControlPath,
+    InternetHandle Request(WinHttpOpenRequest(Connection, L"POST", IsSolo ? L"/native-solo/v5/poll" : ControlPath,
         nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
     if (!Request.Value) return false;
     DWORD Policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
@@ -1107,7 +1110,7 @@ inline DWORD WINAPI Worker(void*)
     uint64_t Instance = 0;
     if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&Instance), sizeof(Instance), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0 || !Instance)
     { Installed = false; Log(LogLevel::Error, L"PARK22 disabled: control instance nonce unavailable"); return 1; }
-    InternetHandle Session(WinHttpOpen(L"Granite-NativePark/5", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    InternetHandle Session(WinHttpOpen(L"Granite-NativePark/6", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!Session.Value || !WinHttpSetTimeouts(Session.Value, 2000, 2000, 2000, 2000))
     { Installed = false; return 1; }
     bool Failed = false;
@@ -1142,10 +1145,10 @@ inline DWORD WINAPI Worker(void*)
 }
 } // namespace Multiplayer
 
-// Solo: one-human request lease and JSON receipts. Wire layout and digest order are unchanged.
+// Solo: one-human request lease and JSON receipts, with room for nine generated CPUs.
 namespace Solo
 {
-inline constexpr unsigned MaxCpu = 5;
+inline constexpr unsigned MaxCpu = 9;
 struct Request
 {
     uint32_t Magic, Version;
@@ -1156,8 +1159,8 @@ struct Request
     uint32_t Reserved;
     Profile::Parameters Profiles[MaxCpu];
 };
-static_assert(sizeof(Request) == 3456 && offsetof(Request, TeamSize) == 24 && offsetof(Request, Cpu) == 32 &&
-    offsetof(Request, Seeds) == 72 && offsetof(Request, Profiles) == 96);
+static_assert(sizeof(Request) == 6192 && offsetof(Request, TeamSize) == 24 && offsetof(Request, Cpu) == 32 &&
+    offsetof(Request, Seeds) == 104 && offsetof(Request, Profiles) == 144);
 inline Request Current{};
 inline bool Created[MaxCpu]{};
 inline std::array<Profile::Snapshot, MaxCpu> Profiles{};
@@ -1173,11 +1176,11 @@ struct NetworkEnvelope
     uint32_t LeaseMs, Reserved;
     Request Data;
 };
-static_assert(sizeof(NetworkEnvelope) == 3480 && offsetof(NetworkEnvelope, Data) == 24);
+static_assert(sizeof(NetworkEnvelope) == 6216 && offsetof(NetworkEnvelope, Data) == 24);
 inline bool ValidRequest(const Request& R)
 {
-    if (R.Magic != 0x32325053 || R.Version != 4 || R.Reserved || !R.Match || !R.Owner ||
-        IsCpu(R.Owner) || (R.TeamSize != 2 && R.TeamSize != 3) || R.CpuCount != R.TeamSize * 2 - 1) return false;
+    if (R.Magic != 0x32325053 || R.Version != 5 || R.Reserved || !R.Match || !R.Owner ||
+        IsCpu(R.Owner) || !SupportedTeamSize(R.TeamSize) || R.CpuCount != R.TeamSize * 2 - 1) return false;
     for (unsigned I = R.CpuCount; I < MaxCpu; ++I)
         if (R.Cpu[I] || R.Seeds[I] || !(R.Profiles[I] == Profile::Parameters{})) return false;
     for (unsigned I = 0; I < R.CpuCount; ++I)
@@ -1205,7 +1208,7 @@ inline std::string BuildReceipt(const char* Error = nullptr, bool Started = fals
     if (Error && GenerationError.empty()) GenerationError = Error;
     ReceiptStarted |= Started;
     std::ostringstream Text;
-    Text << "{\"version\":4,\"module\":\"00010222\",\"installed\":" <<
+    Text << "{\"version\":5,\"module\":\"00010223\",\"installed\":" <<
         (Profile::Ready && (!FrameTimingReady || FrameTimingReady()) ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
          << ",\"match\":\"" << std::hex << Current.Match << "\",\"teamSize\":" << std::dec << Current.TeamSize
          << ",\"cpuCount\":" << Current.CpuCount << ",\"created\":[";
@@ -1265,7 +1268,7 @@ inline bool NetworkReply(const void* Bytes, size_t Size, uint64_t Instance)
 }
 inline bool Validate(void* Session, void* Info, const Request& R, bool Prepared, LookupFn Lookup)
 {
-    if ((R.TeamSize != 2 && R.TeamSize != 3) || R.CpuCount != R.TeamSize * 2 - 1) return false;
+    if (!SupportedTeamSize(R.TeamSize) || R.CpuCount != R.TeamSize * 2 - 1) return false;
     RosterExpectation E{}; E.TeamSize = R.TeamSize;
     {
         std::lock_guard<std::mutex> Lock(ReceiptMutex);
@@ -1273,7 +1276,7 @@ inline bool Validate(void* Session, void* Info, const Request& R, bool Prepared,
         for (unsigned I = 0; I < R.CpuCount; ++I) if (!Created[I]) return false;
         for (unsigned I = 0; I <= R.CpuCount; ++I)
         {
-            const unsigned Slot = I < R.TeamSize ? I : I + 3 - R.TeamSize;
+            const unsigned Slot = I < R.TeamSize ? I : I + SideStride(R.TeamSize) - R.TeamSize;
             E.Players[Slot] = I ? R.Cpu[I - 1] : R.Owner;
             if (I) E.Profiles[Slot] = Profiles[I - 1];
         }
@@ -1323,7 +1326,7 @@ struct DefenseContext
     uint64_t Match = 0, Epoch = 0;
     uint32_t TeamSize = 0;
     bool Mixed = false;
-    std::array<uint64_t, 6> Players{};
+    std::array<uint64_t, MaxPlayers> Players{};
 };
 inline std::mutex DefenseMutex;
 inline DefenseContext Defense;
@@ -1333,16 +1336,16 @@ inline void ClearDefense()
 }
 inline bool DefenseRoster(const DefenseContext& C)
 {
-    if (!C.Session || !C.Match || !C.Epoch || (C.TeamSize != 2 && C.TeamSize != 3)) return false;
+    if (!C.Session || !C.Match || !C.Epoch || !SupportedTeamSize(C.TeamSize)) return false;
     auto* Info = static_cast<unsigned char*>(C.Session) + 0xcb0;
     uint64_t Match = 0; int Home = 0, Away = 0;
-    std::array<uint64_t, 6> Players{};
+    std::array<uint64_t, MaxPlayers> Players{};
     const size_t SideBytes = C.TeamSize * sizeof(uint64_t);
     return At(Info, MatchOffset, Match) && Match == C.Match &&
         At(Info, 0x118, Home) && At(Info, 0x11c, Away) &&
         Home == static_cast<int>(C.TeamSize) && Away == static_cast<int>(C.TeamSize) &&
         Read(Info + 0x48, Players.data(), SideBytes) &&
-        Read(Info + 0xb0, Players.data() + 3, SideBytes) && Players == C.Players;
+        Read(Info + 0xb0, Players.data() + SideStride(C.TeamSize), SideBytes) && Players == C.Players;
 }
 // Caller holds the matching multiplayer or solo authorization mutex.
 inline bool DefenseAuthorizedLocked(const DefenseContext& C)
@@ -1366,7 +1369,7 @@ inline bool DefenseAuthorized(const DefenseContext& C)
 inline bool ArmDefense(void* Session, uint64_t Match, uint32_t TeamSize, bool Mixed)
 {
     DefenseContext C{}; C.Session = Session; C.Match = Match; C.TeamSize = TeamSize; C.Mixed = Mixed;
-    if (!Session || (TeamSize != 2 && TeamSize != 3)) return false;
+    if (!Session || !SupportedTeamSize(TeamSize)) return false;
     if (Mixed)
     {
         Multiplayer::Manifest M{};
@@ -1380,7 +1383,7 @@ inline bool ArmDefense(void* Session, uint64_t Match, uint32_t TeamSize, bool Mi
     auto* Info = static_cast<unsigned char*>(Session) + 0xcb0;
     const size_t SideBytes = TeamSize * sizeof(uint64_t);
     if (!Read(Info + 0x48, C.Players.data(), SideBytes) ||
-        !Read(Info + 0xb0, C.Players.data() + 3, SideBytes) ||
+        !Read(Info + 0xb0, C.Players.data() + SideStride(TeamSize), SideBytes) ||
         std::none_of(C.Players.begin(), C.Players.end(), IsCpu) || !DefenseAuthorized(C)) return false;
     std::lock_guard<std::mutex> Lock(DefenseMutex); Defense = C; return true;
 }
@@ -1542,7 +1545,7 @@ inline void __fastcall Start(void* Session, void* Info)
             catch (...) { Ok = false; }
             if (!Ok)
             {
-                Log(LogLevel::Error, L"SOLO22 refused StartGame: expected complete 2v2/3v3 native rosters");
+                Log(LogLevel::Error, L"SOLO22 refused StartGame: expected complete authorized native rosters");
                 SetLastError(NativeError); return;
             }
             Log(LogLevel::Info, L"SOLO22 StartGame validated: one human and " + std::to_wstring(R.CpuCount) + L" native CPU rosters");
@@ -1605,7 +1608,7 @@ inline uint64_t __fastcall Playing(void* Session)
         catch (...) { Ok = false; }
         if (!Ok)
         {
-            Log(LogLevel::Error, L"SOLO22 refused InitPlayingGame: prepared 2v2/3v3 roster is incomplete");
+            Log(LogLevel::Error, L"SOLO22 refused InitPlayingGame: prepared native roster is incomplete");
             SetLastError(NativeError); return 0;
         }
         TeamSize = R.TeamSize;
@@ -1731,7 +1734,7 @@ inline void InstallControl(HMODULE Executable)
         Log(LogLevel::Error, L"PARK22 control worker could not start; enhanced solo remains available"); return;
     }
     Log(LogLevel::Info, Multiplayer::OnlineHookReady ?
-        L"PARK22 v5 enabled: server-authored CPU profiles and guarded mixed online sessions; waiting for the game's login" :
+        L"PARK22 v6 enabled: server-authored CPU profiles and guarded mixed online sessions; waiting for the game's login" :
         L"PARK22 mixed sessions unavailable; remote solo control remains available");
 }
 inline void InstallHooks(HMODULE Executable)
@@ -1770,7 +1773,7 @@ inline void InstallHooks(HMODULE Executable)
     catch (...) { Log(LogLevel::Error, L"PARK22 enhanced CPU hook installation failed"); }
     { std::lock_guard<std::mutex> Lock(Solo::ReceiptMutex); Solo::Receipt(); }
     Log(LogLevel::Info, Profile::Ready ?
-        L"PARK22 CPU enabled: park v5 / solo v4, shared profile execution, guarded 2v2/3v3 start and manual/no-help AI defense" :
+        L"PARK22 CPU enabled: park v6 / solo v5, shared profile execution, guarded 2v2/3v3/5v5 start and manual/no-help AI defense" :
         L"PARK22 CPU unavailable: enhanced CPU hook is not ready");
 }
 inline DWORD WINAPI WaitAndInstall(void* Context)

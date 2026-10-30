@@ -402,9 +402,18 @@ def AddResourceValidation(Result, Assets, Bases):
     Members = ReadIFFMembers(Slot)
     Hashes = ClothingItemHashes(Members['item_table.ConsolidatedClothingItems'])
     ManifestNames = {Name.lower() for Name in Assets}
+    PanelSlot = ReadAsset(Assets, Bases, 'customplayerpanels.iff')
+    PanelMembers = {Name.lower() for Name in ReadIFFMembers(PanelSlot)}
+    PanelTextures = {Name[:-5] for Name in PanelMembers if Name.endswith('.txtr')}
+    PanelImages = {Match.group(1) for Name in PanelMembers
+                   if (Match := re.fullmatch(r'(t_player_panel_[a-z0-9_]+)\.[0-9a-f]+\.dds', Name))}
+    Result['customPlayerPanelsIffSha256'] = hashlib.sha256(PanelSlot).hexdigest()
     for Item in Result['items']:
         if Item['itemType'] in (2, 4, 5):
             Item['resources']['content'] = HasWearableContent(Item, ManifestNames, Hashes)
+        elif Item['itemType'] == 27:
+            Key = Item['content'][0].lower() if Item['content'] else ''
+            Item['resources']['localPanel'] = Key in PanelTextures and Key in PanelImages
     Result['resourceValidationVersion'] = 1
     Result['clothingItemTableSha256'] = hashlib.sha256(Slot).hexdigest()
 

@@ -462,7 +462,7 @@ inline void Arm(void* NativeSession, const ParkCpu::Multiplayer::Manifest& M)
     void* Table = nullptr;
     void* World = nullptr;
     uint64_t NativeMatch = 0;
-    if (!Ready || Humans != 2 || !ParkCpu::Multiplayer::ValidManifest(M) || !ParkCpu::Multiplayer::Authorized(M) ||
+    if (!Ready || M.TeamSize * 2 > MaxPlayers || Humans != 2 || !ParkCpu::Multiplayer::ValidManifest(M) || !ParkCpu::Multiplayer::Authorized(M) ||
         !ParkCpu::Lookup || !ParkCpu::At(NativeSession, 0, Table) || Table != Base + 0x2cbace0 ||
         !ParkCpu::At(NativeSession, 0xcb0 + ParkCpu::MatchOffset, NativeMatch) || NativeMatch != M.Match ||
         !ParkCpu::Read(Base + 0x6832aa0, &World, sizeof(World)) || !World)

@@ -6,7 +6,6 @@ require('../Source/Core/Log').SetLevel(0);
 const Fixture=N=>Fs.readFileSync(Path.join(__dirname,`Fixtures/NBA2K22/QueueAreaUpdate${N}.bin`));
 function Connection(Events) {
     const H=P.ExtractHandshakeBody(Fs.readFileSync(Path.join(__dirname,'Fixtures/NBA2K22/PlayerHandshake.bin')));
-    B.Mark(H.Body,'2K22');
     return {ProtocolGeneration:'2K22',Puid:H.PlayerId,MachineId:123n,PlayerBody:H.Body,PlayerRevision:1n,
         Send(F){Events.push(F);return true;},SendObject(F){Events.push(F);return true;}};
 }

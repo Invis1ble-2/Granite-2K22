@@ -12,7 +12,6 @@ const PlayerObject = require('./PlayerObject');
 const GotNext = require('./GotNext');
 const Roster = require('./Roster');
 const PlayerBody = require('./PlayerBody');
-const PlayerBody2K22 = require('./PlayerBody2K22');
 const CourtLayout2K22 = require('./CourtLayout2K22');
 const Requests = require('./Requests');
 const { randomBytes: RandomBytes } = require('node:crypto');
@@ -96,8 +95,6 @@ const MenuModes2K22 = Object.freeze({
     4: Object.freeze({ CourtType: 52, Teams: 'together', MinPlayers: 2, MaxPlayers: 5 }),
     5: Object.freeze({ CourtType: 53, Teams: 'together', MinPlayers: 2, MaxPlayers: 5 }),
     6: Object.freeze({ CourtType: 9, Teams: 'versus', MinPlayers: 2, MaxPlayers: 2 }),
-    // Type 6 selects the correct native MyCOURT camera; keep a real 2+2 roster.
-    // Module scopes the native default 3/3 AI counts to 2/2 during initialization.
     7: Object.freeze({ CourtType: 6, Teams: 'versus', MinPlayers: 4, MaxPlayers: 4 }),
     8: Object.freeze({ CourtType: 6, Teams: 'versus', MinPlayers: 6, MaxPlayers: 6 }),
     11: Object.freeze({ CourtType: 54, Teams: 'together', MinPlayers: 2, MaxPlayers: 5 }),
@@ -214,9 +211,9 @@ function Writable(Body) {
 
 function PatchPlayer(Connection, State, GameId) {
     if (PlayerBody.GenerationForConnection(Connection) === '2K22') {
-        const Patched = PlayerBody2K22.SetGameState(Connection.PlayerBody, State, GameId);
+        const Patched = PlayerBody.SetGameState(Connection.PlayerBody, State, GameId);
         if (!Patched.Ok) return false;
-        Connection.PlayerBody = PlayerBody.Mark(Patched.Body, '2K22');
+        Connection.PlayerBody = Patched.Body;
         return true;
     }
     if (!Writable(Connection.PlayerBody)) return false;
@@ -254,7 +251,7 @@ function Release(Connection) {
 function Reapply(Connection) {
     if (!Connection || !Connection.Shootaround) return false;
     if (PlayerBody.GenerationForConnection(Connection) === '2K22') {
-        const Decoded = PlayerBody2K22.Decode(Connection.PlayerBody);
+        const Decoded = PlayerBody.Decode(Connection.PlayerBody);
         if (!Decoded.Ok) return false;
         const StateAt = Decoded.Offsets.get(4);
         const CourtAt = Decoded.Offsets.get(5);
@@ -608,7 +605,7 @@ function StartOnlineGame2K22(Connection, Request, Req) {
                 !Data.Blob.length || Data.DeclaredLength !== Data.Blob.length) {
                 throw new Error(`complete USERDATA is not ready for ${Peer.Identifier}`);
             }
-            if (!PlayerBody2K22.SetGameState(Peer.PlayerBody, GotNext.State.Playing, CourtIndex).Ok)
+            if (!PlayerBody.SetGameState(Peer.PlayerBody, GotNext.State.Playing, CourtIndex).Ok)
                 throw new Error(`complete PLAYER is not ready for ${Peer.Identifier}`);
             const Blob = Userdata.CourtProfile(Peer, Data.Blob);
             if (Blob.length > 0x70000) throw new Error('court USERDATA exceeds the native size limit');
