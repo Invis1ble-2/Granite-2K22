@@ -20,10 +20,10 @@
 - **公园 3v3 Got Next 点位**：用户已验收。`ShipCourts2K22.js` 按原始 `park_setup.RDAT / BOULEVARD / DEFAULT_LAYOUT` 绑定逻辑布局：`SHORT_TOP_LEFT` 为近侧右/左、无组队点；其余五场为远侧左/右及组队点。修复遗漏的布局绑定、侧别及队列顺序；2v2 和赛后算法未改动。本次 JS 语法及差异检查通过，不外推其他场景或完整比赛流程已验收。
 
 ## 未完成 / 待确认
+- **MyCourt 首次进入偶发失败（2026-10-30 00:46，未解决）**：用户复测仍失败。Opal 日志显示 neighborhood travel handoff 保留旧连接及 ACK/pending；新 CRIB connection 2 在 00:46:14 完成 Connect、active、484-byte init success，并在 init 后 100ms 发送 ownership bootstrap `3F0000D4D06`。之后没有 `PlayerHandshake` 或 `0x16A0D01E` room request，客户端报错 `727e66ac` 后返回公园。客户端静态调查仅确认该码被传给 `TkWorld_ExitPark`，不能作为 ownership 根因。此前“发送 change-server 后立即关闭旧连接”会导致客户端回到主菜单，已撤销。明日最小入口：对照旧连接 ACK/carrier 与 bootstrap 对象安装、related-ID/房间请求条件；本轮先记录，不再继续改功能代码。
 - **Ante-Up 内部玩法**：Got Next 点位及左右选位已验收；排队推进与完整多人比赛未验收。本次金额修复后的退出重进、Game Room 双向互切与 Got Next 回归仍待验收。VC 仅练习值，不扣款或结算。
 - **Game Room 内部设施**：设施不可用；用户反馈，待调查。
 - **Pro-Am & REC可用性未知**
-- 双人比赛中若出现某一方连接质量差甚至掉线时，会直接双方都会重新连接中，而不是连接质量差的一方自动同步比赛最新进度或者直接断连由人机代替比赛，而是直接双方都断连终止比赛
 - Myteam模式适配（未开始，暂无计划）
 
 

@@ -25,6 +25,16 @@ const StoreTags = Object.freeze(Object.fromEntries(Object.entries(Groups).map(([
 const StoreTagCrcs = Object.freeze(Object.fromEntries(Object.entries(StoreTags).map(([Name, Tag]) => [Name, Crc32(Tag)])));
 
 const ExpectedPanelIffSha256 = 'c08a11348607d6b65ff42add0e6bea686176539d8fbd22230f3bf12ee648e0d7';
+const HiddenWheelzPrefixes = Object.freeze([
+    'lowrider_', 'skateboard_wheel_', 'parrot_', 'tiger_', 'tshirt_jetpack_prize',
+]);
+
+function IsHiddenWheelzItem(RawItem) {
+    if (RawItem?.itemType !== Groups.Wheelz.ItemType || !Array.isArray(RawItem.content)) return false;
+    return RawItem.content.some(Content => typeof Content === 'string' &&
+        HiddenWheelzPrefixes.some(Prefix => Content.toLowerCase().startsWith(Prefix)));
+}
+
 
 function VerifyDiscount(originPrice, finalPrice) {
     if (finalPrice === originPrice) {
@@ -123,6 +133,7 @@ class StoreCatalog2K22 {
         const Conflicted = new Set();
         for (const RawItem of Document.items) {
             if (!RawItem || typeof RawItem !== 'object') continue;
+            if (IsHiddenWheelzItem(RawItem)) continue;
 
             const RawId = RawItem.item ?? RawItem.itemId ?? RawItem.id;
             const Id = typeof RawId === 'number' ? RawId

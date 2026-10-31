@@ -53,7 +53,7 @@ function Remove(Connection) {
 }
 
 function Active() {
-    return [...Players.values()].filter((C) => !C.Closed && C.State === 2);
+    return [...Players.values()].filter((C) => !C.Closed && C.State === 2 && !C.TravelHandoff);
 }
 
 function InActivity(ActivityKey, RoomScope = undefined) {

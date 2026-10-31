@@ -74,6 +74,7 @@ class Connection {
         this.SessionId = null;
         this.WorldKey = null;
         this.Closed = false;
+        this.TravelHandoff = false;
         this.AckTimer = null;
         this.CourtsPublished = false;
         this.CourtRefreshTimers = [];
@@ -258,8 +259,9 @@ function Dispatch(Client, Bytes) {
 
     if (ChangeServer.IsTravelRequest(Bytes, FrameData.PacketId)) {
         OnTravelRequest(Client, FrameData, Bytes);
-        Handled = true;
+        return;
     }
+    if (Client.TravelHandoff) return;
     if (MyCourt.IsRoomClosed(Client)) {
         // Keep late traffic out of the next room, but complete self PLAYER
         // requests: ACK alone leaves the native pending queue blocking travel.
@@ -364,6 +366,7 @@ function OnTravelRequest(Client, FrameData, Bytes) {
     const Url = ChangeServer.UrlFor(Client.Socket, Client.Port);
     const SessionId = Ask.MatchType || Destination.SessionId;
     const ServerType = ChangeServer.ServerTypeFor(Ask);
+    const PreviousActivity = Activities.Lookup(Client.ActivityKey, Client.WorldKey);
 
     try {
         const Built = ChangeServer.Build({
@@ -376,7 +379,22 @@ function OnTravelRequest(Client, FrameData, Bytes) {
         });
         Shootaround.Disconnect(Client);
         MyCourt.ClearConnection(Client);
-        Client.Send(Built.Frame);
+        if (!Client.Send(Built.Frame)) {
+            Log.Error(`change server for ${Client.Identifier} could not be sent.`);
+            return;
+        }
+        PlayerObject.PublishDestroy(Client);
+        Squad.Disconnect(Client);
+        Client.TravelHandoff = true;
+        if (Array.isArray(Client.CourtRefreshTimers)) {
+            for (const Timer of Client.CourtRefreshTimers) clearTimeout(Timer);
+            Client.CourtRefreshTimers = [];
+        }
+        Log.Verbose(
+            `  travel handoff retained connection ${Client.Id}; ` +
+                `request ACKs and pending player state remain active`,
+        );
+        if (PreviousActivity) RefreshRosterForActivity(PreviousActivity, 'peer left', null, Client.RoomScope || null);
         Log.Info(`${Client.Identifier} is travelling to ${Destination.Name} @ ${Log.Clock()}`);
         Log.Verbose(
             `  change server sent, ${Built.Frame.length} bytes, world ${Built.WorldName} ` +
@@ -483,6 +501,9 @@ function OnConnect(Client, FrameData, Bytes) {
             `  connect-carrier status ${Hex(Value)} recorded; ` +
                 `it is not a new connection, so no second init reply was sent`,
         );
+        if (Client.TravelHandoff) {
+            Log.Verbose(`  travel handoff carrier observed on connection ${Client.Id}`);
+        }
         return;
     }
 
@@ -502,6 +523,14 @@ function OnConnect(Client, FrameData, Bytes) {
     if (ChangingRoom && !ChangingActivity) {
         Shootaround.Disconnect(Client);
         MyCourt.ClearConnection(Client);
+    }
+    if (ChangingActivity || ChangingRoom) {
+        Requests.Stop(Client);
+        WorldState.CancelPending(Client);
+        if (Array.isArray(Client.CourtRefreshTimers)) {
+            for (const Timer of Client.CourtRefreshTimers) clearTimeout(Timer);
+            Client.CourtRefreshTimers = [];
+        }
     }
     if (Info.Puid && Client.ClaimedPuid === null) Client.ClaimedPuid = Info.Puid;
     if (Info.WorldKey !== null) Client.WorldKey = Info.WorldKey;
@@ -544,6 +573,10 @@ function OnConnect(Client, FrameData, Bytes) {
         );
         return;
     }
+    if (Client.TravelHandoff) {
+        Client.TravelHandoff = false;
+        Log.Verbose(`  connection ${Client.Id} completed its travel handoff with ${Activity.Name}`);
+    }
     if (MyCourt.IsRoomClosed(Client) && !ChangingActivity && !ChangingRoom) {
         MyCourt.PublishClosedRoom(Client);
         return;
@@ -554,9 +587,7 @@ function OnConnect(Client, FrameData, Bytes) {
     let ParkReturnPlayer = null;
     if ((Activity.Name === 'mycourt' || Activity.Name === 'neighborhood') &&
         !Client.ProtocolGeneration && Info.Puid) {
-        const Peers = Activity.Name === 'neighborhood'
-            ? [...require('../Net/Listener').Connections.values()]
-            : Roster.Active();
+        const Peers = [...require('../Net/Listener').Connections.values()];
         const ProtocolPeers = Peers.filter((Peer) =>
             Peer.Id !== Client.Id && !Peer.Closed && Peer.State === State.Active &&
             Peer.Puid === Info.Puid && Peer.ProtocolGeneration &&
