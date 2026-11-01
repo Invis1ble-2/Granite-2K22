@@ -356,7 +356,7 @@ const Multiplayer = (() => {
         if (S.Members.some(M => Participants.has(M.Connection.Id))) return false;
         const Waited = WaitForQueue(C, Found);
         if (S.Members.some(M => !Wire.HasPool(M.Control))) {
-            Notice(C, 'all queued humans need Module 00010226 v7 readiness through their game login'); return false;
+            Notice(C, 'all queued humans need Module 00010227 v7 readiness through their game login'); return false;
         }
         const First = S.Members[0].Control.Report;
         if (S.Members.some(M => M.Control.Report.PoolCount !== First.PoolCount || !M.Control.Report.Digest.equals(First.Digest))) {
@@ -399,7 +399,7 @@ const Solo = (() => {
     const Pending = new Map();
     const { LeaseMs, HeartbeatMs } = Wire;
     function Installed(R) {
-        return Boolean(R && R.version === ProtocolVersion && R.module === '00010226' && R.installed === true &&
+        return Boolean(R && R.version === ProtocolVersion && R.module === '00010227' && R.installed === true &&
             Number.isInteger(R.pid) && R.pid > 0);
     }
     function RemoteLive(C, P) {
@@ -591,7 +591,7 @@ const Solo = (() => {
         if (!WaitForQueue(C, Found)) return false;
         const Control = Controls.get(C.Id);
         if (!Control || Date.now() - Control.SeenAt > HeartbeatMs || !Installed(Control.SoloReport)) {
-            if (!C.ParkCpuSoloNotice) Log.Info('ParkCpu solo withheld: authenticated game control with Module 00010226 is required');
+            if (!C.ParkCpuSoloNotice) Log.Info('ParkCpu solo withheld: authenticated game control with Module 00010227 is required');
             C.ParkCpuSoloNotice = true; return false;
         }
         if (!Multiplayer.HasTemplatePool(C, Control.Instance.toString(16))) {
@@ -642,7 +642,7 @@ const Solo = (() => {
     function ValidateReport(R) {
         const Hex = Value => typeof Value === 'string' && /^[0-9a-f]{1,16}$/.test(Value);
         // An unready module can report its status, but cannot authorize a CPU match.
-        if (!R || R.version !== ProtocolVersion || R.module !== '00010226' || typeof R.installed !== 'boolean' ||
+        if (!R || R.version !== ProtocolVersion || R.module !== '00010227' || typeof R.installed !== 'boolean' ||
             !Number.isInteger(R.pid) || R.pid <= 0 || !Hex(R.instance) || BigInt('0x' + R.instance) === 0n ||
             !Hex(R.epoch) || !Hex(R.match) || typeof R.armed !== 'boolean' || typeof R.started !== 'boolean' ||
             !Array.isArray(R.created) || R.created.length > Wire.MaxCpu || typeof R.profileDigest !== 'string' || !/^[0-9a-f]{64}$/.test(R.profileDigest) ||

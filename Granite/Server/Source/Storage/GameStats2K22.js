@@ -60,7 +60,10 @@ function Normalize(Record) {
         // second game, or silently override a disagreeing completed report.
         Rows[Id] = Row;
     }
-    return { mode: Mode, session: SessionId, reporter: Reporter, rows: Rows };
+    const Ratings = Values(Fields, 'USER_RATING', 'U64');
+    const ReporterIndex = Ids.findIndex(Id => UserId(Id) === Reporter);
+    const Rating = Ratings?.length === Ids.length ? Integer(Ratings[ReporterIndex], 100) : null;
+    return { mode: Mode, session: SessionId, reporter: Reporter, rows: Rows, rating: Rating };
 }
 
 function Eligible(Row) {
@@ -87,11 +90,19 @@ function Add(Games, Report) {
     for (const [Id, Row] of Object.entries(Report.rows)) {
         const Player = Players[Id] || { reports: {}, conflict: false };
         const Old = Player.reports[Report.reporter];
-        if (Old && JSON.stringify(Old) === JSON.stringify(Row)) continue;
-        // Different OVR/teammate-grade reports are deliberately not included
-        // in these rows. Only results and the supported technical stats count.
-        Players[Id] = { reports: { ...Player.reports, [Report.reporter]: Row },
-            conflict: Player.conflict || Boolean(Old) };
+        let Updated = Player;
+        // Grade recovery must not change the technical-stat consensus.
+        if (!Old || JSON.stringify(Old) !== JSON.stringify(Row)) {
+            Updated = { ...Updated, reports: { ...Player.reports, [Report.reporter]: Row },
+                conflict: Player.conflict || Boolean(Old) };
+        }
+        if (Id === Report.reporter && Report.rating !== null) {
+            if (Updated.rating === undefined) Updated = { ...Updated, rating: Report.rating };
+            else if (Updated.rating !== null && Updated.rating !== Report.rating)
+                Updated = { ...Updated, rating: null };
+        }
+        if (Updated === Player) continue;
+        Players[Id] = Updated;
         Changed = true;
     }
     if (Changed) Games[Key] = { mode: Report.mode, session: Report.session, players: Players };
@@ -112,6 +123,10 @@ class GameStats2K22 {
             for (const [Id, Player] of Object.entries(Game.players)) {
                 if (!UserId(Id) || !Json.IsObject(Player) || typeof Player.conflict !== 'boolean' || !Json.IsObject(Player.reports))
                     throw new Error(`Invalid 2K22 player stats entry: ${Key}/${Id}`);
+                // Missing ratings are legacy data; null quarantines disagreeing self-reports.
+                if (Player.rating !== undefined && Player.rating !== null &&
+                    Integer(Player.rating, 100) === null)
+                    throw new Error(`Invalid 2K22 player rating: ${Key}/${Id}`);
                 for (const [Reporter, Row] of Object.entries(Player.reports)) {
                     if (!UserId(Reporter) || !Json.IsObject(Row) ||
                         ['COMPLETIONSTATUS', 'TIME_PLAYED', 'D', ...Counters].some(Name => Integer(Row[Name]) === null))
@@ -139,7 +154,7 @@ class GameStats2K22 {
     }
 
     Totals(Id, Mode) {
-        const Result = Object.fromEntries(['games', ...Counters].map(Name => [Name, 0n]));
+        const Result = Object.fromEntries(['games', 'GRADE', ...Counters].map(Name => [Name, 0n]));
         const Key = UserId(Id);
         if (!Key || !Object.hasOwn(Modes, Mode)) return Result;
         for (const Game of Object.values(this.State.games)) {
@@ -148,6 +163,8 @@ class GameStats2K22 {
             if (!Row) continue;
             Result.games++;
             for (const Name of Counters) Result[Name] += BigInt(Row[Name]);
+            const Rating = Game.players[Key].rating;
+            if (Rating !== undefined && Rating !== null) Result.GRADE += BigInt(Rating);
         }
         return Result;
     }

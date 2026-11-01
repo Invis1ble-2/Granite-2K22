@@ -29,7 +29,8 @@
               "FTA": 8
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 75
         }
       }
     },
@@ -60,7 +61,8 @@
               "FTA": 4
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 90
         }
       }
     },
@@ -91,7 +93,8 @@
               "FTA": 6
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 78
         }
       }
     },
@@ -122,7 +125,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 79
         }
       }
     },
@@ -153,7 +157,8 @@
               "FTA": 4
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 73
         }
       }
     },
@@ -184,7 +189,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 83
         }
       }
     },
@@ -215,7 +221,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 77
         }
       }
     },
@@ -246,7 +253,8 @@
               "FTA": 1
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 79
         }
       }
     },
@@ -277,7 +285,8 @@
               "FTA": 4
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 84
         }
       }
     },
@@ -308,7 +317,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 75
         }
       }
     },
@@ -339,7 +349,8 @@
               "FTA": 6
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 98
         }
       }
     },
@@ -370,7 +381,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 76
         }
       }
     },
@@ -401,7 +413,8 @@
               "FTA": 4
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 88
         }
       }
     },
@@ -452,7 +465,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 79
         },
         "76561199028832498": {
           "reports": {
@@ -497,7 +511,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 76
         }
       }
     },
@@ -528,7 +543,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 80
         },
         "76561199028832498": {
           "reports": {
@@ -584,7 +600,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 79
         }
       }
     },
@@ -615,7 +632,8 @@
               "FTA": 2
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 74
         }
       }
     },
@@ -646,7 +664,8 @@
               "FTA": 6
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 94
         }
       }
     },
@@ -697,7 +716,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 87
         },
         "76561199028832498": {
           "reports": {
@@ -742,7 +762,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 69
         }
       }
     },
@@ -793,7 +814,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 88
         },
         "76561199028832498": {
           "reports": {
@@ -838,7 +860,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 97
         }
       }
     },
@@ -889,7 +912,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 96
         },
         "76561199081747937": {
           "reports": {
@@ -934,7 +958,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 100
         }
       }
     },
@@ -985,7 +1010,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 91
         },
         "76561199081747937": {
           "reports": {
@@ -1030,7 +1056,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 100
         }
       }
     },
@@ -1081,7 +1108,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 83
         },
         "76561199081747937": {
           "reports": {
@@ -1126,7 +1154,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 74
         }
       }
     },
@@ -1182,7 +1211,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 67
         }
       }
     },
@@ -1233,7 +1263,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 60
         },
         "76561199028832498": {
           "reports": {
@@ -1278,7 +1309,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 81
         }
       }
     },
@@ -1329,7 +1361,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 75
         },
         "76561199081747937": {
           "reports": {
@@ -1374,7 +1407,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 75
         }
       }
     },
@@ -1425,7 +1459,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 91
         },
         "76561199028832498": {
           "reports": {
@@ -1470,7 +1505,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 61
         }
       }
     },
@@ -1521,7 +1557,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 84
         },
         "76561199028832498": {
           "reports": {
@@ -1566,7 +1603,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 83
         }
       }
     },
@@ -1617,7 +1655,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 72
         },
         "76561199028832498": {
           "reports": {
@@ -1662,7 +1701,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 85
         }
       }
     },
@@ -1713,7 +1753,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 93
         },
         "76561199028832498": {
           "reports": {
@@ -1758,7 +1799,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 74
         }
       }
     },
@@ -1809,7 +1851,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 95
         },
         "76561199028832498": {
           "reports": {
@@ -1854,7 +1897,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 86
         }
       }
     },
@@ -1905,7 +1949,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 93
         },
         "76561199028832498": {
           "reports": {
@@ -1950,7 +1995,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 71
         }
       }
     },
@@ -2001,7 +2047,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 85
         },
         "76561199028832498": {
           "reports": {
@@ -2046,7 +2093,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 87
         }
       }
     },
@@ -2097,7 +2145,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 97
         },
         "76561199028832498": {
           "reports": {
@@ -2142,7 +2191,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 95
         }
       }
     },
@@ -2193,7 +2243,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 99
         },
         "76561199028832498": {
           "reports": {
@@ -2238,7 +2289,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 96
         }
       }
     },
@@ -2289,7 +2341,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 91
         },
         "76561199028832498": {
           "reports": {
@@ -2334,7 +2387,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 98
         }
       }
     },
@@ -2385,7 +2439,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 86
         },
         "76561199028832498": {
           "reports": {
@@ -2430,7 +2485,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 81
         }
       }
     },
@@ -2481,7 +2537,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 87
         },
         "76561199028832498": {
           "reports": {
@@ -2526,7 +2583,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 78
         }
       }
     },
@@ -2577,7 +2635,8 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 74
         },
         "76561199081747937": {
           "reports": {
@@ -2622,7 +2681,72 @@
               "FTA": 0
             }
           },
-          "conflict": false
+          "conflict": false,
+          "rating": 97
+        }
+      }
+    },
+    "Ship:4816935888831628202": {
+      "mode": "Ship",
+      "session": "4816935888831628202",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 1,
+              "TIME_PLAYED": 372,
+              "D": 0,
+              "W": 0,
+              "L": 0,
+              "PTS": 13,
+              "REB": 4,
+              "AST": 1,
+              "STL": 0,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 5,
+              "FGA": 16,
+              "3PM": 3,
+              "3PA": 13,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false,
+          "rating": 85
+        }
+      }
+    },
+    "Ship:12607111421148361568": {
+      "mode": "Ship",
+      "session": "12607111421148361568",
+      "players": {
+        "76561199081747937": {
+          "reports": {
+            "76561199081747937": {
+              "COMPLETIONSTATUS": 0,
+              "TIME_PLAYED": 290,
+              "D": 0,
+              "W": 1,
+              "L": 0,
+              "PTS": 17,
+              "REB": 0,
+              "AST": 2,
+              "STL": 3,
+              "BLK": 0,
+              "TO": 0,
+              "FLS": 0,
+              "FGM": 7,
+              "FGA": 8,
+              "3PM": 3,
+              "3PA": 4,
+              "FTM": 0,
+              "FTA": 0
+            }
+          },
+          "conflict": false,
+          "rating": 92
         }
       }
     }

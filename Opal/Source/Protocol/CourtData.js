@@ -570,7 +570,7 @@ function OccupancyPayload(Layout, CourtId, OwnerId, ObjectId, SeatsByQueue, Prof
         LosersLocation: PostGame ? PostGame.Losers : undefined,
         Teams,
         Profiles,
-        Online: Boolean(Teams) && !Teams.NativeSolo,
+        Online: Boolean(Teams),
         GameState: GameCourtValue ? (Teams ? (Teams.GameReady ? 3 : 2) : 0) : undefined,
         GamblingIndex: Layout.StageCourt ? StagePrice(Layout.StageCourt.name).index : undefined,
         BallType: Generation === '2K22' ? (Teams?.BallType ?? 0) : undefined,
@@ -793,29 +793,23 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
     if (Teams.Home.length !== Court.Entry.TeamSize) throw new Error('Roster does not match court team size');
     const { randomBytes: RandomBytes } = require('node:crypto');
     if (Options.NativeSolo && Options.NativePark) throw new Error('conflicting native park modes');
-    if (Options.NativePark) {
-        const Mixed = Options.NativePark, Ids = [...Teams.Home, ...Teams.Away];
-        const Cpu = Ids.filter(Id => require('./ParkCpuWire').IsCpu(Id));
+    const Native = Options.NativeSolo || Options.NativePark;
+    if (Native) {
+        const Single = Boolean(Options.NativeSolo), Ids = [...Teams.Home, ...Teams.Away];
+        const Cpu = Ids.filter(require('./ParkCpuWire').IsCpu);
         const Humans = Ids.filter(Id => !Cpu.includes(Id));
+        const ValidHumans = Single ?
+            Cpu.length === Teams.Home.length * 2 - 1 && Humans.length === 1 && Humans[0] === Native.Owner :
+            Humans.length >= 2 && Array.isArray(Native.Humans) && Native.Humans.length === Humans.length &&
+                new Set(Native.Humans).size === Humans.length && Native.Humans.every(Id => Humans.includes(Id));
         if (!['neighborhood', 'cages'].includes(Activity) || Generation !== '2K22' ||
             !(Activity === 'cages' ? [2, 3, 5] : [2, 3]).includes(Teams.Home.length) ||
-            !Cpu.length || Humans.length < 2 || !Mixed.MatchId || !Array.isArray(Mixed.Humans) ||
-            Mixed.Humans.length !== Humans.length || new Set(Mixed.Humans).size !== Humans.length ||
-            Mixed.Humans.some(Id => !Humans.includes(Id)))
-            throw new Error('Mixed native park requires the exact human roster and CPU vacancies');
-        Teams.NativePark = { Humans: Humans.slice(), Cpu, MatchId: Mixed.MatchId };
-        Teams.MatchId = Mixed.MatchId;
-    }
-    if (Options.NativeSolo) {
-        const Solo = Options.NativeSolo;
-        const Cpu = [...Teams.Home, ...Teams.Away].filter(Id => (Id & 0xfffff00000000000n) === 0x0222c00000000000n);
-        const Humans = [...Teams.Home, ...Teams.Away].filter(Id => !Cpu.includes(Id));
-        if (!['neighborhood', 'cages'].includes(Activity) || Generation !== '2K22' ||
-            !(Activity === 'cages' ? [2, 3, 5] : [2, 3]).includes(Teams.Home.length) ||
-            Cpu.length !== Teams.Home.length * 2 - 1 || Humans.length !== 1 || Humans[0] !== Solo.Owner || !Solo.MatchId)
-            throw new Error('Native solo court requires one human and native CPU fill in a supported 2K22 court');
-        Teams.NativeSolo = { Owner: Solo.Owner, Cpu, MatchId: Solo.MatchId };
-        Teams.MatchId = Solo.MatchId;
+            !Cpu.length || !Native.MatchId || !ValidHumans)
+            throw new Error(Single ? 'Native solo court requires one human and native CPU fill in a supported 2K22 court' :
+                'Mixed native park requires the exact human roster and CPU vacancies');
+        if (Single) Teams.NativeSolo = { Owner: Native.Owner, Cpu, MatchId: Native.MatchId };
+        else Teams.NativePark = { Humans: Humans.slice(), Cpu, MatchId: Native.MatchId };
+        Teams.MatchId = Native.MatchId;
     }
     if (Generation === '2K22') {
         const BallType = Options.BallType ?? 0;
@@ -827,11 +821,11 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
     const Relay = require('../Activity/Activities').Relay.Local;
     if (!Number.isInteger(Relay.Port) || Relay.Port < 1 || Relay.Port > 65535)
         throw new Error('GAME relay port must be in 1..65535');
-    if (!Teams.NativeSolo) Teams.Transport = {
+    Teams.Transport = {
         Token: RandomBytes(16),
         address: require('../Activity/Init').PackEndpoint(Relay.Ip, Relay.Port).Address,
         port: Relay.Port,
-        RelayId: Teams.NativePark ? require('./ParkCpuWire').RelayId : 0,
+        RelayId: Teams.NativePark || Teams.NativeSolo ? require('./ParkCpuWire').RelayId : 0,
     };
     Teams.MatchId ??= RandomBytes(8).readBigUInt64LE() || 1n;
     Teams.Activity = Activity;

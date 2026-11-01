@@ -7,7 +7,7 @@
 const CpuTemplates = require('./ParkCpuProfiles');
 const MaxPlayers = 10, MaxCpu = 9;
 const SideStride = TeamSize => TeamSize === 5 ? 5 : 3;
-const Version = 6, ModuleVersion = 0x00010226, ManifestBytes = 248 + MaxPlayers * CpuTemplates.ProfileBytes, ReportBytes = 120;
+const Version = 6, ModuleVersion = 0x00010227, ManifestBytes = 248 + MaxPlayers * CpuTemplates.ProfileBytes, ReportBytes = 120;
 const ManifestMagic = 0x3232504d, ReportMagic = 0x3452504d;
 const LeaseMs = 8000, HeartbeatMs = 10000, MaxTemplates = 72, RelayId = 0x0a;
 const Flag = Object.freeze({ Installed: 1, Armed: 2, Started: 4 });

@@ -17,13 +17,13 @@
   - **收尾关闭**：`MyCourt2v2Fix.h` 独立保存专属条件及启用入口；`NativeMatchInit.h` 统一管理初始化/人数 getter 三个共用 Hook，`ParkCpu.h` 不再引用 MyCOURT 补丁或包含其专属判断，公园授权与人数 scope 保留。`Module.cpp` 负责接线，无重复 Hook。`MCCOUNT22-v1` 探测已删除；Release x64 编译、限定源码复核与差异检查通过，产物 `Granite/Build/Release/Module.dll`（579072 字节）。按用户决定结束进一步逆向；2K 适配问题未证实。未部署、注入、重启、运行单元测试或做本轮游戏内回归。
 - **MyCOURT 混编开赛**：用户确认真人与 NBA 球员混编可正常开赛，profile-derived PUID 方案游戏内验收通过。慢加载、访客重进、换人重开、双真人及房主离房等场景仍需分别确认，不外推为全部运行场景通过。
 - **Gatorade 健身房适配**：十三组器材及反应训练内手眼练习均已由用户验收。用户补充前几日完成的卧推仍显示11次、力量+3，确认训练记录及加成显示跨天保留；加成正常生效。
-- **公园 3v3 Got Next 点位**：用户已验收。`ShipCourts2K22.js` 按原始 `park_setup.RDAT / BOULEVARD / DEFAULT_LAYOUT` 绑定逻辑布局：`SHORT_TOP_LEFT` 为近侧右/左、无组队点；其余五场为远侧左/右及组队点。修复遗漏的布局绑定、侧别及队列顺序；2v2 和赛后算法未改动。本次 JS 语法及差异检查通过，不外推其他场景或完整比赛流程已验收。
+- **公园 3v3 Got Next 点位错位**：用户已验收。`ShipCourts2K22.js` 按原始 `park_setup.RDAT / BOULEVARD / DEFAULT_LAYOUT` 绑定逻辑布局：`SHORT_TOP_LEFT` 为近侧右/左、无组队点；其余五场为远侧左/右及组队点。修复遗漏的布局绑定、侧别及队列顺序；2v2 和赛后算法未改动。本次 JS 语法及差异检查通过，不外推其他场景或完整比赛流程已验收。
 - **MyCourt 首次进入与连续场景切换（2026-10-31 用户已验收）**：用户连续换存档进入 MyCourt、连续切换场景十几次，均未再出现进入失败，确认本问题修复通过。`Connection.js/WorldState.js` 补齐 travel 命令的实际请求 ID ACK，以及 handoff 期间旧 socket 自身 PLAYER 请求的 ACK/新版对象回包；保留客户端正常关闭旧连接顺序。两个 JS 语法及差异检查已通过。
 - **篮球样式开赛下发（用户已确认装备球可带入场内）**：2K22 COURT bit130 `BallType`、bit131 `OverrideBallType` 均为 4 字节；开赛按主队到客队顺序取第一个非默认真人 `PreferredBallType`，单人人机取真人，MyCOURT 取房主，比赛期间固定，结束/断线清理。
+- **单人人机在线化与赛前平均队友评级（00010227，开赛与赛前统计已由用户验收）**: 用户确认正常开赛，截图确认真人场均得分/助攻/篮板恢复；
 
 ## 未完成 / 待确认
 - **Ante-Up 内部玩法**：Got Next 点位及左右选位已验收；排队推进与完整多人比赛未验收。本次金额修复后的退出重进、Game Room 双向互切与 Got Next 回归仍待验收。VC 仅练习值，不扣款或结算。
-- **比赛开始前的玩家数据面板展示无实际数据显示**
 - **Game Room 内部设施**：设施不可用；用户反馈，待调查。
 - **Pro-Am & REC可用性未知**
 - Myteam模式适配（未开始，暂无计划）

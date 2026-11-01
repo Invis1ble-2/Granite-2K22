@@ -59,6 +59,7 @@ const Matchmaking = require('./Services/GameStats/Matchmaking');
 const PlayNowOnline = require('./Services/GameStats/PlayNowOnline');
 const WorldGameStats = require('./Services/GameStats/WorldGameStats');
 const Checkpoint = require('./Services/GameStats/Checkpoint');
+const CrewUserListStats = require('./Services/GameStats/CrewUserListStats');
 const PackageQuery = require('./Services/NBAToday/PackageQuery');
 const Inventory = require('./Services/Inventory/GetWithTag');
 const StoreItems = require('./Services/Store/GetItems');
@@ -740,6 +741,8 @@ function CreateHandler(Config, Dependencies = {}) {
         else if (Route === 'gamestatsv4/get_world_game_stats' || Route === 'gamestatsv4/get_user_status')
             Reply = WorldGameStats.Build(Input, { ...Context, Route });
         else if (Route === 'gamestatsv4/checkpoint') Reply = Checkpoint.Build(Input, Context);
+        else if (Route === 'gamestatsv4/crewuserliststats' || Route === 'gamestatsv4/get_my_park_stats')
+            Reply = CrewUserListStats.Build(Input, Context);
         else if (Route.includes('lastngamestats') || Route === 'gamestats/lastgames')
             Reply = LastGames.Build(Input, Context);
         else if (Route.includes('tiersummary') || Route === 'gamestats/leaguesummary')

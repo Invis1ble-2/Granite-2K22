@@ -11,7 +11,7 @@
 
 namespace ParkCpu
 {
-inline constexpr uint32_t ModuleVersion = 0x00010226;
+inline constexpr uint32_t ModuleVersion = 0x00010227;
 inline constexpr uint64_t CpuMask = 0xfffff00000000000ULL, CpuPrefix = 0x0222c00000000000ULL;
 inline constexpr uint32_t MaxTemplates = 72, MaxLeaseMs = 8000;
 inline constexpr unsigned MaxPlayers = 10;
@@ -839,7 +839,7 @@ template<class T> inline void Set(Descriptor& D, size_t Offset, T V)
 {
     memcpy(D.data() + Offset, &V, sizeof(V));
 }
-inline bool Prepare(const Descriptor& Input, const Manifest& M, Descriptor& Output, std::string& Error)
+inline bool Prepare(const Descriptor& Input, const Manifest& M, Descriptor& Output, std::string& Error, bool SingleHuman = false)
 {
     const auto Check = [&](bool Ok, const char* Why) { if (!Ok && Error.empty()) Error = Why; return Ok; };
     uint32_t Humans = 0;
@@ -861,7 +861,8 @@ inline bool Prepare(const Descriptor& Input, const Manifest& M, Descriptor& Outp
             !Check(!(Seen & (1U << Slot)), "online-duplicate-user")) return false;
         Seen |= 1U << Slot; Source[Slot] = I;
     }
-    if (!Check(Seen == Expected && Humans >= 2 && Humans < M.TeamSize * 2, "online-incomplete-roster")) return false;
+    if (!Check(Seen == Expected && (SingleHuman ? Humans == 1 : Humans >= 2) && Humans < M.TeamSize * 2,
+        "online-incomplete-roster")) return false;
     const auto EndpointId = Value<uint16_t>(Input, EndpointOffset + 6);
     const auto Id = Value<uint32_t>(Input, RelayOffset);
     if (!Check(Value<uint32_t>(Input, EndpointOffset) && Value<uint16_t>(Input, EndpointOffset + 4), "online-relay-endpoint") ||
@@ -899,65 +900,14 @@ inline bool Prepare(const Descriptor& Input, const Manifest& M, Descriptor& Outp
     Set(Output, EndpointOffset + 6, static_cast<uint16_t>(RelayId));
     return true;
 }
-inline uint32_t* Refuse(const Manifest& M, uint32_t* Result, const std::string& Why)
-{
-    Fail(M, 10);
-    Log(LogLevel::Error, L"PARK22 refused online session: " + std::wstring(Why.begin(), Why.end()));
-    if (Result)
-    {
-        const uint32_t Error = 0x135e11fb; SIZE_T N = 0;
-        if (!WriteProcessMemory(GetCurrentProcess(), Result, &Error, sizeof(Error), &N) || N != sizeof(Error)) return nullptr;
-    }
-    return Result;
-}
-inline uint32_t* __fastcall Create(void* Owner, uint32_t* Result, const void* Input)
-{
-    const DWORD EntryError = GetLastError();
-    uint64_t Match = 0; Manifest M{};
-    if (!At(Input, MatchOffset, Match) || !ForMatch(Match, M))
-    { SetLastError(EntryError); return Original(Owner, Result, Input); }
-    alignas(16) Descriptor Source{}, Filtered{};
-    std::string Error;
-    bool Ready = false;
-    try
-    {
-        {
-            std::lock_guard<std::mutex> Lock(StateMutex);
-            Ready = LiveLocked(M) && M.Phase >= 2 && (State.Created & CpuSlots(M)) == CpuSlots(M);
-        }
-        if (!Ready) Error = "online-authorization";
-        else if (!Read(Input, Source.data(), Source.size())) Error = "online-descriptor-unreadable";
-        else Ready = Prepare(Source, M, Filtered, Error);
-    }
-    catch (...) { Ready = false; Error = "online-descriptor-exception"; }
-    if (!Ready || !Error.empty() || !Authorized(M))
-    {
-        auto* Rejected = Refuse(M, Result, Error.empty() ? "online-authorization-expired" : Error);
-        SetLastError(EntryError); return Rejected;
-    }
-    SetLastError(EntryError);
-    auto* Returned = Original(Owner, Result, Filtered.data());
-    const DWORD NativeError = GetLastError();
-    uint32_t Status = 0;
-    if (!Read(Returned, &Status, sizeof(Status)) || Status != Success)
-    {
-        Fail(M, 11);
-        std::wostringstream Text;
-        Text << L"PARK22 online session creation failed: status=0x" << std::hex << Status;
-        Log(LogLevel::Error, Text.str());
-    }
-    else Log(LogLevel::Info, L"PARK22 online session prepared: network humans=" +
-        std::to_wstring(Value<uint32_t>(Filtered, CountOffset)) + L" gameplay players=" +
-        std::to_wstring(M.TeamSize * 2) + L" relay-id=" + std::to_wstring(RelayId));
-    SetLastError(NativeError); return Returned;
-}
+inline uint32_t* __fastcall Create(void* Owner, uint32_t* Result, const void* Input);
 inline bool Install()
 {
     constexpr unsigned char Signature[] = {0x48,0x89,0x54,0x24,0x10,0x48,0x89,0x4c,0x24,0x08,0x55,0x53,0x41,0x54,0x41,0x55,0x41,0x56,0x48,0x8d,0xac,0x24,0xa0,0xfd,0xff,0xff,0x48,0x81,0xec,0x60,0x03,0x00,0x00};
     unsigned char Actual[sizeof(Signature)]{};
     void* Target = ExeBase + 0xc08510;
     if (!Read(Target, Actual, sizeof(Actual)) || memcmp(Actual, Signature, sizeof(Actual)))
-    { Log(LogLevel::Error, L"PARK22 mixed online sessions disabled: Create build signature mismatch"); return false; }
+    { Log(LogLevel::Error, L"PARK22 online sessions disabled: Create build signature mismatch"); return false; }
     auto Status = MH_CreateHook(Target, reinterpret_cast<void*>(&Create), reinterpret_cast<void**>(&Original));
     if (Status != MH_OK) { Log(LogLevel::Error, L"PARK22 online session hook could not be created"); return false; }
     Status = MH_EnableHook(Target);
@@ -1182,8 +1132,8 @@ inline std::string BuildReceipt(const char* Error = nullptr, bool Started = fals
     if (Error && GenerationError.empty()) GenerationError = Error;
     ReceiptStarted |= Started;
     std::ostringstream Text;
-    Text << "{\"version\":6,\"module\":\"00010226\",\"installed\":" <<
-        (Profile::Ready ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
+    Text << "{\"version\":6,\"module\":\"00010227\",\"installed\":" <<
+        (Profile::Ready && Multiplayer::OnlineHookReady ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
          << ",\"match\":\"" << std::hex << Current.Match << "\",\"teamSize\":" << std::dec << Current.TeamSize
          << ",\"cpuCount\":" << Current.CpuCount << ",\"created\":[";
     bool First = true;
@@ -1249,14 +1199,20 @@ inline bool NetworkReply(const void* Bytes, size_t Size, uint64_t Instance)
     Select(E.Data);
     return true;
 }
+inline bool ReadyLocked(const Request& R)
+{
+    if (!NetworkManaged || GetTickCount64() >= NetworkDeadline ||
+        memcmp(&NetworkRequest, &R, sizeof(R)) || memcmp(&Current, &R, sizeof(R)) ||
+        !GenerationError.empty() || !SupportedTeamSize(R.TeamSize) || R.CpuCount != R.TeamSize * 2 - 1) return false;
+    for (unsigned I = 0; I < R.CpuCount; ++I) if (!Created[I]) return false;
+    return true;
+}
 inline bool Validate(void* Session, void* Info, const Request& R, bool Prepared, LookupFn Lookup)
 {
-    if (!SupportedTeamSize(R.TeamSize) || R.CpuCount != R.TeamSize * 2 - 1) return false;
-    RosterExpectation E{}; E.TeamSize = R.TeamSize;
+    RosterExpectation E{}; E.TeamSize = R.TeamSize; E.RequireOnline = true;
     {
         std::lock_guard<std::mutex> Lock(ReceiptMutex);
-        if (memcmp(&Current, &R, sizeof(R)) || !GenerationError.empty()) return false;
-        for (unsigned I = 0; I < R.CpuCount; ++I) if (!Created[I]) return false;
+        if (!ReadyLocked(R)) return false;
         for (unsigned I = 0; I <= R.CpuCount; ++I)
         {
             const unsigned Slot = I < R.TeamSize ? I : I + SideStride(R.TeamSize) - R.TeamSize;
@@ -1272,6 +1228,95 @@ inline bool AuthorizeProfile(const void* RequestData)
     return NetworkManaged && GetTickCount64() < NetworkDeadline && !memcmp(&NetworkRequest, RequestData, sizeof(NetworkRequest));
 }
 } // namespace Solo
+
+// Both authority adapters use the same native Create path and PREBUILT filtering.
+namespace Multiplayer::Online
+{
+inline uint32_t* __fastcall Create(void* Owner, uint32_t* Result, const void* Input)
+{
+    const DWORD EntryError = GetLastError();
+    uint64_t Match = 0; Manifest M{}; Solo::Request R{};
+    const bool Mixed = At(Input, MatchOffset, Match) && ForMatch(Match, M);
+    if (!Mixed)
+    {
+        std::lock_guard<std::mutex> Lock(Solo::ReceiptMutex);
+        if (Match && (Solo::Current.Match == Match || Solo::NetworkRequest.Match == Match))
+            R = Solo::Current.Match == Match ? Solo::Current : Solo::NetworkRequest;
+    }
+    if (!Mixed && !R.Match) { SetLastError(EntryError); return Original(Owner, Result, Input); }
+    const std::wstring Prefix = Mixed ? L"PARK22" : L"SOLO22";
+    const auto AuthorizedForCreate = [&]
+    {
+        if (!Mixed)
+        {
+            std::lock_guard<std::mutex> Lock(Solo::ReceiptMutex);
+            return OnlineHookReady && Solo::ReadyLocked(R);
+        }
+        std::lock_guard<std::mutex> Lock(StateMutex);
+        return LiveLocked(M) && M.Phase >= 2 && (State.Created & CpuSlots(M)) == CpuSlots(M);
+    };
+    const auto Failed = [&](uint32_t Code, const char* Why)
+    {
+        if (Mixed) Fail(M, Code);
+        else
+        {
+            std::lock_guard<std::mutex> Lock(Solo::ReceiptMutex);
+            if (!memcmp(&Solo::Current, &R, sizeof(R))) Solo::Receipt(Why);
+        }
+    };
+    alignas(16) Descriptor Source{}, Filtered{};
+    std::string Error;
+    bool Ready = false;
+    try
+    {
+        if (!AuthorizedForCreate()) Error = "online-authorization";
+        else if (!Read(Input, Source.data(), Source.size())) Error = "online-descriptor-unreadable";
+        else
+        {
+            if (!Mixed)
+            {
+                // This identity view never changes the solo gameplay seats.
+                M.Match = R.Match; M.LocalPuid = R.Owner; M.TeamSize = R.TeamSize; M.HumanMask = 1;
+                M.Players[0] = R.Owner;
+                for (unsigned I = 1; I <= R.CpuCount; ++I)
+                {
+                    const unsigned Slot = I < R.TeamSize ? I : I + SideStride(R.TeamSize) - R.TeamSize;
+                    M.Players[Slot] = R.Cpu[I - 1];
+                }
+            }
+            Ready = Prepare(Source, M, Filtered, Error, !Mixed);
+        }
+    }
+    catch (...) { Ready = false; Error = "online-descriptor-exception"; }
+    if (!Ready || !Error.empty() || !(Mixed ? Authorized(M) : AuthorizedForCreate()))
+    {
+        if (Error.empty()) Error = "online-authorization-expired";
+        Failed(10, Error.c_str());
+        Log(LogLevel::Error, Prefix + L" refused online session: " + std::wstring(Error.begin(), Error.end()));
+        if (Result)
+        {
+            const uint32_t Status = 0x135e11fb; SIZE_T N = 0;
+            if (!WriteProcessMemory(GetCurrentProcess(), Result, &Status, sizeof(Status), &N) || N != sizeof(Status)) Result = nullptr;
+        }
+        SetLastError(EntryError); return Result;
+    }
+    SetLastError(EntryError);
+    auto* Returned = Original(Owner, Result, Filtered.data());
+    const DWORD NativeError = GetLastError();
+    uint32_t Status = 0;
+    if (!Read(Returned, &Status, sizeof(Status)) || Status != Success)
+    {
+        Failed(11, "native-online-session-creation-failed");
+        std::wostringstream Text;
+        Text << Prefix << L" online session creation failed: status=0x" << std::hex << Status;
+        Log(LogLevel::Error, Text.str());
+    }
+    else Log(LogLevel::Info, Prefix + L" online session prepared: network humans=" +
+        std::to_wstring(Value<uint32_t>(Filtered, CountOffset)) + L" gameplay players=" +
+        std::to_wstring(M.TeamSize * 2) + L" relay-id=" + std::to_wstring(RelayId));
+    SetLastError(NativeError); return Returned;
+}
+} // namespace Multiplayer::Online
 
 // Shared hooks: generated player construction, guarded start, roster order and AI defense.
 struct RosterOrderScope
@@ -1712,8 +1757,8 @@ inline void InstallControl(HMODULE Executable)
         Log(LogLevel::Error, L"PARK22 control worker could not start; enhanced solo remains available"); return;
     }
     Log(LogLevel::Info, Multiplayer::OnlineHookReady ?
-        L"PARK22 v6 enabled: server-authored CPU profiles and guarded mixed online sessions; waiting for the game's login" :
-        L"PARK22 mixed sessions unavailable; remote solo control remains available");
+        L"PARK22 v6 enabled: server-authored CPU profiles and guarded solo/mixed online sessions; waiting for the game's login" :
+        L"PARK22 online sessions unavailable: Create hook is not ready");
 }
 inline void InstallHooks(HMODULE Executable)
 {
