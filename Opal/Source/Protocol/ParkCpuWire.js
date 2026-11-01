@@ -7,7 +7,7 @@
 const CpuTemplates = require('./ParkCpuProfiles');
 const MaxPlayers = 10, MaxCpu = 9;
 const SideStride = TeamSize => TeamSize === 5 ? 5 : 3;
-const Version = 6, ModuleVersion = 0x00010223, ManifestBytes = 248 + MaxPlayers * CpuTemplates.ProfileBytes, ReportBytes = 120;
+const Version = 6, ModuleVersion = 0x00010226, ManifestBytes = 248 + MaxPlayers * CpuTemplates.ProfileBytes, ReportBytes = 120;
 const ManifestMagic = 0x3232504d, ReportMagic = 0x3452504d;
 const LeaseMs = 8000, HeartbeatMs = 10000, MaxTemplates = 72, RelayId = 0x0a;
 const Flag = Object.freeze({ Installed: 1, Armed: 2, Started: 4 });
@@ -43,10 +43,13 @@ function BuildManifest(P, Client) {
     if (!Phase[P.Phase] || !Client.Epoch || !P.MatchId || ![2, 3, 5].includes(P.TeamSize) ||
         !Buffer.isBuffer(P.Digest) || P.Digest.length !== 32 || P.PoolCount < 1 || P.PoolCount > MaxTemplates)
         throw new Error('invalid native park manifest');
-    const B = Buffer.alloc(ManifestBytes);
+    // Once acknowledged, epoch/match identify the immutable roster; only renew its lease/phase.
+    const Acknowledged = Matches(Client.Report, P, Client) && (Client.Report.Flags & Flag.Armed) && !Client.Report.Error;
+    const B = Buffer.alloc(Acknowledged ? 32 : ManifestBytes);
     B.writeUInt32LE(ManifestMagic, 0); B.writeUInt32LE(Version, 4);
     B.writeBigUInt64LE(Client.Epoch, 8); B.writeBigUInt64LE(P.MatchId, 16);
     B.writeUInt32LE(LeaseMs, 24); B.writeUInt32LE(Phase[P.Phase], 28);
+    if (Acknowledged) return B;
     B.writeBigUInt64LE(Client.Connection.Puid, 32);
     B.writeUInt32LE(P.TeamSize, 40); B.writeUInt32LE(P.HumanMask, 44); B.writeUInt32LE(P.PoolCount, 48);
     P.Digest.copy(B, 56);

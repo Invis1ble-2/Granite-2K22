@@ -10,6 +10,7 @@ Granite/Server/Storage/Career/
 Granite/Server/Storage/Cdn/
 Granite/Server/Storage/Sessions/
 Granite/Server/Storage/UserContent/
+Granite/Server/Storage/GameStats/
 Granite/Server/Storage/Inventory/OwnedItems.json
 Granite/Server/Storage/Inventory/GatoradeBoosts.json
 Granite/Server/Storage/Inventory/Wallets.json

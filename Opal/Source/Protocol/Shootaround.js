@@ -266,7 +266,14 @@ function Reapply(Connection) {
     return PatchPlayer(Connection, GotNext.State.Playing, Connection.Shootaround.GameId);
 }
 
-function BuildCourt(ObjectId, Version, Players, Type = null, Away = [], Generation = '2K19', Online = null) {
+function RoomBallFor(Connection) {
+    const Owner = MyCourt.OwnerFor(Connection);
+    const Host = Owner === Connection.Puid ? Connection :
+        Roster.InActivity(Connection.ActivityKey, Connection.RoomScope).find(Peer => Peer.Puid === Owner);
+    return require('./Userdata').PreferredBallFor([Host]);
+}
+
+function BuildCourt(ObjectId, Version, Players, Type = null, Away = [], Generation = '2K19', Online = null, BallType = 0) {
     Type = Type === null ? TypesFor(Generation).Shootaround : Type;
     const U32 = (Value) => {
         const Out = Buffer.alloc(4);
@@ -289,6 +296,8 @@ function BuildCourt(ObjectId, Version, Players, Type = null, Away = [], Generati
         Fields.set(Bit.IsActive, Buffer.from([1]));
         Fields.set(Bit.ArtBinding, U32(MyCourtArtBinding2K22));
         Fields.set(Bit.CourtType, U32(Type));
+        Fields.set(Bit.BallType, U32(Online ? (Online.Ended ? 0 : Online.BallType) : BallType));
+        Fields.set(Bit.OverrideBallType, U32(0));
         Fields.set(Bit.SetupGate, Buffer.from([Online && !Online.Ended ? 1 : 0]));
         Fields.set(Bit.MatchId, U64(Online ? Online.MatchId : Key));
         if (Online) {
@@ -530,6 +539,7 @@ function ClearOnlineConnection(Connection) {
     delete Connection.ShootaroundTeam;
     delete Connection.ShootaroundAway;
     delete Connection.ShootaroundRoomKey;
+    delete Connection.ShootaroundBallType;
 }
 
 function Disconnect(Connection) {
@@ -557,6 +567,7 @@ function CloseRoom(Connection) {
         if (Game && Member.ShootaroundOnline && Member.ShootaroundOnline !== Game) continue;
         ClearOnlineConnection(Member);
         Member.Shootaround = null;
+        delete Member.ShootaroundBallType;
         delete Member.ShootaroundStartRequests;
         delete Member.ShootaroundOnlineReceipts;
     }
@@ -627,6 +638,7 @@ function StartOnlineGame2K22(Connection, Request, Req) {
             MenuMode: Number(Req.GameSlot), CourtType: Mode.CourtType,
             MatchId: RandomBytes(8).readBigUInt64LE() || 1n,
             GameParameter: OnlineGameParameter2K22,
+            BallType: RoomBallFor(Connection),
             Transport: {
                 Token: RandomBytes(16),
                 address: Init.PackEndpoint(Relay.Ip, Relay.Port).Address,
@@ -730,7 +742,7 @@ function HandleConnected2K22(Connection, Request) {
     Connection.ShootaroundCourtVersion = (Connection.ShootaroundCourtVersion || 0n) + 1n;
     Connection.SendObject(BuildCourt(Request.ObjectId, Connection.ShootaroundCourtVersion,
         Connection.ShootaroundTeam, Connection.ShootaroundCourtType,
-        Connection.ShootaroundAway || [], '2K22'));
+        Connection.ShootaroundAway || [], '2K22', null, Connection.ShootaroundBallType || 0));
     Log.Verbose(`  MyCourt connection-complete request ${Request.Id}, court revision ${Connection.ShootaroundCourtVersion}`);
     return true;
 }
@@ -774,6 +786,7 @@ function HandleEnd(Connection, Bytes) {
     );
 
     Connection.Shootaround = null;
+    Connection.ShootaroundBallType = 0;
     const Walking = PatchPlayer(Connection, GotNext.State.None, 0) && SendPlayer(Connection);
 
     const CourtKey = End.Court !== null && End.Court !== 0n ? End.Court : Connection.ShootaroundCourtKey;
@@ -885,7 +898,9 @@ function Handle(Connection, Bytes) {
     Connection.ShootaroundAway = Teams.Away;
     Connection.ShootaroundRoomKey = RoomKey;
     Connection.ShootaroundCourtVersion = (Connection.ShootaroundCourtVersion || 0n) + 1n;
-    const Court = BuildCourt(CourtKey, Connection.ShootaroundCourtVersion, Teams.Home, Type, Teams.Away, Generation);
+    Connection.ShootaroundBallType = Modern ? RoomBallFor(Connection) : 0;
+    const Court = BuildCourt(CourtKey, Connection.ShootaroundCourtVersion, Teams.Home, Type, Teams.Away,
+        Generation, null, Connection.ShootaroundBallType);
     let Courts = Connection.SendObject(Court) ? 1 : 0;
     for (const Peer of Roster.Peers(Connection)) {
         if (Peer !== Connection && MyCourt.IsMyCourt(Peer) &&

@@ -9,10 +9,27 @@
 #include <string>
 #include "MinHook/include/MinHook.h"
 
-namespace NativeMatchInit
+namespace MatchLifecycleHooks
 {
 using PlayingFn = uint64_t(__fastcall*)(void*);
 using CountFn = int(__fastcall*)();
+using StartFn = void(__fastcall*)(void*, void*);
+inline StartFn OriginalStart = nullptr;
+inline std::atomic<StartFn> StartHandler = nullptr;
+inline void (*BeforeStart)(void*, void*) = nullptr;
+inline void CallStart(void* Session, void* Info)
+{
+    const DWORD Error = GetLastError();
+    if (BeforeStart) BeforeStart(Session, Info);
+    SetLastError(Error);
+    OriginalStart(Session, Info);
+}
+inline void __fastcall Start(void* Session, void* Info)
+{
+    const auto Handler = StartHandler.load();
+    if (Handler) Handler(Session, Info);
+    else CallStart(Session, Info);
+}
 inline PlayingFn OriginalPlaying = nullptr;
 inline CountFn OriginalHomeCount = nullptr, OriginalAwayCount = nullptr;
 inline std::atomic<PlayingFn> PlayingHandler = nullptr;
@@ -57,8 +74,10 @@ inline const Site Sites[] = {
         reinterpret_cast<void*>(&HomeCount), reinterpret_cast<void**>(&OriginalHomeCount)},
     {0x10d3e70, "\x8b\x05\x1e\x06\x1b\x05\xc3", 7,
         reinterpret_cast<void*>(&AwayCount), reinterpret_cast<void**>(&OriginalAwayCount)},
+    {0x16ff0c0, "\x40\x55\x56\x41\x54\x41\x56\x48\x8d\xac\x24\x48\xfd\xff\xff\x48\x81\xec\xb8\x03\x00\x00", 22,
+        reinterpret_cast<void*>(&Start), reinterpret_cast<void**>(&OriginalStart)},
 };
-inline constexpr unsigned HookCount = 3;
+inline constexpr unsigned HookCount = 4;
 inline constexpr DWORD ReadinessTimeoutMs = 30'000, ReadinessPollMs = 250;
 inline std::atomic_bool InstallStarted = false;
 inline bool CheckSignatures(HMODULE Executable, size_t& FailedRva)
@@ -147,4 +166,4 @@ inline void Install(HMODULE Executable)
         Log(LogLevel::Error, L"NATIVEINIT22 refused: readiness thread could not start: " + std::to_wstring(Error));
     }
 }
-} // namespace NativeMatchInit
+} // namespace MatchLifecycleHooks

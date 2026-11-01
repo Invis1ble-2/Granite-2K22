@@ -17,7 +17,7 @@ function ParkCpu() {
 }
 
 // Timing is an Opal process-lifetime snapshot: restart Opal to publish a new
-// selection. Clients negotiate it before the next match; Granite login values are bootstrap only.
+// selection. Online clients negotiate it only after entering a supported Opal world.
 let FrameRateValue;
 function FrameRate() {
     if (FrameRateValue !== undefined) return FrameRateValue;
@@ -29,9 +29,9 @@ function FrameRate() {
     }
     if (!Config || typeof Config !== 'object' || Array.isArray(Config))
         throw new Error('Opal/Config.json must be an object');
-    const Value = Config.ParkCpu?.FrameRate ?? 120;
+    const Value = Config.OnlineFrameRate?.FrameRate ?? Config.ParkCpu?.FrameRate ?? 120;
     if (Value !== 60 && Value !== 120)
-        throw new Error('Opal/Config.json ParkCpu.FrameRate must be 60 or 120');
+        throw new Error('Opal/Config.json OnlineFrameRate.FrameRate must be 60 or 120');
     FrameRateValue = Value;
     return Value;
 }

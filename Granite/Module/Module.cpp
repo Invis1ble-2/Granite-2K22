@@ -43,10 +43,11 @@ namespace
 const wchar_t* RedirectHost = L"127.0.0.1";
 INTERNET_PORT RedirectPort = 21000;
 
-namespace ParkCpu::Multiplayer
+namespace GameSessionDiscovery
 {
 inline void ResetLogin(uint64_t Generation);
-inline void ObserveResponse(HINTERNET Request, uint64_t Generation);
+inline uint64_t BeginWorld();
+inline void ObserveResponse(HINTERNET Request, uint64_t Generation, uint64_t Scene);
 }
 
 using WinHttpConnectFn = HINTERNET(WINAPI*)(HINTERNET, LPCWSTR, INTERNET_PORT, DWORD);
@@ -66,8 +67,9 @@ std::unordered_set<HINTERNET> RedirectedConnections;
 std::unordered_set<HINTERNET> RedirectedRequests;
 std::unordered_set<HINTERNET> LoginRequests;
 std::unordered_set<HINTERNET> BadgeRequests;
-std::unordered_map<HINTERNET, uint64_t> ParkRequests;
-uint64_t ParkLoginGeneration = 1;
+struct NativeRequest { uint64_t Generation = 0, Scene = 0; };
+std::unordered_map<HINTERNET, NativeRequest> NativeRequests;
+uint64_t NativeLoginGeneration = 1;
 // WinHTTP may retain lpOptional until response completion; keep storage until close.
 std::unordered_map<HINTERNET, std::shared_ptr<std::vector<unsigned char>>> BadgeRequestBodies;
 struct PendingBadgeRequest
@@ -278,9 +280,12 @@ HINTERNET WINAPI OpenRequestHook(HINTERNET Connection, LPCWSTR Verb, LPCWSTR Obj
         const std::wstring Path = Object.substr(0, Query);
         if (Path.ends_with(L"/session/login") || Path.ends_with(L"/session/destroy"))
         {
-            ParkCpu::Multiplayer::ResetLogin(++ParkLoginGeneration);
+            GameSessionDiscovery::ResetLogin(++NativeLoginGeneration);
         }
-        ParkRequests[Request] = ParkLoginGeneration;
+        uint64_t Scene = 0;
+        if (Path.ends_with(L"/world/connect")) Scene = GameSessionDiscovery::BeginWorld();
+        else if (Path.ends_with(L"/world/disconnect")) GameSessionDiscovery::BeginWorld();
+        NativeRequests[Request] = { NativeLoginGeneration, Scene };
         // Classify attribute requests for logging even when budget reporting is disabled.
         if (Path.ends_with(L"/mycareer/attributes/get")) BadgeRequests.insert(Request);
     }
@@ -460,11 +465,11 @@ BOOL WINAPI WriteDataHook(HINTERNET Request, LPCVOID Buffer, DWORD Length, LPDWO
 BOOL WINAPI CloseHandleHook(HINTERNET Handle)
 {
     const DWORD EntryError = GetLastError();
-    uint64_t Generation = 0;
+    NativeRequest Observed;
     {
         std::scoped_lock Lock(HandlesMutex);
-        const auto It = ParkRequests.find(Handle);
-        if (It != ParkRequests.end()) { Generation = It->second; ParkRequests.erase(It); }
+        const auto It = NativeRequests.find(Handle);
+        if (It != NativeRequests.end()) { Observed = It->second; NativeRequests.erase(It); }
         RedirectedRequests.erase(Handle);
         RedirectedConnections.erase(Handle);
         LoginRequests.erase(Handle);
@@ -474,7 +479,7 @@ BOOL WINAPI CloseHandleHook(HINTERNET Handle)
     }
     // Headers are available here even when the game used asynchronous WinHTTP.
     // Observe only requests made through the existing Granite redirect.
-    if (Generation) ParkCpu::Multiplayer::ObserveResponse(Handle, Generation);
+    if (Observed.Generation) GameSessionDiscovery::ObserveResponse(Handle, Observed.Generation, Observed.Scene);
     SetLastError(EntryError);
     return OriginalCloseHandle(Handle);
 }
@@ -703,8 +708,10 @@ DWORD WINAPI CareerPriceWatchdog(void*)
     return 0;
 }
 
-#include "OnlineFrameRate.h"
-#include "NativeMatchInit.h"
+#include "OnlineMatchFrameRateHooks.h"
+#include "GameSessionDiscovery.h"
+#include "OnlineFrameRateClient.h"
+#include "MatchLifecycleHooks.h"
 #include "MyCourt2v2Fix.h"
 #include "ParkCpu.h"
 #include "AnimationUnlock.h"
@@ -721,7 +728,7 @@ DWORD WINAPI Initialise(void*)
     RedirectPort = ModuleConfig::ServerPort;
     EnsureConsole();
     OpenLogFile();
-    Log(LogLevel::Info, L"Granite module 0x00010223 initialized; configuration: " + Directory + L"\\Granite.ini");
+    Log(LogLevel::Info, L"Granite module 0x00010226 initialized; configuration: " + Directory + L"\\Granite.ini");
     if (!ConfigSaved) Log(LogLevel::Error, L"Granite.ini could not be created or accessed; missing settings use defaults");
     if (ModuleConfig::EnableCrashHandler)
         CrashHandler::Install([](const wchar_t* Text) { Log(LogLevel::Error, Text); },
@@ -740,6 +747,10 @@ DWORD WINAPI Initialise(void*)
         }
     }
     HMODULE Executable = GetModuleHandleW(nullptr);
+    GameSessionDiscovery::OnChanged = [] {
+        ParkCpu::Multiplayer::Revoke(); ParkCpu::Solo::RevokeNetwork();
+        OnlineMatchFrameRateHooks::ClearLogin();
+    };
     const bool Connect = PatchImport(Executable, "WINHTTP.dll", "WinHttpConnect", ConnectHook, OriginalConnect);
     const bool Open =
         PatchImport(Executable, "WINHTTP.dll", "WinHttpOpenRequest", OpenRequestHook, OriginalOpenRequest);
@@ -757,12 +768,12 @@ DWORD WINAPI Initialise(void*)
     MH_STATUS MhStatus = MH_Initialize();
     if (MhStatus == MH_OK || MhStatus == MH_ERROR_ALREADY_INITIALIZED)
     {
-        ParkCpu::BeforeStart = OnlineFrameRate::ObserveMatch;
-        ParkCpu::FrameTimingReady = OnlineFrameRate::IsReady;
-        OnlineFrameRate::Install(Executable);
+        MatchLifecycleHooks::BeforeStart = OnlineMatchFrameRateHooks::ObserveMatch;
+        OnlineMatchFrameRateHooks::Install(Executable);
+        if (GetModuleHandleW(L"NBA2K22.exe") == Executable) OnlineFrameRateClient::Start();
         MyCourt2v2Fix::Install();
-        NativeMatchInit::OnReady = &ParkCpu::Install;
-        NativeMatchInit::Install(Executable);
+        MatchLifecycleHooks::OnReady = &ParkCpu::Install;
+        MatchLifecycleHooks::Install(Executable);
         AnimationUnlock::Install(Executable);
         CareerProgressionSync::Install(Executable);
 #if defined(GRANITE_SOLO_CPU_TRACE)

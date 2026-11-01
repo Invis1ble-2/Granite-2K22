@@ -17,13 +17,15 @@ const Bit = Object.freeze({
     GameParameter:19,
     GamePreparedValid:81,
     GamblingIndex:126,
+    // FUN_1416E6570/DE580: +728/+730, consumed by 141724681–6D5.
+    BallType:130, OverrideBallType:131,
 });
 // The fields emitted by the initial queue bootstrap. Unsupported variable
 // userdata remains outside this decoder; never infer its boundaries.
 const Widths = new Map([[0,4],[1,1],[4,64],[8,4],[9,4],[11,1],[12,16],[13,4],[14,2],[15,2],[17,8],[19,4],[20,4],[22,1],[24,1],[28,1],[55,1],[81,1],[82,1],
     ...[30,31,32,33,34,56,57,58,59,60].map(I=>[I,8]),
     ...[83,84,85].map(I=>[I,72]), ...[86,87,88].map(I=>[I,144]),
-    ...[89,90,92,93].map(I=>[I,16]),[91,4],[94,4],[126,1]]);
+    ...[89,90,92,93].map(I=>[I,16]),[91,4],[94,4],[126,1],[130,4],[131,4]]);
 function Decode(Body) {
     if (!Buffer.isBuffer(Body) || Body.length < 35) return {Ok:false,Reason:'court header truncated'};
     if (Body[34] & 15) return {Ok:false,Reason:'nonzero padding after 148 court bits'};
@@ -114,6 +116,13 @@ function Build(Opts) {
         if (!Number.isInteger(Opts.GamblingIndex) || Opts.GamblingIndex<0 || Opts.GamblingIndex>=64)
             throw new Error('invalid native gambling price index');
         Values.set(Bit.GamblingIndex,Buffer.from([Opts.GamblingIndex]));
+    }
+    for (const Name of ['BallType', 'OverrideBallType']) {
+        const Value = Opts[Name];
+        if (Value === undefined) continue;
+        if (!Number.isInteger(Value) || Value < 0 || Value > 0xffffffff)
+            throw new Error(`invalid native ${Name}`);
+        Values.set(Bit[Name], U32(Value));
     }
     const Header=Buffer.alloc(35);Header.writeBigUInt64BE(BigInt(Opts.CourtId||0));Header.writeBigUInt64BE(BigInt(Opts.OwnerId||0),8);
     const Parts=[Header];

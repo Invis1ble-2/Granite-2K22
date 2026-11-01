@@ -540,16 +540,13 @@ function CreateHandler(Config, Dependencies = {}) {
         };
         if (!TargetQuery && (Route === 'attributes/get' || Route === 'mycareer/save'))
             PlayerCards.Observe(Context, Parsed?.Fields || []);
-        // Reuse the current game login for park readiness. No separate player
-        // token, endpoint configuration or public certificate setup is needed.
-        const ParkPort = Number(process.env.OPAL_PORT || Config.WorldPort || 20054);
+        // Discover only the authenticated control address; Opal owns online timing.
+        const NativePort = Number(process.env.OPAL_PORT || Config.WorldPort || 20054);
         if (Context.HasLoginSession && Route !== 'session/login' && Route !== 'session/destroy' &&
-            Number.isInteger(ParkPort) && ParkPort > 0 && ParkPort <= 65535 &&
+            Number.isInteger(NativePort) && NativePort > 0 && NativePort <= 65535 &&
             (!RequireVerifiedIdentity || Context.verified)) {
-            Res.setHeader('X-Granite-Native-Park-Session', String(Context.SessionKey));
-            Res.setHeader('X-Granite-Native-Park-Port', String(ParkPort));
-            Res.setHeader('X-Granite-Park-Frame-Rate', String(Login.LockstepFrameRate));
-            Res.setHeader('X-Granite-Park-Buffer-Frames', String(Login.LockstepBufferFrames()));
+            Res.setHeader('X-Granite-Native-Session', String(Context.SessionKey));
+            Res.setHeader('X-Granite-Native-Port', String(NativePort));
             Res.setHeader('Cache-Control', 'no-store');
         }
         // The game does not reliably send MyCareer/Online/delete. A new

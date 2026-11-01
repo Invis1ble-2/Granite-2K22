@@ -1029,7 +1029,7 @@ function MaybeStartMatch(Connection) {
             Prepared = CourtData.PrepareGameTeams(Connection.ActivityName, Found.Raw.Name, Home, Away, {
                 Home: Blobs.slice(0, Home.length),
                 Away: Blobs.slice(Home.length),
-            }, PlayerBody.GenerationForConnection(Connection));
+            }, PlayerBody.GenerationForConnection(Connection), { BallType: Userdata.PreferredBallFor(Players) });
         } catch (Failure) {
             Log.Error(`${Connection.ActivityName} start withheld: ${Failure.message}`);
             return false;

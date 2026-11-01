@@ -13,7 +13,7 @@ Widths.push(...Array(8).fill(0), 1, 8, ...Array(5).fill(8), 1,
     ...Array(31).fill(0), ...Array(4).fill(0), 1,4,4,1,1,1,1,8,8,16,4,4,4,4,8,4,4,0);
 const ArrayFields = new Set([...Array(8)].map((_, I) => 96+I).concat([...Array(35)].map((_, I) => 112+I), [164]));
 const Field = Object.freeze({Puid:0,MachineId:1,FakePlayerFlag:91,FakePlayerData:144,
-    ServerGenerated:91,UserGenerationSettings:144,EquippedItemInfo:145,Activity:149,
+    ServerGenerated:91,UserGenerationSettings:144,EquippedItemInfo:145,PreferredBallType:159,Activity:149,
     SquadId:105,SquadInvites:Object.freeze([106,107,108,109,110]),GotNextLocation:156,GotNextFacing:157});
 const ShowField = 93;
 function IsPresent(Body, Id) { return Boolean(Body[16+(Id>>3)] & (0x80>>(Id&7))); }

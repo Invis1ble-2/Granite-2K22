@@ -1,6 +1,6 @@
 // NBA 2K22 MyCOURT 2v2: keep CourtType 6's camera with genuine 2/2 rosters.
 #pragma once
-#include "NativeMatchInit.h"
+#include "MatchLifecycleHooks.h"
 
 namespace MyCourt2v2Fix
 {
@@ -29,6 +29,6 @@ inline uint32_t TeamSizeForSession(void* Session)
 }
 inline void Install()
 {
-    NativeMatchInit::ResolveTeamSize = &TeamSizeForSession;
+    MatchLifecycleHooks::ResolveTeamSize = &TeamSizeForSession;
 }
 } // namespace MyCourt2v2Fix

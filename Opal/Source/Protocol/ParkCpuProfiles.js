@@ -4,7 +4,7 @@ const Crypto = require('node:crypto');
 const Zlib = require('node:zlib');
 const Catalog = require('../Data/CpuTemplates2K22.json');
 const Overall = require('./ParkCpuRating');
-const ProfileBytes = 672;
+const ProfileBytes = 672, SoloCandidateCount = 4;
 const RowBytes = 0x560, MaxSeed = 0xffffffff;
 if (Catalog.Format !== 'NBA2K22-player-template-v2' || Catalog.RowBytes !== RowBytes ||
     !Number.isInteger(Catalog.Count) || Catalog.Count < 1 || Catalog.Count > 72 ||
@@ -65,10 +65,6 @@ function RandomForSeed(Seed) {
         return X % Count;
     };
 }
-function ProfileForSeed(Seed) {
-    const Below = RandomForSeed(Seed);
-    return { Overall: 80 + Below(20), Height: 175 + Below(46), Weight: 165 + Below(161) };
-}
 function MatchesPool(Report) {
     return Boolean(Report && Report.PoolCount === PoolCount && Buffer.isBuffer(Report.Digest) &&
         Report.Digest.equals(PoolDigest));
@@ -125,20 +121,24 @@ function Tune(Profile, Target) {
     }
     throw new Error('CPU exact target unreachable');
 }
-function Generate(Seed, Template) {
+function Generate(Seed, Template, Options = {}) {
     const Row = Rows[Template.Index], Meta = Catalog.Rows[Template.Index], Below = RandomForSeed(Seed);
-    const Target = 80 + Below(20), Height = 17500 + Below(46) * 100, Weight = 165 + Below(161);
-    const B = Buffer.allocUnsafe(4); B.writeFloatLE(Weight);
+    const SeedTarget = 80 + Below(20), SeedHeight = 17500 + Below(46) * 100, SeedWeight = 165 + Below(161);
+    const Target = Options.Target ?? SeedTarget, Height = Options.Body?.Height ?? SeedHeight;
+    const B = Buffer.allocUnsafe(4); B.writeFloatLE(SeedWeight);
+    const AttributeBelow = Options.RandomSeed === undefined ? Below : RandomForSeed(Options.RandomSeed);
     const Position = (Row.readUInt32LE(0xf8) >>> 8) & 7;
     if (Position > 5 || !Array.isArray(Meta.Attributes) || Meta.Attributes.length !== 57 ||
         Meta.Attributes.some(Value => !Number.isInteger(Value) || Value < 25 || Value > 99))
         throw new Error('invalid CPU template attributes or position');
     const Profile = { Seed, Template: Template.Index, Name: Template.Name, Rating: Target,
         Position: Position === 5 ? 4 : Position, Type: (Row.readUInt32LE(0x168) >>> 26) & 31,
-        Height, Weight: B.readUInt32LE(), Shape: [4,8,12,16,20].map(Offset => Row.readUInt32LE(0x520 + Offset)),
-        Attributes: Meta.Attributes.slice(), Badges: [], ShotTendencies: [], PreserveType: (Row[0x354] & 7) !== 0 };
+        Height, Weight: Options.Body?.Weight ?? B.readUInt32LE(), Shape: [4,8,12,16,20].map(Offset => Row.readUInt32LE(0x520 + Offset)),
+        Attributes: Meta.Attributes.map((Value, I) => Options.RandomSeed === undefined || I === 0x22 ? Value :
+            Math.max(25, Math.min(99, Value + AttributeBelow(31) - 15))),
+        Badges: [], ShotTendencies: [], PreserveType: (Row[0x354] & 7) !== 0 };
     for (let I = 0; I < 99; ++I) Profile.Badges.push(Overall.IsFlag(I) ?
-        ((Row[0x4bb + (I >> 2)] >> (I & 3)) & 1) : Below(5));
+        ((Row[0x4bb + (I >> 2)] >> (I & 3)) & 1) : AttributeBelow(5));
     Tune(Profile, Target);
     const Ability = Profile.Attributes[7];
     const Tendency = Ability < 60 ? Math.max(10, 50 - 2 * (60 - Ability)) : Ability > 65 ? 50 + Ability - 65 : 50;
@@ -179,15 +179,23 @@ function Select(Count, Opts) {
         const [Template] = Available.splice(Crypto.randomInt(Available.length), 1);
         const Target = Mode === 'fixed' ? Opts.CpuFixedOverall : 80 + Crypto.randomInt(20);
         const Steps = Math.floor((MaxSeed - Template.Index) / PoolCount) + 1;
-        // Choose the player first on the server. Encode its ORIGINAL pool index
-        // in a nonzero seed, preserving the existing client seed % PoolCount rule.
-        for (let Attempt = 0; Attempt < 1024; ++Attempt) {
-            const Seed = Template.Index + PoolCount * Crypto.randomInt(Steps);
-            if (!Seed) continue;
-            if (ProfileForSeed(Seed).Overall === Target) return Generate(Seed, Template);
+        // The seed selects the original template; the target is explicit server-authored data.
+        const Seed = Template.Index + PoolCount * Crypto.randomInt(Template.Index === 0 ? 1 : 0, Steps);
+        return Generate(Seed, Template, { Target });
+    });
+}
+function SelectCandidates(Count, Opts) {
+    return Select(Count, Opts).map(First => {
+        const Candidates = [First], Template = { Index: First.Template, Name: First.Name };
+        for (let I = 1; I < SoloCandidateCount; ++I) {
+            const Target = Opts.CpuOverallMode !== 'fixed' && I >= 2 ? 80 + Crypto.randomInt(20) : First.Rating;
+            Candidates.push(Generate(First.Seed, Template, {
+                Target, Body: First, RandomSeed: Crypto.randomInt(1, MaxSeed + 1),
+            }));
         }
-        throw new Error(`could not select a CPU seed for ${Template.Name}, overall ${Target}`);
+        return Object.freeze(Candidates);
     });
 }
 
-module.exports = { PoolCount, UniqueCount: Unique.length, MatchesPool, Select, ProfileBytes, EncodeProfile, ProfileDigest };
+module.exports = { PoolCount, UniqueCount: Unique.length, MatchesPool, Select, SelectCandidates, SoloCandidateCount,
+    ProfileBytes, EncodeProfile, ProfileDigest };

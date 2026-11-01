@@ -573,6 +573,8 @@ function OccupancyPayload(Layout, CourtId, OwnerId, ObjectId, SeatsByQueue, Prof
         Online: Boolean(Teams) && !Teams.NativeSolo,
         GameState: GameCourtValue ? (Teams ? (Teams.GameReady ? 3 : 2) : 0) : undefined,
         GamblingIndex: Layout.StageCourt ? StagePrice(Layout.StageCourt.name).index : undefined,
+        BallType: Generation === '2K22' ? (Teams?.BallType ?? 0) : undefined,
+        OverrideBallType: Generation === '2K22' ? 0 : undefined,
     });
 }
 
@@ -814,6 +816,13 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
             throw new Error('Native solo court requires one human and native CPU fill in a supported 2K22 court');
         Teams.NativeSolo = { Owner: Solo.Owner, Cpu, MatchId: Solo.MatchId };
         Teams.MatchId = Solo.MatchId;
+    }
+    if (Generation === '2K22') {
+        const BallType = Options.BallType ?? 0;
+        if (!Number.isInteger(BallType) || BallType < 0 || BallType > 0xffffffff)
+            throw new Error('invalid court ball resource CRC');
+        // Freeze one shared ball before any court publication or PLAYING grant.
+        Teams.BallType = BallType;
     }
     const Relay = require('../Activity/Activities').Relay.Local;
     if (!Number.isInteger(Relay.Port) || Relay.Port < 1 || Relay.Port > 65535)

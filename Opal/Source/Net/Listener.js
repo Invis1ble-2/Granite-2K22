@@ -96,9 +96,11 @@ function Attach(Client) {
 
 function Start({ port: Port = Number(process.env.OPAL_PORT) || 20054, Certificate = null } = {}) {
     const Server = Https.createServer(LoadCertificate(Certificate));
-    const ParkCpuControl = require('./ParkCpuControl').CreateHandler();
+    const ParkCpuEndpoint = require('./ParkCpuEndpoint').CreateHandler();
+    const OnlineFrameRateEndpoint = require('./OnlineFrameRateEndpoint').CreateHandler();
     Server.on('request', (Req, Res) => {
-        if (ParkCpuControl(Req, Res)) return;
+        if (ParkCpuEndpoint(Req, Res)) return;
+        if (OnlineFrameRateEndpoint(Req, Res)) return;
         Res.writeHead(404, { 'Content-Length': 0 }); Res.end();
     });
 

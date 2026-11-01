@@ -6,19 +6,18 @@
 #include <sstream>
 #include <string>
 #include <xmmintrin.h>
-#include "NativeMatchInit.h"
+#include "MatchLifecycleHooks.h"
+#include "GameSessionDiscovery.h"
 
 namespace ParkCpu
 {
-inline constexpr uint32_t ModuleVersion = 0x00010223;
+inline constexpr uint32_t ModuleVersion = 0x00010226;
 inline constexpr uint64_t CpuMask = 0xfffff00000000000ULL, CpuPrefix = 0x0222c00000000000ULL;
 inline constexpr uint32_t MaxTemplates = 72, MaxLeaseMs = 8000;
 inline constexpr unsigned MaxPlayers = 10;
 inline bool SupportedTeamSize(uint32_t Size) { return Size == 2 || Size == 3 || Size == 5; }
 inline unsigned SideStride(uint32_t TeamSize) { return TeamSize == 5 ? 5 : 3; }
 inline unsigned char* ExeBase = nullptr;
-inline void (*BeforeStart)(void*, void*) = nullptr;
-inline bool (*FrameTimingReady)() = nullptr;
 using GenerateFn = void*(__fastcall*)(void*, void*, void*);
 using LookupFn = void*(__fastcall*)(void*, uint64_t);
 inline bool IsCpu(uint64_t Id) { return (Id & CpuMask) == CpuPrefix; }
@@ -144,7 +143,9 @@ struct Generation
     alignas(16) unsigned char Data[TemplateBytes]{};
     Snapshot Expected{};
     Parameters Command{};
-    std::string Error; // First failure only; propagated to the existing receipt/log.
+    const Parameters* Candidates = nullptr;
+    unsigned CandidateCount = 1, Candidate = 0;
+    std::string Error; // First failure within an attempt; terminal failure reaches the receipt.
     void* Session = nullptr;
     uint64_t Id = 0;
     const void* Authority = nullptr;
@@ -302,8 +303,47 @@ inline bool Apply(Generation& G, const unsigned char* Source)
     for (size_t I = 0; I < P.ShotTendencies.size(); ++I)
         SetAttribute(G.Data, ShotTendencyIndices[I], static_cast<int>(P.ShotTendencies[I]));
     if (!Capture(G.Data, G.Expected, &G.Error)) return false;
-    if (!(ParametersFor(G.Expected) == P)) return Reject(&G.Error, "server-profile-readback-mismatch");
+    auto Actual = ParametersFor(G.Expected);
+    if (!(Actual == P))
+    {
+        // Body, type, badges and tendencies must match before retrying a scoring mismatch.
+        Actual.Rating = P.Rating; Actual.Attributes = P.Attributes;
+        if (!(Actual == P)) return Reject(&G.Error, "server-profile-readback-mismatch");
+        if (G.Expected.Rating != P.Rating)
+            return Reject(&G.Error, "server-profile-overall:expected=" + std::to_string(P.Rating) +
+                ":actual=" + std::to_string(G.Expected.Rating));
+        for (size_t I = 0; I < P.Attributes.size(); ++I) if (G.Expected.Attributes[I] != P.Attributes[I])
+            return Reject(&G.Error, "server-profile-attribute:index=" + std::to_string(I) +
+                ":expected=" + std::to_string(P.Attributes[I]) + ":actual=" + std::to_string(G.Expected.Attributes[I]));
+    }
     return Authorized(G) || Reject(&G.Error, "apply-authorization-expired");
+}
+inline bool ApplyCandidates(Generation& G, const unsigned char* Source)
+{
+    if (!G.Candidates) return Apply(G, Source);
+    for (G.Candidate = 0; G.Candidate < G.CandidateCount; ++G.Candidate)
+    {
+        G.Command = G.Candidates[G.Candidate]; G.Expected = {}; G.Error.clear();
+        // Apply always copies Source anew. No native player exists until a candidate passes.
+        if (Apply(G, Source)) return true;
+        const bool Retryable = G.Error.starts_with("overall-range:") ||
+            G.Error.starts_with("server-profile-overall:") || G.Error.starts_with("server-profile-attribute:");
+        const bool Again = Retryable && G.Candidate + 1 < G.CandidateCount;
+        std::wostringstream Text;
+        Text << L"SOLO22 CPU id=0x" << std::hex << G.Id << std::dec << L" template=" << G.Template <<
+            L" seed=" << G.Seed << L" candidate=" << G.Candidate + 1 << L"/" << G.CandidateCount <<
+            L" target=" << G.Command.Rating << L" refused: " << std::wstring(G.Error.begin(), G.Error.end()) <<
+            (Again ? L"; trying next authorized candidate" : L"; generation stopped");
+        Log(Again ? LogLevel::Info : LogLevel::Error, Text.str());
+        if (!Again)
+        {
+            G.Error += ":template=" + std::to_string(G.Template) + ":seed=" + std::to_string(G.Seed) +
+                ":candidate=" + std::to_string(G.Candidate + 1) + "/" + std::to_string(G.CandidateCount) +
+                ":target=" + std::to_string(G.Command.Rating);
+            return false;
+        }
+    }
+    return false;
 }
 // OverallRating is the U8 at ServerObject+0x14d; TK_WORLD::PLAYER embeds it at +0x50.
 // Player+0x1b4 and PLAYERDATA+0x70 bits 13..19 are JerseyNumber, not overall.
@@ -441,6 +481,14 @@ inline bool Sha256(const std::vector<unsigned char>& Bytes, unsigned char (&Dige
         BCryptHashData(Hash.Handle, const_cast<PUCHAR>(Bytes.data()), static_cast<ULONG>(Bytes.size()), 0) >= 0 &&
         BCryptFinishHash(Hash.Handle, Digest, sizeof(Digest), 0) >= 0;
 }
+inline bool HashProfiles(const uint64_t* Players, const Profile::Snapshot* Profiles, unsigned Count,
+    uint32_t Mask, unsigned char (&Digest)[32])
+{
+    std::vector<unsigned char> Bytes;
+    for (unsigned I = 0; I < Count; ++I) if (Mask & (1U << I)) Profile::Append(Bytes, Players[I], Profiles[I]);
+    if (Sha256(Bytes, Digest)) return true;
+    memset(Digest, 0, sizeof(Digest)); return false;
+}
 inline bool Pool(uint32_t& Count, unsigned char (&Digest)[32], unsigned char*& Entries)
 {
     void* Owner = nullptr;
@@ -518,7 +566,7 @@ inline void* __fastcall CreatePlayer(void* Session, void* Descriptor)
             const auto Offset = reinterpret_cast<uintptr_t>(Previous) - reinterpret_cast<uintptr_t>(Entries);
             Ok = Check(Offset < static_cast<size_t>(Count) * 0x560 && Offset % 0x560 == 0, "create-template-outside-pool");
         }
-        if (Ok) Ok = Profile::Apply(*G, Entries + static_cast<size_t>(G->Template) * 0x560);
+        if (Ok) Ok = Profile::ApplyCandidates(*G, Entries + static_cast<size_t>(G->Template) * 0x560);
     }
     catch (...) { Profile::Reject(&G->Error, "create-exception"); Ok = false; }
     if (!Ok)
@@ -542,6 +590,9 @@ inline void* __fastcall CreatePlayer(void* Session, void* Descriptor)
 
 namespace Solo
 {
+inline constexpr unsigned MaxCpu = 9, MaxCandidates = 4;
+inline constexpr size_t RequestBytes = 144 + MaxCpu * MaxCandidates * sizeof(Profile::Parameters);
+inline constexpr size_t EnvelopeBytes = 24 + RequestBytes;
 inline std::string NetworkReceipt(uint64_t Instance);
 inline bool NetworkReply(const void* Bytes, size_t Size, uint64_t Instance);
 inline void RevokeNetwork();
@@ -576,6 +627,17 @@ struct Report
     unsigned char Digest[32]{};
     unsigned char ProfileDigest[32]{};
 };
+struct ManifestLease
+{
+    uint32_t Magic, Protocol;
+    uint64_t Epoch, Match;
+    uint32_t LeaseMs, Phase;
+};
+struct ControlReply
+{
+    uint32_t Magic, Version, ParkBytes, SoloBytes;
+};
+static_assert(sizeof(ManifestLease) == 32 && sizeof(ControlReply) == 16);
 static_assert(sizeof(Manifest) == 6968 && offsetof(Manifest, Digest) == 56 && offsetof(Manifest, Players) == 88);
 static_assert(offsetof(Manifest, Seeds) == 168 && offsetof(Manifest, Templates) == 208 && offsetof(Manifest, Profiles) == 248);
 static_assert(sizeof(Report) == 120 && offsetof(Report, Digest) == 56 && offsetof(Report, ProfileDigest) == 88);
@@ -588,25 +650,17 @@ struct StateData
     uint32_t Created = 0, Error = 0;
     bool Active = false, Started = false;
     std::array<Profile::Snapshot, MaxPlayers> Profiles{};
+    unsigned char ProfileDigest[32]{};
 };
 inline StateData State;
-struct ControlData
-{
-    std::wstring Session;
-    INTERNET_PORT Port = 0;
-    unsigned FrameRate = 0, BufferFrames = 0;
-    uint64_t TimingEpoch = 0;
-    uint64_t Generation = 1;
-};
-inline std::mutex ControlMutex;
-inline ControlData Control;
-inline constexpr wchar_t ControlPath[] = L"/native-park/v6/poll";
+inline constexpr wchar_t ControlPath[] = L"/native-cpu/v7/poll";
 inline uint32_t ActiveMask(const Manifest& M) { return ParkCpu::ActiveMask(M.TeamSize); }
 inline uint32_t CpuSlots(const Manifest& M) { return ActiveMask(M) & ~M.HumanMask; }
-inline bool SameRoster(Manifest A, Manifest B)
+inline bool SameRoster(const Manifest& A, const Manifest& B)
 {
-    A.LeaseMs = B.LeaseMs = 0; A.Phase = B.Phase = 0;
-    return memcmp(&A, &B, sizeof(A)) == 0;
+    // Lease and phase may advance without changing the authorized roster.
+    return A.Magic == B.Magic && A.Protocol == B.Protocol && A.Epoch == B.Epoch && A.Match == B.Match &&
+        !memcmp(&A.LocalPuid, &B.LocalPuid, sizeof(Manifest) - offsetof(Manifest, LocalPuid));
 }
 inline bool ValidManifest(const Manifest& M)
 {
@@ -662,7 +716,7 @@ inline void Revoke()
     std::lock_guard<std::mutex> Lock(StateMutex);
     // Retain the last match identity so delayed native starts are still rejected.
     State.Active = false; State.Created = 0; State.Started = false; State.Error = 0; State.Deadline = 0;
-    State.Profiles = {};
+    State.Profiles = {}; memset(State.ProfileDigest, 0, sizeof(State.ProfileDigest));
 }
 inline void Accept(const Manifest& M)
 {
@@ -680,6 +734,17 @@ inline void Accept(const Manifest& M)
     { State.Active = false; State.Error = 1; return; }
     if (!Same) State = StateData{};
     State.Request = M; State.Deadline = GetTickCount64() + M.LeaseMs; State.Active = true;
+}
+inline bool Renew(const ManifestLease& L)
+{
+    std::lock_guard<std::mutex> Lock(StateMutex);
+    if (L.Magic != ManifestMagic || L.Protocol != Version || !L.LeaseMs || L.LeaseMs > MaxLeaseMs ||
+        L.Phase < 1 || L.Phase > 4 || !State.Active ||
+        State.Request.Epoch != L.Epoch || State.Request.Match != L.Match || L.Phase < State.Request.Phase) return false;
+    // Snapshot still verifies the live template pool on every poll.
+    State.Request.LeaseMs = L.LeaseMs; State.Request.Phase = L.Phase;
+    State.Deadline = GetTickCount64() + L.LeaseMs;
+    return true;
 }
 inline bool Validate(void* Session, void* Info, const Manifest& M, bool Prepared, LookupFn Lookup)
 {
@@ -736,8 +801,13 @@ inline void Generated(Generation& G, void* Player)
     if (!SameRoster(State.Request, G.Request)) return;
     if (Ok && LiveLocked(G.Request))
     {
+        const bool Changed = !(State.Created & (1U << G.Slot)) || !(State.Profiles[G.Slot] == G.Profile.Expected);
         State.Profiles[G.Slot] = G.Profile.Expected;
         State.Created |= 1U << G.Slot;
+        const uint32_t Mask = CpuSlots(G.Request);
+        if (Changed && (State.Created & Mask) == Mask &&
+            !HashProfiles(G.Request.Players, State.Profiles.data(), MaxPlayers, Mask, State.ProfileDigest) && !State.Error)
+            State.Error = 9;
         Log(LogLevel::Info, L"PARK22 CPU " + std::to_wstring(G.Slot) + L" verified: OVR=" +
             std::to_wstring(G.Profile.Expected.Rating) + L" height-cm=" +
             std::to_wstring(G.Profile.Expected.Height / 100));
@@ -900,8 +970,7 @@ inline Report Snapshot(uint64_t Instance)
 {
     Report R; R.Instance = Instance;
     unsigned char* Entries = nullptr;
-    const bool Ready = Installed && OnlineHookReady && Profile::Ready &&
-        (!FrameTimingReady || FrameTimingReady()) && Pool(R.PoolCount, R.Digest, Entries);
+    const bool Ready = Installed && OnlineHookReady && Profile::Ready && Pool(R.PoolCount, R.Digest, Entries);
     if (!Ready) { R.PoolCount = 0; memset(R.Digest, 0, sizeof(R.Digest)); }
     std::lock_guard<std::mutex> Lock(StateMutex);
     R.Epoch = State.Request.Epoch; R.Match = State.Request.Match;
@@ -910,131 +979,20 @@ inline Report Snapshot(uint64_t Instance)
     if (State.Active && !Ready && !R.Error) State.Error = R.Error = 8;
     if (State.Active && Ready && (R.PoolCount != State.Request.PoolCount ||
         memcmp(R.Digest, State.Request.Digest, sizeof(R.Digest))) && !R.Error) State.Error = R.Error = 2;
-    if (State.Created && (State.Created & CpuSlots(State.Request)) == CpuSlots(State.Request))
-    {
-        std::vector<unsigned char> Bytes;
-        for (unsigned I = 0; I < MaxPlayers; ++I) if (CpuSlots(State.Request) & (1U << I))
-            Profile::Append(Bytes, State.Request.Players[I], State.Profiles[I]);
-        if (!Sha256(Bytes, R.ProfileDigest) && !R.Error) State.Error = R.Error = 9;
-    }
+    memcpy(R.ProfileDigest, State.ProfileDigest, sizeof(R.ProfileDigest));
     if (LiveLocked(State.Request)) R.Flags |= 2;
     if (State.Started) R.Flags |= 4;
     return R;
 }
-// One authenticated transport worker polls both CPU authorization protocols.
-struct InternetHandle
+// One authenticated poll carries both CPU reports and mode-specific lease replies.
+using GameSessionDiscovery::InternetHandle;
+inline bool Poll(HINTERNET Connection, const Report& R, const GameSessionDiscovery::SessionData& C)
 {
-    HINTERNET Value = nullptr;
-    ~InternetHandle() { if (Value) WinHttpCloseHandle(Value); }
-    InternetHandle() = default;
-    explicit InternetHandle(HINTERNET V) : Value(V) {}
-    InternetHandle(const InternetHandle&) = delete;
-    InternetHandle& operator=(const InternetHandle&) = delete;
-};
-inline bool ReadTimingHeaders(HINTERNET Request, unsigned& Hz, unsigned& Buffer, uint64_t& TimingEpoch)
-{
-    const auto Number = [Request](const wchar_t* Name, unsigned& Value)
-    {
-        wchar_t Text[8]{}; DWORD Size = sizeof(Text);
-        if (!WinHttpQueryHeaders(Request, WINHTTP_QUERY_CUSTOM, Name, Text, &Size, WINHTTP_NO_HEADER_INDEX)) return false;
-        Text[_countof(Text) - 1] = L'\0';
-        if (!Text[0]) return false;
-        Value = 0;
-        for (const wchar_t C : std::wstring(Text))
-        {
-            if (C < L'0' || C > L'9' || Value > 1000) return false;
-            Value = Value * 10 + static_cast<unsigned>(C - L'0');
-        }
-        return true;
-    };
-    wchar_t EpochText[24]{}; DWORD EpochSize = sizeof(EpochText);
-    if (!WinHttpQueryHeaders(Request, WINHTTP_QUERY_CUSTOM, L"X-Granite-Park-Timing-Epoch",
-        EpochText, &EpochSize, WINHTTP_NO_HEADER_INDEX)) return false;
-    EpochText[_countof(EpochText) - 1] = L'\0';
-    const std::wstring Epoch(EpochText);
-    if (Epoch.empty() || Epoch.size() > 16) return false;
-    TimingEpoch = 0;
-    for (const wchar_t C : Epoch)
-    {
-        const unsigned Digit = C >= L'0' && C <= L'9' ? static_cast<unsigned>(C - L'0') :
-            C >= L'a' && C <= L'f' ? static_cast<unsigned>(C - L'a' + 10) : 16;
-        if (Digit > 15) return false;
-        TimingEpoch = (TimingEpoch << 4) | Digit;
-    }
-    return TimingEpoch && Number(L"X-Granite-Park-Frame-Rate", Hz) && (Hz == 60 || Hz == 120) &&
-        Number(L"X-Granite-Park-Buffer-Frames", Buffer) && Buffer >= 1 && Buffer <= 49;
-}
-inline void ResetLogin(uint64_t Generation)
-{
-    std::lock_guard<std::mutex> Lock(ControlMutex);
-    Control.Session.clear(); Control.Port = 0; Control.FrameRate = Control.BufferFrames = 0;
-    Control.TimingEpoch = 0; Control.Generation = Generation;
-    OnlineFrameRate::ClearLogin();
-    Revoke(); Solo::RevokeNetwork();
-}
-inline void ObserveResponse(HINTERNET Request, uint64_t Generation)
-{
-    // Called before the game's existing WinHTTP close, never on our own polls.
-    // Failed/cancelled requests simply have no usable response headers.
-    try
-    {
-        DWORD Status = 0, Size = sizeof(Status);
-        if (!WinHttpQueryHeaders(Request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-            WINHTTP_HEADER_NAME_BY_INDEX, &Status, &Size, WINHTTP_NO_HEADER_INDEX) || Status != 200) return;
-        wchar_t Session[32]{}, Port[8]{};
-        Size = sizeof(Session);
-        if (!WinHttpQueryHeaders(Request, WINHTTP_QUERY_CUSTOM, L"X-Granite-Native-Park-Session",
-            Session, &Size, WINHTTP_NO_HEADER_INDEX)) return;
-        Size = sizeof(Port);
-        if (!WinHttpQueryHeaders(Request, WINHTTP_QUERY_CUSTOM, L"X-Granite-Native-Park-Port",
-            Port, &Size, WINHTTP_NO_HEADER_INDEX)) return;
-        Session[_countof(Session) - 1] = Port[_countof(Port) - 1] = L'\0';
-        const std::wstring Key(Session), PortText(Port);
-        if (Key.empty() || Key.size() > 19 || Key[0] == L'0' || PortText.empty() || PortText.size() > 5) return;
-        uint64_t SessionValue = 0;
-        for (const wchar_t C : Key)
-        {
-            if (C < L'0' || C > L'9' || SessionValue > (0x7fffffffffffffffULL - (C - L'0')) / 10) return;
-            SessionValue = SessionValue * 10 + (C - L'0');
-        }
-        unsigned PortValue = 0;
-        for (const wchar_t C : PortText)
-        {
-            if (C < L'0' || C > L'9') return;
-            PortValue = PortValue * 10 + (C - L'0');
-        }
-        if (!PortValue || PortValue > 65535) return;
-        bool Changed = false;
-        {
-            std::lock_guard<std::mutex> Lock(ControlMutex);
-            if (Generation != Control.Generation) return; // An old login's late response.
-            Changed = Control.Session != Key || Control.Port != PortValue;
-            if (Changed)
-            {
-                Revoke(); Solo::RevokeNetwork();
-                // Granite discovers credentials only. Timing is negotiated directly with Opal,
-                // so a late response with the previous login's Hz cannot overwrite a new selection.
-                OnlineFrameRate::ClearLogin();
-                Control.FrameRate = Control.BufferFrames = 0; Control.TimingEpoch = 0;
-                Control.Session = Key; Control.Port = static_cast<INTERNET_PORT>(PortValue);
-            }
-        }
-        if (Changed) Log(LogLevel::Info, L"PARK22 using the current game login session; no separate park configuration");
-    }
-    catch (...) { /* Optional park discovery must not change the game's HTTP close. */ }
-}
-inline bool CurrentControl(const ControlData& C)
-{
-    // Caller holds ControlMutex. A new login must not accept an old poll's reply.
-    return C.Generation == Control.Generation && C.Port == Control.Port && C.Session == Control.Session &&
-        C.FrameRate == Control.FrameRate && C.BufferFrames == Control.BufferFrames && C.TimingEpoch == Control.TimingEpoch;
-}
-inline bool Poll(HINTERNET Connection, const Report& R, const ControlData& C, bool IsSolo = false)
-{
-    const auto SoloText = IsSolo ? Solo::NetworkReceipt(R.Instance) : std::string{};
-    const void* Body = IsSolo ? static_cast<const void*>(SoloText.data()) : static_cast<const void*>(&R);
-    const DWORD BodyBytes = IsSolo ? static_cast<DWORD>(SoloText.size()) : sizeof(R);
-    InternetHandle Request(WinHttpOpenRequest(Connection, L"POST", IsSolo ? L"/native-solo/v5/poll" : ControlPath,
+    const auto SoloText = Solo::NetworkReceipt(R.Instance);
+    std::vector<unsigned char> Body(sizeof(R) + SoloText.size());
+    memcpy(Body.data(), &R, sizeof(R)); memcpy(Body.data() + sizeof(R), SoloText.data(), SoloText.size());
+    const DWORD BodyBytes = static_cast<DWORD>(Body.size());
+    InternetHandle Request(WinHttpOpenRequest(Connection, L"POST", ControlPath,
         nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
     if (!Request.Value) return false;
     DWORD Policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
@@ -1043,82 +1001,68 @@ inline bool Poll(HINTERNET Connection, const Report& R, const ControlData& C, bo
         SECURITY_FLAG_IGNORE_CERT_DATE_INVALID | SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
     if (!WinHttpSetOption(Request.Value, WINHTTP_OPTION_REDIRECT_POLICY, &Policy, sizeof(Policy)) ||
         !WinHttpSetOption(Request.Value, WINHTTP_OPTION_SECURITY_FLAGS, &Security, sizeof(Security))) return false;
-    std::wostringstream TimingEpoch; TimingEpoch << std::hex << C.TimingEpoch;
-    const std::wstring Headers = std::wstring(L"Content-Type: ") + (IsSolo ? L"application/json" : L"application/octet-stream") +
-        L"\r\nCache-Control: no-store\r\nX-Granite-Session: " + C.Session +
-        L"\r\nX-Granite-Park-Frame-Rate: " + std::to_wstring(C.FrameRate) +
-        L"\r\nX-Granite-Park-Buffer-Frames: " + std::to_wstring(C.BufferFrames) +
-        L"\r\nX-Granite-Park-Timing-Epoch: " + TimingEpoch.str() + L"\r\n";
+    const std::wstring Headers = L"Content-Type: application/octet-stream\r\nCache-Control: no-store\r\nX-Granite-Session: " + C.Session + L"\r\n";
     if (!WinHttpSendRequest(Request.Value, Headers.c_str(), static_cast<DWORD>(Headers.size()),
-        const_cast<void*>(Body), BodyBytes, BodyBytes, 0) || !WinHttpReceiveResponse(Request.Value, nullptr)) return false;
+        Body.data(), BodyBytes, BodyBytes, 0) || !WinHttpReceiveResponse(Request.Value, nullptr)) return false;
     DWORD Status = 0, Size = sizeof(Status);
     if (!WinHttpQueryHeaders(Request.Value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &Status, &Size, WINHTTP_NO_HEADER_INDEX)) return false;
-    {
-        std::lock_guard<std::mutex> Lock(ControlMutex);
-        if (!CurrentControl(C)) return true;
-        if (Status == 428)
-        {
-            unsigned Hz = 0, Buffer = 0; uint64_t Epoch = 0;
-            OnlineFrameRate::VerifyServer(0, 0);
-            Revoke(); Solo::RevokeNetwork();
-            if (!ReadTimingHeaders(Request.Value, Hz, Buffer, Epoch) ||
-                (Epoch == C.TimingEpoch && Hz == C.FrameRate && Buffer == C.BufferFrames) ||
-                !OnlineFrameRate::ConfigureServer(Hz, Buffer)) return false;
-            Control.FrameRate = Hz; Control.BufferFrames = Buffer; Control.TimingEpoch = Epoch;
-            Log(LogLevel::Info, L"FPS22 received Opal timing: " + std::to_wstring(Hz) +
-                L" Hz, buffer " + std::to_wstring(Buffer) + L" frames; awaiting server acknowledgement");
-            return true;
-        }
-        if (Status == 200 || Status == 204)
-        {
-            unsigned Hz = 0, Buffer = 0; uint64_t Epoch = 0;
-            if (!ReadTimingHeaders(Request.Value, Hz, Buffer, Epoch) || !C.TimingEpoch || Epoch != C.TimingEpoch ||
-                Hz != C.FrameRate || Buffer != C.BufferFrames ||
-                !OnlineFrameRate::VerifyServer(Hz, Buffer))
-            {
-                OnlineFrameRate::VerifyServer(0, 0);
-                Revoke(); Solo::RevokeNetwork();
-                Log(LogLevel::Error, L"FPS22 Opal timing acknowledgement mismatch; waiting to renegotiate after reconnect");
-                return false;
-            }
-        }
-        else if (Status == 401 || Status == 409) OnlineFrameRate::VerifyServer(0, 0);
-    }
     if (Status == 204 || Status == 401 || Status == 409)
     {
-        std::lock_guard<std::mutex> Lock(ControlMutex);
-        if (CurrentControl(C)) { if (IsSolo) Solo::RevokeNetwork(); else Revoke(); }
+        std::lock_guard<std::mutex> Lock(GameSessionDiscovery::Mutex);
+        if (GameSessionDiscovery::Current(C)) { Revoke(); Solo::RevokeNetwork(); }
         return Status == 204;
     }
     if (Status != 200) return false;
-    unsigned char Bytes[sizeof(Manifest) + 1]{}; DWORD Total = 0, Got = 0;
+    DWORD ContentBytes = 0; Size = sizeof(ContentBytes);
+    if (!WinHttpQueryHeaders(Request.Value, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &ContentBytes, &Size, WINHTTP_NO_HEADER_INDEX) || ContentBytes < sizeof(ControlReply) ||
+        ContentBytes > sizeof(ControlReply) + sizeof(Manifest) + Solo::EnvelopeBytes) return false;
+    std::vector<unsigned char> Bytes(static_cast<size_t>(ContentBytes) + 1);
+    DWORD Total = 0, Got = 0;
     do
     {
-        if (Total == sizeof(Bytes) || !WinHttpReadData(Request.Value, Bytes + Total, static_cast<DWORD>(sizeof(Bytes) - Total), &Got)) return false;
+        if (Total == Bytes.size() || !WinHttpReadData(Request.Value, Bytes.data() + Total,
+            static_cast<DWORD>(Bytes.size() - Total), &Got)) return false;
         Total += Got;
     } while (Got);
-    std::lock_guard<std::mutex> Lock(ControlMutex);
-    if (!CurrentControl(C)) return true;
-    if (IsSolo) return Solo::NetworkReply(Bytes, Total, R.Instance);
-    if (Total != sizeof(Manifest)) return false;
-    Manifest M{}; memcpy(&M, Bytes, sizeof(M));
-    Accept(M);
-    return true;
+    std::lock_guard<std::mutex> Lock(GameSessionDiscovery::Mutex);
+    if (!GameSessionDiscovery::Current(C)) return true;
+    ControlReply Reply{};
+    if (Total != ContentBytes) { Revoke(); Solo::RevokeNetwork(); return false; }
+    memcpy(&Reply, Bytes.data(), sizeof(Reply));
+    if (Reply.Magic != 0x3743504e || Reply.Version != 7 ||
+        (Reply.ParkBytes && Reply.ParkBytes != sizeof(ManifestLease) && Reply.ParkBytes != sizeof(Manifest)) ||
+        (Reply.SoloBytes && Reply.SoloBytes != 32 && Reply.SoloBytes != Solo::EnvelopeBytes) ||
+        sizeof(Reply) + static_cast<size_t>(Reply.ParkBytes) + Reply.SoloBytes != Total)
+    { Revoke(); Solo::RevokeNetwork(); return false; }
+    const auto* Park = Bytes.data() + sizeof(Reply);
+    bool ParkOk = true;
+    if (!Reply.ParkBytes) Revoke();
+    else if (Reply.ParkBytes == sizeof(ManifestLease))
+    {
+        ManifestLease L{}; memcpy(&L, Park, sizeof(L)); ParkOk = Renew(L);
+        if (!ParkOk) Revoke();
+    }
+    else { Manifest M{}; memcpy(&M, Park, sizeof(M)); Accept(M); }
+    bool SoloOk = true;
+    if (Reply.SoloBytes) SoloOk = Solo::NetworkReply(Park + Reply.ParkBytes, Reply.SoloBytes, R.Instance);
+    else Solo::RevokeNetwork();
+    return ParkOk && SoloOk;
 }
 inline DWORD WINAPI Worker(void*)
 {
     uint64_t Instance = 0;
     if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&Instance), sizeof(Instance), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0 || !Instance)
     { Installed = false; Log(LogLevel::Error, L"PARK22 disabled: control instance nonce unavailable"); return 1; }
-    InternetHandle Session(WinHttpOpen(L"Granite-NativePark/6", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    InternetHandle Session(WinHttpOpen(L"Granite-NativePark/7", WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!Session.Value || !WinHttpSetTimeouts(Session.Value, 2000, 2000, 2000, 2000))
     { Installed = false; return 1; }
-    bool Failed = false;
+    ULONGLONG FailedSince = 0;
+    bool ReportedFailure = false;
     for (;;)
     {
-        ControlData C;
-        { std::lock_guard<std::mutex> Lock(ControlMutex); C = Control; }
-        if (C.Session.empty() || !C.Port) { Failed = false; Sleep(500); continue; }
+        const auto C = GameSessionDiscovery::Snapshot();
+        if (C.Session.empty() || !C.Port) { FailedSince = 0; ReportedFailure = false; Sleep(500); continue; }
         bool Ok = false;
         try
         {
@@ -1127,19 +1071,29 @@ inline DWORD WINAPI Worker(void*)
             if (Connection.Value)
             {
                 const auto R = Snapshot(Instance);
-                const bool ParkOk = Poll(Connection.Value, R, C);
-                {
-                    std::lock_guard<std::mutex> Lock(ControlMutex);
-                    if (!CurrentControl(C)) continue;
-                }
-                const bool SoloOk = Poll(Connection.Value, R, C, true);
-                Ok = ParkOk && SoloOk;
+                Ok = Poll(Connection.Value, R, C);
             }
         }
         catch (...) { Ok = false; }
-        if (!Ok && !Failed) Log(LogLevel::Error, L"PARK22 control unavailable: current game login or Opal connection is not ready; expired authorization cannot start a game");
-        else if (Ok && Failed) Log(LogLevel::Info, L"PARK22 control connection recovered");
-        Failed = !Ok;
+        if (!Ok)
+        {
+            const auto Now = GetTickCount64();
+            if (!FailedSince)
+            {
+                FailedSince = Now;
+                Log(LogLevel::Info, L"PARK22 control poll retrying; existing authorization remains bounded by its lease");
+            }
+            else if (!ReportedFailure && Now - FailedSince >= MaxLeaseMs)
+            {
+                Log(LogLevel::Error, L"PARK22 control unavailable for at least 8 seconds; valid authorization is required before starting a game");
+                ReportedFailure = true;
+            }
+        }
+        else
+        {
+            if (FailedSince) Log(LogLevel::Info, L"PARK22 control connection recovered");
+            FailedSince = 0; ReportedFailure = false;
+        }
         Sleep(Ok ? 500 : 1500);
     }
 }
@@ -1148,7 +1102,6 @@ inline DWORD WINAPI Worker(void*)
 // Solo: one-human request lease and JSON receipts, with room for nine generated CPUs.
 namespace Solo
 {
-inline constexpr unsigned MaxCpu = 9;
 struct Request
 {
     uint32_t Magic, Version;
@@ -1156,14 +1109,16 @@ struct Request
     uint32_t TeamSize, CpuCount;
     uint64_t Cpu[MaxCpu];
     uint32_t Seeds[MaxCpu];
-    uint32_t Reserved;
-    Profile::Parameters Profiles[MaxCpu];
+    uint32_t CandidateCount;
+    Profile::Parameters Candidates[MaxCpu][MaxCandidates];
 };
-static_assert(sizeof(Request) == 6192 && offsetof(Request, TeamSize) == 24 && offsetof(Request, Cpu) == 32 &&
-    offsetof(Request, Seeds) == 104 && offsetof(Request, Profiles) == 144);
+static_assert(sizeof(Request) == RequestBytes && offsetof(Request, TeamSize) == 24 && offsetof(Request, Cpu) == 32 &&
+    offsetof(Request, Seeds) == 104 && offsetof(Request, CandidateCount) == 140 && offsetof(Request, Candidates) == 144);
 inline Request Current{};
 inline bool Created[MaxCpu]{};
+inline std::array<int, MaxCpu> SelectedCandidates{};
 inline std::array<Profile::Snapshot, MaxCpu> Profiles{};
+inline unsigned char ProfileDigest[32]{};
 inline std::string GenerationError;
 inline std::mutex ReceiptMutex;
 inline bool NetworkManaged = false, ReceiptStarted = false;
@@ -1176,17 +1131,25 @@ struct NetworkEnvelope
     uint32_t LeaseMs, Reserved;
     Request Data;
 };
-static_assert(sizeof(NetworkEnvelope) == 6216 && offsetof(NetworkEnvelope, Data) == 24);
+static_assert(sizeof(NetworkEnvelope) == EnvelopeBytes && offsetof(NetworkEnvelope, Data) == 24);
 inline bool ValidRequest(const Request& R)
 {
-    if (R.Magic != 0x32325053 || R.Version != 5 || R.Reserved || !R.Match || !R.Owner ||
+    if (R.Magic != 0x32325053 || R.Version != 6 || R.CandidateCount != MaxCandidates || !R.Match || !R.Owner ||
         IsCpu(R.Owner) || !SupportedTeamSize(R.TeamSize) || R.CpuCount != R.TeamSize * 2 - 1) return false;
-    for (unsigned I = R.CpuCount; I < MaxCpu; ++I)
-        if (R.Cpu[I] || R.Seeds[I] || !(R.Profiles[I] == Profile::Parameters{})) return false;
-    for (unsigned I = 0; I < R.CpuCount; ++I)
+    for (unsigned I = 0; I < MaxCpu; ++I)
     {
-        if (!IsCpu(R.Cpu[I]) || R.Cpu[I] == R.Owner || !R.Seeds[I] ||
-            !Profile::ValidParameters(R.Profiles[I])) return false;
+        if (I >= R.CpuCount)
+        {
+            if (R.Cpu[I] || R.Seeds[I]) return false;
+            for (const auto& P : R.Candidates[I]) if (!(P == Profile::Parameters{})) return false;
+            continue;
+        }
+        if (!IsCpu(R.Cpu[I]) || R.Cpu[I] == R.Owner || !R.Seeds[I]) return false;
+        const auto& First = R.Candidates[I][0];
+        for (const auto& P : R.Candidates[I])
+            if (!Profile::ValidParameters(P) || P.Position != First.Position || P.Height != First.Height ||
+                P.Weight != First.Weight || P.Shape != First.Shape) return false;
+        if (R.Candidates[I][1].Rating != First.Rating) return false;
         for (unsigned J = 0; J < I; ++J) if (R.Cpu[J] == R.Cpu[I]) return false;
     }
     return true;
@@ -1196,20 +1159,31 @@ inline bool LoadRequest(Request& R)
     std::lock_guard<std::mutex> Lock(ReceiptMutex);
     if (!NetworkManaged || GetTickCount64() >= NetworkDeadline) return false;
     R = NetworkRequest;
-    return ValidRequest(R);
+    return true; // NetworkReply validates the immutable request at the boundary.
 }
 inline void Select(const Request& R)
 {
     if (memcmp(&Current, &R, sizeof(R)))
-    { Current = R; memset(Created, 0, sizeof(Created)); Profiles = {}; GenerationError.clear(); ReceiptStarted = false; }
+    {
+        Current = R; memset(Created, 0, sizeof(Created)); SelectedCandidates.fill(-1);
+        Profiles = {}; memset(ProfileDigest, 0, sizeof(ProfileDigest)); GenerationError.clear(); ReceiptStarted = false;
+    }
+}
+inline void RefreshProfileDigest()
+{
+    memset(ProfileDigest, 0, sizeof(ProfileDigest));
+    if (!Current.CpuCount) return;
+    for (unsigned I = 0; I < Current.CpuCount; ++I) if (!Created[I]) return;
+    if (!HashProfiles(Current.Cpu, Profiles.data(), Current.CpuCount, (1U << Current.CpuCount) - 1, ProfileDigest) &&
+        GenerationError.empty()) GenerationError = "profile-digest-failed";
 }
 inline std::string BuildReceipt(const char* Error = nullptr, bool Started = false, uint64_t Instance = 0)
 {
     if (Error && GenerationError.empty()) GenerationError = Error;
     ReceiptStarted |= Started;
     std::ostringstream Text;
-    Text << "{\"version\":5,\"module\":\"00010223\",\"installed\":" <<
-        (Profile::Ready && (!FrameTimingReady || FrameTimingReady()) ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
+    Text << "{\"version\":6,\"module\":\"00010226\",\"installed\":" <<
+        (Profile::Ready ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
          << ",\"match\":\"" << std::hex << Current.Match << "\",\"teamSize\":" << std::dec << Current.TeamSize
          << ",\"cpuCount\":" << Current.CpuCount << ",\"created\":[";
     bool First = true;
@@ -1218,18 +1192,15 @@ inline std::string BuildReceipt(const char* Error = nullptr, bool Started = fals
         if (!First) Text << ',';
         Text << '\"' << std::hex << Current.Cpu[I] << '\"'; First = false;
     }
-    std::vector<unsigned char> Bytes;
-    bool Complete = Current.CpuCount != 0;
+    constexpr char Hex[] = "0123456789abcdef";
+    Text << "],\"candidates\":[" << std::dec;
     for (unsigned I = 0; I < Current.CpuCount; ++I)
     {
-        Complete = Complete && Created[I];
-        if (Created[I]) Profile::Append(Bytes, Current.Cpu[I], Profiles[I]);
+        if (I) Text << ',';
+        Text << SelectedCandidates[I];
     }
-    unsigned char Digest[32]{};
-    if (Complete && !Sha256(Bytes, Digest) && GenerationError.empty()) GenerationError = "profile-digest-failed";
-    constexpr char Hex[] = "0123456789abcdef";
     Text << "],\"profileDigest\":\"";
-    for (unsigned char Byte : Digest) Text << Hex[Byte >> 4] << Hex[Byte & 15];
+    for (unsigned char Byte : ProfileDigest) Text << Hex[Byte >> 4] << Hex[Byte & 15];
     Text << "\",\"started\":" << (ReceiptStarted ? "true" : "false") << ",\"error\":";
     if (!GenerationError.empty()) Text << '"' << GenerationError << '"'; else Text << "null";
     Text << ",\"instance\":\"" << std::hex << Instance << "\",\"epoch\":\"" << NetworkEpoch
@@ -1253,6 +1224,18 @@ inline void RevokeNetwork()
 }
 inline bool NetworkReply(const void* Bytes, size_t Size, uint64_t Instance)
 {
+    if (Size == 32)
+    {
+        struct Lease { uint64_t Instance, Epoch; uint32_t LeaseMs, Reserved; uint64_t Match; };
+        static_assert(sizeof(Lease) == 32);
+        Lease L{}; memcpy(&L, Bytes, sizeof(L));
+        std::lock_guard<std::mutex> Lock(ReceiptMutex);
+        if (L.Instance != Instance || !L.Epoch || L.Reserved || !L.LeaseMs || L.LeaseMs > MaxLeaseMs ||
+            !NetworkManaged || !NetworkDeadline || NetworkEpoch != L.Epoch || NetworkRequest.Match != L.Match)
+        { NetworkDeadline = 0; return false; }
+        NetworkDeadline = GetTickCount64() + L.LeaseMs;
+        return true;
+    }
     NetworkEnvelope E{};
     if (Size != sizeof(E)) { RevokeNetwork(); return false; }
     memcpy(&E, Bytes, sizeof(E));
@@ -1285,13 +1268,12 @@ inline bool Validate(void* Session, void* Info, const Request& R, bool Prepared,
 }
 inline bool AuthorizeProfile(const void* RequestData)
 {
-    Request Live{};
-    return LoadRequest(Live) && !memcmp(&Live, RequestData, sizeof(Live));
+    std::lock_guard<std::mutex> Lock(ReceiptMutex);
+    return NetworkManaged && GetTickCount64() < NetworkDeadline && !memcmp(&NetworkRequest, RequestData, sizeof(NetworkRequest));
 }
 } // namespace Solo
 
 // Shared hooks: generated player construction, guarded start, roster order and AI defense.
-using StartFn = void(__fastcall*)(void*, void*);
 struct RosterOrderScope
 {
     uint32_t* SortFlag;
@@ -1307,15 +1289,7 @@ static_assert(MatchOffset == 0x2d8);
 inline constexpr size_t RosterSortOffset = 0x2bc;
 static_assert(0xcb0 + RosterSortOffset == 0xf6c);
 inline GenerateFn OriginalGenerate = nullptr;
-inline StartFn OriginalStart = nullptr;
 inline LookupFn Lookup = nullptr;
-inline void StartPrepared(void* Session, void* Info)
-{
-    const DWORD Error = GetLastError();
-    if (BeforeStart) BeforeStart(Session, Info);
-    SetLastError(Error);
-    OriginalStart(Session, Info);
-}
 // FUN_141de3450 resolves per-matchup AI settings, including template fallbacks.
 // Override only its final output in an authenticated generated-CPU park match.
 using DefenseFn = void(__fastcall*)(void*, int, void*);
@@ -1461,7 +1435,7 @@ inline void* __fastcall Generate(void* Session, void* ActorManager, void* Object
         Profile::Generation P{};
         P.Session = Session; P.Id = GeneratedId; P.Seed = R.Seeds[I];
         P.Authority = &R; P.Authorized = &Solo::AuthorizeProfile;
-        P.Command = R.Profiles[I];
+        P.Command = R.Candidates[I][0]; P.Candidates = R.Candidates[I]; P.CandidateCount = R.CandidateCount;
         unsigned char* Entries = nullptr;
         P.Valid = Profile::Ready && Pool(P.PoolCount, P.PoolDigest, Entries);
         if (P.Valid) P.Template = P.Seed % P.PoolCount;
@@ -1474,12 +1448,18 @@ inline void* __fastcall Generate(void* Session, void* ActorManager, void* Object
             if (Solo::AuthorizeProfile(&R))
             {
                 std::lock_guard<std::mutex> Lock(Solo::ReceiptMutex);
-                Solo::Select(R); Solo::Created[I] = Ok;
+                Solo::Select(R);
+                const bool Changed = Solo::Created[I] != Ok || (Ok && !(Solo::Profiles[I] == P.Expected));
+                Solo::Created[I] = Ok;
+                Solo::SelectedCandidates[I] = Ok ? static_cast<int>(P.Candidate) : -1;
                 if (Ok) Solo::Profiles[I] = P.Expected;
+                if (Changed) Solo::RefreshProfileDigest();
                 const std::string Error = Ok ? std::string{} : "native-cpu-enhancement-" + P.Error;
                 Solo::Receipt(Ok ? nullptr : Error.c_str());
                 Log(Ok ? LogLevel::Info : LogLevel::Error, L"SOLO22 CPU " + std::to_wstring(I) + (Ok ?
-                    L" verified: OVR=" + std::to_wstring(P.Expected.Rating) + L" height-cm=" + std::to_wstring(P.Expected.Height / 100) :
+                    L" verified: candidate=" + std::to_wstring(P.Candidate + 1) + L"/" + std::to_wstring(P.CandidateCount) +
+                    L" template=" + std::to_wstring(P.Template) + L" seed=" + std::to_wstring(P.Seed) +
+                    L" OVR=" + std::to_wstring(P.Expected.Rating) + L" height-cm=" + std::to_wstring(P.Expected.Height / 100) :
                     L" refused: " + std::wstring(P.Error.begin(), P.Error.end())));
             }
         }
@@ -1551,7 +1531,7 @@ inline void __fastcall Start(void* Session, void* Info)
             Log(LogLevel::Info, L"SOLO22 StartGame validated: one human and " + std::to_wstring(R.CpuCount) + L" native CPU rosters");
         }
     }
-    SetLastError(NativeError); StartPrepared(Session, Info);
+    SetLastError(NativeError); MatchLifecycleHooks::CallStart(Session, Info);
 }
 inline uint64_t __fastcall Playing(void* Session)
 {
@@ -1595,7 +1575,7 @@ inline uint64_t __fastcall Playing(void* Session)
                     Log(LogLevel::Error, L"PARK22 refused delayed generated roster without its match authorization");
                     SetLastError(NativeError); return 0;
                 }
-            SetLastError(NativeError); return NativeMatchInit::CallNative(Session);
+            SetLastError(NativeError); return MatchLifecycleHooks::CallNative(Session);
         }
         bool Ok = false;
         try
@@ -1614,17 +1594,17 @@ inline uint64_t __fastcall Playing(void* Session)
         TeamSize = R.TeamSize;
         Log(LogLevel::Info, L"SOLO22 InitPlayingGame validated: " + std::to_wstring(R.TeamSize * 2) + L" prepared native player rosters");
         Log(LogLevel::Info, L"SOLO22 AI initialization counts: native=" +
-            std::to_wstring(NativeMatchInit::OriginalHomeCount()) + L"/" + std::to_wstring(NativeMatchInit::OriginalAwayCount()) +
+            std::to_wstring(MatchLifecycleHooks::OriginalHomeCount()) + L"/" + std::to_wstring(MatchLifecycleHooks::OriginalAwayCount()) +
             L" roster=" + std::to_wstring(R.TeamSize) + L"/" + std::to_wstring(R.TeamSize));
     }
     uint64_t Result = 0;
     SetLastError(NativeError);
     {
         // Restrict roster-derived AI counts to this validated initialization thread.
-        NativeMatchInit::InitScope Scope(TeamSize);
+        MatchLifecycleHooks::InitScope Scope(TeamSize);
         // Keep model slots in the same court order as park nameplates.
         RosterOrderScope Order(reinterpret_cast<uint32_t*>(static_cast<unsigned char*>(Info) + RosterSortOffset), SortRoster);
-        Result = NativeMatchInit::CallNative(Session);
+        Result = MatchLifecycleHooks::CallNative(Session);
     }
     const DWORD Error = GetLastError();
     if (!Result) ClearDefense();
@@ -1643,13 +1623,11 @@ inline uint64_t __fastcall Playing(void* Session)
 }
 
 // Single installation entry for all CPU park modes.
-inline constexpr unsigned HookCount = 3;
+inline constexpr unsigned HookCount = 2;
 struct Site { size_t Rva; const char* Bytes; size_t Size; void* Detour; void** Original; };
 inline const Site Sites[] = {
     {0x166b330, "\x48\x8b\xc4\x55\x53\x56\x41\x55\x41\x56\x48\x8d\x68\x88\x48\x81\xec\x50\x01\x00\x00", 21,
         reinterpret_cast<void*>(&Generate), reinterpret_cast<void**>(&OriginalGenerate)},
-    {0x16ff0c0, "\x40\x55\x56\x41\x54\x41\x56\x48\x8d\xac\x24\x48\xfd\xff\xff\x48\x81\xec\xb8\x03\x00\x00", 22,
-        reinterpret_cast<void*>(&Start), reinterpret_cast<void**>(&OriginalStart)},
     {0x1de3450, "\x40\x57\x41\x55\x41\x56\x48\x83\xec\x30\x48\x89\x6c\x24\x58\x49\x8b\xf8\x4c\x8b\x41\x10", 22,
         reinterpret_cast<void*>(&BuildDefense), reinterpret_cast<void**>(&OriginalDefense)},
     {0x167d3c0, "\x48\x89\x5c\x24\x18\x48\x89\x6c\x24\x20\x57\x48\x83\xec\x20", 15, nullptr, nullptr},
@@ -1768,12 +1746,13 @@ inline void InstallHooks(HMODULE Executable)
                << Sites[Made != HookCount ? Made : Enabled].Rva << std::dec << L" status=" << Status;
         Log(LogLevel::Error, Detail.str()); return;
     }
-    NativeMatchInit::PlayingHandler = &Playing;
+    MatchLifecycleHooks::PlayingHandler = &Playing;
+    MatchLifecycleHooks::StartHandler = &Start;
     try { InstallControl(Executable); }
     catch (...) { Log(LogLevel::Error, L"PARK22 enhanced CPU hook installation failed"); }
     { std::lock_guard<std::mutex> Lock(Solo::ReceiptMutex); Solo::Receipt(); }
     Log(LogLevel::Info, Profile::Ready ?
-        L"PARK22 CPU enabled: park v6 / solo v5, shared profile execution, guarded 2v2/3v3/5v5 start and manual/no-help AI defense" :
+        L"PARK22 CPU enabled: park v6 / solo v6, shared profile execution, guarded 2v2/3v3/5v5 start and manual/no-help AI defense" :
         L"PARK22 CPU unavailable: enhanced CPU hook is not ready");
 }
 inline DWORD WINAPI WaitAndInstall(void* Context)

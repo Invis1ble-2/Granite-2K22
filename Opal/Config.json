@@ -1,10 +1,12 @@
 {
   "ParkCpu": {
     "Enabled": true,
-    "FrameRate": 120,
     "TwoOnTwo": true,
     "ThreeOnThree": true,
     "CpuOverallMode": "random",
     "CpuFixedOverall": 99
+  },
+  "OnlineFrameRate": {
+    "FrameRate": 120
   }
 }

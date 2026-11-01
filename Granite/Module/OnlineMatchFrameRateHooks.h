@@ -7,7 +7,7 @@
 #include <cstring>
 #include <mutex>
 
-namespace OnlineFrameRate
+namespace OnlineMatchFrameRateHooks
 {
 inline constexpr float Rate = 120.0f, Step = 1.0f / Rate;
 inline constexpr size_t ParameterRva = 0x3fa3b78, GameInfoOffset = 0xcb0;

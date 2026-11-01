@@ -73,7 +73,7 @@ function Echo(Connection, Bytes) {
     return Reply(Connection, From, '');
 }
 
-function CompleteClosedRoomPlayer(Connection, Bytes) {
+function CompletePendingPlayer(Connection, Bytes) {
     if (Connection.Closed || !Connection.PlayerBody ||
         require('./PlayerBody').GenerationForConnection(Connection) !== '2K22') return false;
     if (!Buffer.isBuffer(Bytes) || Bytes.length < ObjectFrame.Layout.Player.Payload ||
@@ -88,7 +88,7 @@ function CompleteClosedRoomPlayer(Connection, Bytes) {
     const Revision = (Update.Version > Connection.PlayerRevision ? Update.Version : Connection.PlayerRevision) + 1n;
     if (Revision > 0xffffffffffffffffn) return false;
 
-    // The park handoff may already exist. Finish only this old socket's pending
+    // The destination may already be live. Finish only this old socket's pending
     // request, without FrameFor's shared-cache writes or merging late fields.
     const BodyData = Buffer.from(Connection.PlayerBody);
     BodyData.writeBigUInt64BE(Revision, ObjectFrame.Body.Version);
@@ -103,13 +103,13 @@ function CompleteClosedRoomPlayer(Connection, Bytes) {
     CancelPending(Connection);
     if (!Connection.Send(require('./Requests').Build(RequestId))) return false;
     if (!Connection.SendObject(Frame)) {
-        Log.Error(`closed-room player reply to ${Connection.Identifier} could not be written.`);
+        Log.Error(`pending PLAYER reply to ${Connection.Identifier} could not be written.`);
         return false;
     }
     Connection.PlayerRevision = Revision;
     Connection.LastEchoMs = Date.now();
     Log.Verbose(
-        `  completed closed-room PLAYER request ${RequestId} for ${Connection.Identifier} ` +
+        `  completed pending PLAYER request ${RequestId} for ${Connection.Identifier} ` +
             `at revision ${Revision} (old connection only)`,
     );
     return true;
@@ -149,6 +149,7 @@ module.exports = {
     Mine,
     Build,
     Echo,
-    CompleteClosedRoomPlayer,
+    CompletePendingPlayer,
+    CompleteClosedRoomPlayer: CompletePendingPlayer,
     CancelPending,
 };

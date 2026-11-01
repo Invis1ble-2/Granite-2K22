@@ -18,14 +18,20 @@ function Build(Input, Context = {}) {
     const AllOwned = InventoryFor(Context);
     const Agent = Input?.headers?.['user-agent'];
     const Native2K22 = typeof Agent === 'string' && /^VISUAL_CONCEPTS_WIN64\/22(?:\.|$)/i.test(Agent);
+    const Page = Native2K22 ? RequestedPage(Input) : null;
+    let Owned = AllOwned;
     // K22 FUN_1413AC4B0 (0x1413AC61D–0x1413AC637) requests CATEGORY:ICON.
-    // Closet and other requests share this route and must retain their full inventory.
-    const PanelRequest = Native2K22 && RequestedPage(Input) === 'CATEGORY:ICON';
-    const PanelIds = new Set((Context.StoreCatalog2K22?.groupItems?.PlayerPanels || [])
-        .map(Entry => Number(Entry.item_id) >>> 0));
-    const Owned = PanelRequest
-        ? AllOwned.filter(Entry => PanelIds.has(Number(Entry.item) >>> 0))
-        : AllOwned;
+    if (Page === 'CATEGORY:ICON') {
+        const PanelIds = new Set((Context.StoreCatalog2K22?.groupItems?.PlayerPanels || [])
+            .map(Entry => Number(Entry.item_id) >>> 0));
+        Owned = AllOwned.filter(Entry => PanelIds.has(Number(Entry.item) >>> 0));
+    } else if (Page === 'PAGE:MYPLAYER_EQUIPMENT') {
+        // Equipment and closet use separate page requests on this shared route.
+        const ApparelIds = new Set(['Clothing', 'Accessories', 'Shoes'].flatMap(Group =>
+            (Context.StoreCatalog2K22?.groupItems?.[Group] || [])
+                .map(Entry => Number(Entry.item_id) >>> 0)));
+        Owned = AllOwned.filter(Entry => !ApparelIds.has(Number(Entry.item) >>> 0));
+    }
     if (!Native2K22) {
         for (const Entry of Owned) {
             Reply.AddStringCrc(ItemCrc, Number(Entry.item));

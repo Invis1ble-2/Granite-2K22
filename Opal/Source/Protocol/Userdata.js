@@ -234,6 +234,25 @@ function Inflated(Connection) {
     return Out;
 }
 
+// K22 14062D90E -> 140BD51C0 stores the ball resource CRC at USERDATA+3EAA8;
+// 14164204C/051 publishes the same value as PLAYER field 159 (+2034).
+function PreferredBallFor(Connections) {
+    const PlayerBody = require('./PlayerBody');
+    for (const Connection of Connections) {
+        if (!Connection) continue;
+        const Decoded = PlayerBody.Decode(Connection.PlayerBody);
+        const At = Decoded.Ok ? Decoded.Offsets.get(PlayerBody.Field.PreferredBallType) : undefined;
+        let BallType;
+        if (At !== undefined) BallType = Connection.PlayerBody.readUInt32LE(At);
+        else {
+            const Profile = Inflated(Connection);
+            BallType = Profile && Profile.length >= 0x3eaac ? Profile.readUInt32LE(0x3eaa8) : 0;
+        }
+        if (BallType !== 0) return BallType;
+    }
+    return 0;
+}
+
 // NBA2K22: COURT reader FUN_14164C0D0 inflates raw USERDATA, not a FieldList.
 // MYPLAYER_EQUIP_DATA maps ParkMascotId/MascotSignature to these absolute offsets;
 // FUN_141641C00 accepts the equipped ID only with the matching string_crc.
@@ -303,6 +322,7 @@ module.exports = {
     Inflated,
     Packaged,
     CourtProfile,
+    PreferredBallFor,
     InflatedLength,
     RecordHeader,
     PayloadLength,

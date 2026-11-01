@@ -15,8 +15,24 @@ const ObjectFrame = require('../Codec/ObjectFrame');
 const CpuTemplates = require('./ParkCpuProfiles');
 const Waiting = new Map();
 const WaitMs = 10000;
+const CpuProtectedFields = new Set([0, 1, 4, 5, 91, 93, 144]);
 const Nonce = () => Crypto.randomBytes(8).readBigUInt64LE() || 1n;
 const KeyFor = (C, Found) => `${C.ActivityKey}:${C.RoomScope || ''}:${Found.Raw.Name}`;
+const Controls = new Map(), Watches = new Map();
+let WatchTimer = null;
+function Watch(P, Check) {
+    Watches.set(P, Check);
+    if (WatchTimer) return;
+    WatchTimer = setInterval(() => {
+        const Now = Date.now();
+        for (const [Match, Run] of Watches) if (Now - (Match.CheckedAt || 0) >= 500) Run();
+    }, 250);
+    WatchTimer.unref?.();
+}
+function Unwatch(P) {
+    Watches.delete(P);
+    if (!Watches.size) { clearInterval(WatchTimer); WatchTimer = null; }
+}
 
 function Enabled(TeamSize) {
     const C = Settings.ParkCpu();
@@ -29,7 +45,8 @@ function SupportsCourt(C, Found) {
         (C.ActivityName === 'cages' && [2, 3, 5].includes(Size));
 }
 function SameQueue(A, B) {
-    return Boolean(B && A.Seats.flat().every((Id, I) => Id === B.Seats.flat()[I]) &&
+    return Boolean(B && A.Seats.length === B.Seats.length && A.Seats.every((Side, I) =>
+        Side.length === B.Seats[I].length && Side.every((Id, J) => Id === B.Seats[I][J])) &&
         A.Members.length === B.Members.length && A.Members.every((M, I) => {
             const N = B.Members[I];
             return M.Connection === N.Connection && M.Spot === N.Spot && M.Control === N.Control;
@@ -93,13 +110,13 @@ function HandleCpuUpdate(C, Bytes, P, Members) {
     if (PuidAt !== undefined && Body.readBigUInt64LE(PuidAt) !== Id) return false;
     const From = Body.readBigUInt64BE(8), To = (From > Cached.readBigUInt64BE(8) ? From : Cached.readBigUInt64BE(8)) + 16n;
     if (To > 0xffffffffffffffffn) return false;
-    const Protected = new Set([0, 1, 4, 5, 91, 93, 144]), Values = new Map();
+    const Values = new Map();
     const Authority = !Members || C === Members[0].Connection;
     const Sources = Authority ? [[Base, Cached, false], [D, Body, true]] : [[Base, Cached, false]];
     for (const [Decoded, Data, Partial] of Sources) {
         const Ids = [...Decoded.Offsets.keys()];
         Ids.forEach((Field, I) => {
-            if (Partial && Protected.has(Field)) return;
+            if (Partial && CpuProtectedFields.has(Field)) return;
             Values.set(Field, Data.subarray(Decoded.Offsets.get(Field), I + 1 < Ids.length ? Decoded.Offsets.get(Ids[I + 1]) : Decoded.Length));
         });
     }
@@ -118,10 +135,9 @@ function HandleCpuUpdate(C, Bytes, P, Members) {
     return Sent;
 }
 
-// Multiplayer manifests and solo receipts deliberately retain independent
-// controls/leases. NativePark/NativeSolo court metadata remains internal to CourtData.
+// Both modes share the authenticated native instance; match authorization stays mode-specific.
 const Multiplayer = (() => {
-    const Controls = new Map(), Courts = new Map(), Participants = new Map();
+    const Courts = new Map(), Participants = new Map();
     function Notice(C, Why) {
         if (C.ParkCpuNotice === Why) return;
         C.ParkCpuNotice = Why;
@@ -151,10 +167,8 @@ const Multiplayer = (() => {
             if (!Player || Player.Closed || !Player.PlayerBody || !Spot || Spot.Playing || Spot.Seat !== Seat ||
                 Group?.SlotObjectId !== Found.Groups[Side].SlotObjectId ||
                 require('./PlayerBody').GenerationForConnection(Player) !== '2K22' ||
-                Next.FindState(Player.PlayerBody, Next.State.GotNext) < 0 || !Player.MachineId) return null;
-            const Data = Player.Userdata && require('./Userdata').Read(Player.Userdata);
-            if (!Data?.IsUserdata || Data.DeclaredLength !== Data.Blob.length) return null;
-            Members.push({ Connection: Player, Spot, Side, Seat, Blob: Buffer.from(Data.Blob), Control: Controls.get(Player.Id) });
+                Next.FindState(Player.PlayerBody, Next.State.GotNext) < 0 || !Player.MachineId || !Player.Userdata) return null;
+            Members.push({ Connection: Player, Spot, Side, Seat, Control: Controls.get(Player.Id) });
         }
         if (new Set(Members.map(M => String(M.Connection.MachineId))).size !== Members.length) return null;
         return { Seats, Members };
@@ -162,7 +176,7 @@ const Multiplayer = (() => {
     function Remove(P, Why, ReleasePlayers) {
         if (P.Done) return false;
         P.Done = true;
-        Courts.delete(P.Key); clearInterval(P.Timer);
+        Courts.delete(P.Key); Unwatch(P);
         for (const M of P.Members) if (Participants.get(M.Connection.Id) === P) Participants.delete(M.Connection.Id);
         const Game = CourtData.GameTeams(P.ActivityName, P.Found.Raw.Name, '2K22');
         if (Game?.NativePark?.MatchId === P.MatchId) {
@@ -194,7 +208,7 @@ const Multiplayer = (() => {
     }
     function Disconnect(C) {
         Stop(C, 'participant disconnected or changed activity');
-        Controls.delete(C.Id); C.ParkCpuNotice = null;
+        C.ParkCpuNotice = null;
     }
     function Finish(C, Found, Game, Why) {
         const P = Participants.get(C.Id);
@@ -219,13 +233,16 @@ const Multiplayer = (() => {
             const Held = Slots.Occupy(P.Found.Groups[Side].SlotObjectId, Id, P.TeamSize, Seat);
             if (!Held || Held.Index !== Seat) throw new Error('CPU seat became unavailable');
         }
-        const Blobs = new Map(P.Members.map(M => [M.Connection.Puid, require('./Userdata').CourtProfile(M.Connection, M.Blob)]));
+        const Userdata = require('./Userdata');
+        const Blobs = new Map(P.Members.map(M => [M.Connection.Puid, Userdata.CourtProfile(M.Connection, M.Blob)]));
         const Stride = Wire.SideStride(P.TeamSize);
         const Home = P.Players.slice(0, P.TeamSize), Away = P.Players.slice(Stride, Stride + P.TeamSize);
         const Profiles = Side => Side.map(Id => Blobs.get(Id) || Buffer.alloc(0));
         const Prepared = CourtData.PrepareGameTeams(P.ActivityName, P.Found.Raw.Name, Home, Away,
             { Home: Profiles(Home), Away: Profiles(Away) }, '2K22',
-            { NativePark: { MatchId: P.MatchId, Humans: P.Members.map(M => M.Connection.Puid) } });
+            { NativePark: { MatchId: P.MatchId, Humans: P.Members.map(M => M.Connection.Puid) },
+                BallType: Userdata.PreferredBallFor([...Home, ...Away].map(Id =>
+                    P.Members.find(M => M.Connection.Puid === Id)?.Connection)) });
         // Mark starting before the first send: a partial send must release every participant.
         P.Phase = 'starting'; P.StartedAt = Date.now();
         for (const M of P.Members) if (!M.Connection.SendObject(Prepared.Frame)) throw new Error('court roster publication failed');
@@ -234,6 +251,7 @@ const Multiplayer = (() => {
     }
     function Tick(P) {
         if (P.Done || Courts.get(P.Key) !== P) return;
+        P.CheckedAt = Date.now();
         try {
             const Now = Date.now();
             for (const M of P.Members) {
@@ -278,9 +296,15 @@ const Multiplayer = (() => {
     }
     function Begin(C, Found, S, Key) {
         const First = S.Members[0].Control.Report;
+        const Userdata = require('./Userdata');
+        for (const M of S.Members) {
+            const Data = Userdata.Read(M.Connection.Userdata);
+            if (!Data?.IsUserdata || Data.DeclaredLength !== Data.Blob.length) throw new Error('human USERDATA is incomplete');
+            M.Blob = Buffer.from(Data.Blob);
+        }
         const Selected = CpuTemplates.Select(Found.Raw.TeamSize * 2 - S.Members.length, Settings.ParkCpu());
         const P = {
-            Key, Anchor: S.Members[0].Connection, Found, Snapshot: S, Members: S.Members, Seats: S.Seats,
+            Key, Anchor: S.Members[0].Connection, Found, Snapshot: S, Members: S.Members,
             ActivityName: C.ActivityName,
             Context: { ActivityName: C.ActivityName, ActivityKey: C.ActivityKey, RoomScope: C.RoomScope || null,
                 WorldKey: C.WorldKey, ProtocolGeneration: '2K22', Id: 0, SendObject: () => false },
@@ -289,7 +313,7 @@ const Multiplayer = (() => {
             Players: new Array(Wire.MaxPlayers).fill(0n), Seeds: new Array(Wire.MaxPlayers).fill(0), Templates: new Array(Wire.MaxPlayers).fill(0xffffffff),
             Profiles: new Array(Wire.MaxPlayers).fill(null),
             HumanMask: 0, CpuMask: 0, Cpu: [], Bodies: new Map(), ProfileDigest: null,
-            Phase: 'arming', CreatedAt: Date.now(), Timer: null, Done: false,
+            Phase: 'arming', CreatedAt: Date.now(), Done: false,
         };
         for (const M of S.Members) {
             const I = M.Side * Wire.SideStride(P.TeamSize) + M.Seat;
@@ -309,8 +333,8 @@ const Multiplayer = (() => {
         P.ProfileDigest = CpuTemplates.ProfileDigest(P.Players, P.Profiles);
         Courts.set(Key, P);
         for (const M of P.Members) Participants.set(M.Connection.Id, P);
-        P.Timer = setInterval(() => Tick(P), 250); P.Timer.unref?.();
-        Log.Info(`ParkCpu multiplayer ${Found.Raw.Name}: froze ${P.Members.length} human seat(s), ${P.Cpu.length} empty seat(s); templates: ${Selected.map(Profile => Profile.Name).join(', ')}; awaiting v6 server-authored CPU authorization on every client`);
+        Watch(P, () => Tick(P));
+        Log.Info(`ParkCpu multiplayer ${Found.Raw.Name}: froze ${P.Members.length} human seat(s), ${P.Cpu.length} empty seat(s); templates: ${Selected.map(Profile => Profile.Name).join(', ')}; awaiting v7 CPU control on every client`);
         return true;
     }
     function QueueChanged(C, Found) {
@@ -332,7 +356,7 @@ const Multiplayer = (() => {
         if (S.Members.some(M => Participants.has(M.Connection.Id))) return false;
         const Waited = WaitForQueue(C, Found);
         if (S.Members.some(M => !Wire.HasPool(M.Control))) {
-            Notice(C, 'all queued humans need Module 00010223 v6 readiness through their game login'); return false;
+            Notice(C, 'all queued humans need Module 00010226 v7 readiness through their game login'); return false;
         }
         const First = S.Members[0].Control.Report;
         if (S.Members.some(M => M.Control.Report.PoolCount !== First.PoolCount || !M.Control.Report.Digest.equals(First.Digest))) {
@@ -354,26 +378,10 @@ const Multiplayer = (() => {
             Notice(C, Failure.message); return false;
         }
     }
-    function OnReport(Puid, R) {
-        const Matches = Roster.Active().filter(C => C.Puid === Puid && ['neighborhood', 'cages'].includes(C.ActivityName) &&
-            C.PlayerBody && require('./PlayerBody').GenerationForConnection(C) === '2K22');
-        if (Matches.length !== 1) return null;
-        const C = Matches[0], Now = Date.now();
-        let Control = Controls.get(C.Id);
-        if (Control && Control.Instance !== R.Instance) {
-            if (Now - Control.SeenAt <= Wire.HeartbeatMs) {
-                const Failure = new Error('another native instance is active'); Failure.Status = 409; throw Failure;
-            }
-            Stop(C, 'native instance changed'); Controls.delete(C.Id); Control = null;
-        }
-        if (!Control) {
-            Control = { Connection: C, Instance: R.Instance, Epoch: Nonce(), SeenAt: Now, Report: R };
-            Controls.set(C.Id, Control);
-        }
-        Control.SeenAt = Now; Control.Report = R;
+    function OnReport(C) {
+        const Control = Controls.get(C.Id);
         let P = Participants.get(C.Id);
         if (P) Tick(P);
-        else if (C.GotNext && !C.GotNext.Playing) require('./GotNext').MaybeStartMatch(C);
         P = Participants.get(C.Id);
         return P && !P.Done ? Wire.BuildManifest(P, Control) : null;
     }
@@ -381,21 +389,33 @@ const Multiplayer = (() => {
         const P = Participants.get(C.Id);
         return HandleCpuUpdate(C, Bytes, P, P?.Members);
     }
-    return { TryStart, QueueChanged, Stop, Disconnect, Finish, OnReport, HandleUpdate, HasTemplatePool };
+    return { TryStart, QueueChanged, Stop, Disconnect, Finish, OnReport, HandleUpdate, HasTemplatePool,
+        HasMatch: C => Participants.has(C.Id) };
 })();
 
 const Solo = (() => {
-    const ProtocolVersion = 5, RequestBytes = 144 + Wire.MaxCpu * CpuTemplates.ProfileBytes;
-    const Pending = new Map(), Controls = new Map();
-    const LeaseMs = 8000, HeartbeatMs = 10000;
+    const ProtocolVersion = 6, CandidateCount = CpuTemplates.SoloCandidateCount;
+    const RequestBytes = 144 + Wire.MaxCpu * CandidateCount * CpuTemplates.ProfileBytes;
+    const Pending = new Map();
+    const { LeaseMs, HeartbeatMs } = Wire;
     function Installed(R) {
-        return Boolean(R && R.version === ProtocolVersion && R.module === '00010223' && R.installed === true &&
+        return Boolean(R && R.version === ProtocolVersion && R.module === '00010226' && R.installed === true &&
             Number.isInteger(R.pid) && R.pid > 0);
     }
     function RemoteLive(C, P) {
         return Controls.get(C.Id) === P.Control && Date.now() - P.Control.SeenAt <= HeartbeatMs &&
-            P.Control.Report.instance === P.Instance && Installed(P.Control.Report) &&
+            P.Control.SoloReport.instance === P.Instance && Installed(P.Control.SoloReport) &&
             Multiplayer.HasTemplatePool(C, P.Instance);
+    }
+    function SelectionDigest(R, P) {
+        if (!Array.isArray(R.candidates) || R.candidates.length !== P.Cpu.length ||
+            R.candidates.some(I => !Number.isInteger(I) || I < 0 || I >= CandidateCount) ||
+            (P.SelectedCandidates && R.candidates.some((I, N) => I !== P.SelectedCandidates[N]))) return null;
+        if (!P.Selection || R.candidates.some((I, N) => I !== P.Selection.Indices[N])) {
+            P.Selection = { Indices: R.candidates.slice(),
+                Digest: CpuTemplates.ProfileDigest(P.Cpu, P.Candidates.map((Choices, I) => Choices[R.candidates[I]])).toString('hex') };
+        }
+        return P.Selection.Digest;
     }
     function IsReady(R, P) {
         return Installed(R) && R.pid === P.Pid && R.instance === P.Instance && R.epoch === P.Epoch && R.armed === true &&
@@ -403,20 +423,23 @@ const Solo = (() => {
             R.teamSize === P.TeamSize && R.cpuCount === P.Cpu.length &&
             Array.isArray(R.created) && R.created.length === P.Cpu.length && new Set(R.created).size === P.Cpu.length &&
             P.Cpu.every(Id => R.created.includes(Id.toString(16))) &&
-            R.profileDigest === P.ProfileDigest.toString('hex');
+            typeof R.profileDigest === 'string' && R.profileDigest === SelectionDigest(R, P);
     }
-    function BuildRequest(Match, Owner, Cpu, TeamSize, Seeds, Profiles) {
+    function BuildRequest(Match, Owner, Cpu, TeamSize, Seeds, Candidates) {
         if (![2, 3, 5].includes(TeamSize) || Cpu.length !== TeamSize * 2 - 1 || new Set(Cpu).size !== Cpu.length ||
             Cpu.some(Id => typeof Id !== 'bigint' || Id === Owner || (Id & 0xfffff00000000000n) !== 0x0222c00000000000n) ||
             !Array.isArray(Seeds) || Seeds.length !== Cpu.length || Seeds.some(Seed => !Number.isInteger(Seed) || Seed < 1 || Seed > 0xffffffff) ||
-            !Array.isArray(Profiles) || Profiles.length !== Cpu.length)
+            !Array.isArray(Candidates) || Candidates.length !== Cpu.length ||
+            Candidates.some(Choices => !Array.isArray(Choices) || Choices.length !== CandidateCount))
             throw new Error('invalid native solo CPU roster');
         const B = Buffer.alloc(RequestBytes);
         B.write('SP22'); B.writeUInt32LE(ProtocolVersion, 4); B.writeBigUInt64LE(Match, 8); B.writeBigUInt64LE(Owner, 16);
         B.writeUInt32LE(TeamSize, 24); B.writeUInt32LE(Cpu.length, 28);
         Cpu.forEach((Id, I) => B.writeBigUInt64LE(Id, 32 + I * 8));
         Seeds.forEach((Seed, I) => B.writeUInt32LE(Seed, 104 + I * 4));
-        Profiles.forEach((Profile, I) => CpuTemplates.EncodeProfile(Profile).copy(B, 144 + I * CpuTemplates.ProfileBytes));
+        B.writeUInt32LE(CandidateCount, 140);
+        Candidates.forEach((Choices, I) => Choices.forEach((Profile, N) =>
+            CpuTemplates.EncodeProfile(Profile).copy(B, 144 + (I * CandidateCount + N) * CpuTemplates.ProfileBytes)));
         return B;
     }
     function OnlyQueuedHuman(C, Found) {
@@ -441,7 +464,7 @@ const Solo = (() => {
     function Stop(C) {
         const Cancelled = CancelWait(C), P = Pending.get(C.Id);
         if (!P) return Cancelled;
-        Pending.delete(C.Id); clearInterval(P.Timer);
+        Pending.delete(C.Id); Unwatch(P);
         // Withdraw authorization first, before destroying players or allowing another match.
         const Game = CourtData.GameTeams(P.Activity, P.Found.Raw.Name, '2K22');
         if (Game?.NativeSolo?.MatchId === P.MatchId) CourtData.ClearGameTeams(P.Activity, P.Found.Raw.Name, '2K22');
@@ -456,7 +479,6 @@ const Solo = (() => {
     }
     function Disconnect(C) {
         const P = Pending.get(C.Id);
-        Controls.delete(C.Id);
         C.ParkCpuSoloNotice = false;
         if (!P) { CancelWait(C); return false; }
         const Game = CourtData.GameTeams(P.Activity, P.Found.Raw.Name, '2K22');
@@ -481,6 +503,7 @@ const Solo = (() => {
         if (!C.Closed && C.GotNext === P.Spot && !Game) require('./GotNext').Release(C);
     }
     function Commit(C, P) {
+        P.SelectedCandidates = P.Control.SoloReport.candidates.slice();
         const Held = require('./GotNext').QueueFor(C, C.GotNext.Court, C.GotNext.Slot);
         const OwnGroup = Held?.SlotObjectId === P.OwnSlot ?
             P.Found.Groups.findIndex(G => G.SlotObjectId === P.OwnSlot) : -1;
@@ -510,11 +533,14 @@ const Solo = (() => {
         const HumanProfile = Userdata.CourtProfile(C, Data.Blob);
         const Profiles = Sides.map(Side => Side.map(Id => Id === C.Puid ? HumanProfile : Buffer.alloc(0)));
         const Prepared = CourtData.PrepareGameTeams(P.Activity, P.Found.Raw.Name, Sides[0], Sides[1],
-            { Home: Profiles[0], Away: Profiles[1] }, '2K22', { NativeSolo: { Owner: C.Puid, MatchId: P.MatchId } });
+            { Home: Profiles[0], Away: Profiles[1] }, '2K22', {
+                NativeSolo: { Owner: C.Puid, MatchId: P.MatchId }, BallType: Userdata.PreferredBallFor([C]),
+            });
         if (!C.SendObject(Prepared.Frame)) throw new Error('court roster send failed');
         if (!require('./GotNext').GrantPlaying(C)) throw new Error('PLAYING grant failed');
         P.Phase = 'starting'; P.StartedAt = Date.now();
-        Log.Info(`ParkCpu solo ${P.Found.Raw.Name}: ${P.Cpu.length} enhanced CPU rosters verified against their seeds; ${P.TeamSize}v${P.TeamSize} teams sent before PLAYING`);
+        const Chosen = P.Candidates.map((Choices, I) => `${I}:${P.SelectedCandidates[I] + 1}/${CandidateCount}:OVR=${Choices[P.SelectedCandidates[I]].Rating}`);
+        Log.Info(`ParkCpu solo ${P.Found.Raw.Name}: ${P.Cpu.length} CPU rosters verified against authorized candidates (${Chosen.join(', ')}); ${P.TeamSize}v${P.TeamSize} teams sent before PLAYING`);
     }
     function Publish(C, P) {
         P.Phase = 'preloading'; P.PreloadAt = Date.now();
@@ -527,10 +553,11 @@ const Solo = (() => {
     }
     function Poll(C, P) {
         if (Pending.get(C.Id) !== P) return;
+        P.CheckedAt = Date.now();
         try {
             if (!CanContinue(C, P)) { Abort(C, 'queue changed or client left'); return; }
             if (!RemoteLive(C, P)) { Abort(C, 'native control heartbeat or instance lost'); return; }
-            const R = P.Control.Report;
+            const R = P.Control.SoloReport;
             const Bound = R?.instance === P.Instance && R?.epoch === P.Epoch;
             if (Bound && R?.match === P.MatchId.toString(16) && R.pid === P.Pid && R.error) { Abort(C, R.error); return; }
             if (!Installed(R) || R.pid !== P.Pid) { Abort(C, 'native game process is no longer available'); return; }
@@ -563,36 +590,40 @@ const Solo = (() => {
         const Spot = C.GotNext;
         if (!WaitForQueue(C, Found)) return false;
         const Control = Controls.get(C.Id);
-        if (!Control || Date.now() - Control.SeenAt > HeartbeatMs || !Installed(Control.Report)) {
-            if (!C.ParkCpuSoloNotice) Log.Info('ParkCpu solo withheld: authenticated game control with Module 00010223 is required');
+        if (!Control || Date.now() - Control.SeenAt > HeartbeatMs || !Installed(Control.SoloReport)) {
+            if (!C.ParkCpuSoloNotice) Log.Info('ParkCpu solo withheld: authenticated game control with Module 00010226 is required');
             C.ParkCpuSoloNotice = true; return false;
         }
-        if (!Multiplayer.HasTemplatePool(C, Control.Instance)) {
+        if (!Multiplayer.HasTemplatePool(C, Control.Instance.toString(16))) {
             if (!C.ParkCpuSoloNotice) Log.Info('ParkCpu solo withheld: authenticated client template pool is unavailable or differs from the server catalog');
             C.ParkCpuSoloNotice = true; return false;
         }
-        const Receipt = Control.Report;
+        const Receipt = Control.SoloReport;
         C.ParkCpuSoloNotice = false;
         let Selected;
-        try { Selected = CpuTemplates.Select(TeamSize * 2 - 1, Opts); }
+        try { Selected = CpuTemplates.SelectCandidates(TeamSize * 2 - 1, Opts); }
         catch (E) {
             Log.Error(`ParkCpu solo ${Found.Raw.Name} withheld: ${E.message}`);
             return false;
         }
-        const Seeds = Selected.map(Profile => Profile.Seed);
+        const Seeds = Selected.map(Choices => Choices[0].Seed);
         CancelWait(C);
         const MatchId = Nonce();
         const Base = 0x0222c00000000000n | BigInt('0x' + Crypto.randomBytes(5).toString('hex'));
         const Cpu = Array.from({ length: TeamSize * 2 - 1 }, (_, I) => (Base & ~15n) + BigInt(I));
-        const P = { Pid: Receipt.pid, MatchId, Cpu, Seeds, ProfileDigest: CpuTemplates.ProfileDigest(Cpu, Selected), TeamSize, Spot,
+        const P = { Pid: Receipt.pid, MatchId, Cpu, Seeds, Candidates: Selected, SelectedCandidates: null, Selection: null, TeamSize, Spot,
             Court: Spot.Court, OwnSlot: Own.SlotObjectId, Activity: C.ActivityName, ActivityKey: C.ActivityKey, RoomScope: C.RoomScope || null,
-            Found, Bodies: new Map(), Phase: 'arming', CreatedAt: Date.now(), Timer: null,
-            Remote: true, Control, Instance: Control.Instance, Epoch: Control.Epoch };
+            Found, Bodies: new Map(), Phase: 'arming', CreatedAt: Date.now(),
+            Control, Instance: Control.Instance.toString(16), Epoch: Control.Epoch.toString(16) };
         Pending.set(C.Id, P);
         try {
-            P.Request = BuildRequest(MatchId, C.Puid, Cpu, TeamSize, Seeds, Selected);
-            Log.Info(`ParkCpu solo ${Found.Raw.Name}: CPU overall ${Opts.CpuOverallMode === 'fixed' ? `fixed ${Opts.CpuFixedOverall}` : 'random 80-99'}; templates: ${Selected.map(Profile => Profile.Name).join(', ')}; awaiting authenticated game control authorization`);
-            P.Timer = setInterval(() => Poll(C, P), 120); P.Timer.unref?.();
+            const Request = BuildRequest(MatchId, C.Puid, Cpu, TeamSize, Seeds, Selected);
+            P.Envelope = Buffer.alloc(24 + RequestBytes);
+            P.Envelope.writeBigUInt64LE(Control.Instance, 0); P.Envelope.writeBigUInt64LE(Control.Epoch, 8);
+            P.Envelope.writeUInt32LE(LeaseMs, 16); Request.copy(P.Envelope, 24);
+            P.Lease = Buffer.alloc(32); P.Envelope.copy(P.Lease, 0, 0, 24); P.Lease.writeBigUInt64LE(MatchId, 24);
+            Log.Info(`ParkCpu solo ${Found.Raw.Name}: CPU overall ${Opts.CpuOverallMode === 'fixed' ? `fixed ${Opts.CpuFixedOverall}` : 'random 80-99'}; ${CandidateCount} authorized candidates per CPU; templates: ${Selected.map(Choices => Choices[0].Name).join(', ')}; awaiting authenticated game control authorization`);
+            Watch(P, () => Poll(C, P));
         } catch (E) { Abort(C, E.message); }
         return true;
     }
@@ -608,42 +639,59 @@ const Solo = (() => {
     function HandleUpdate(C, Bytes) {
         return HandleCpuUpdate(C, Bytes, Pending.get(C.Id));
     }
-    function OnReport(Puid, R) {
+    function ValidateReport(R) {
         const Hex = Value => typeof Value === 'string' && /^[0-9a-f]{1,16}$/.test(Value);
-        if (!R || !Installed(R) || !Hex(R.instance) || BigInt('0x' + R.instance) === 0n ||
+        // An unready module can report its status, but cannot authorize a CPU match.
+        if (!R || R.version !== ProtocolVersion || R.module !== '00010226' || typeof R.installed !== 'boolean' ||
+            !Number.isInteger(R.pid) || R.pid <= 0 || !Hex(R.instance) || BigInt('0x' + R.instance) === 0n ||
             !Hex(R.epoch) || !Hex(R.match) || typeof R.armed !== 'boolean' || typeof R.started !== 'boolean' ||
             !Array.isArray(R.created) || R.created.length > Wire.MaxCpu || typeof R.profileDigest !== 'string' || !/^[0-9a-f]{64}$/.test(R.profileDigest) ||
+            !Number.isInteger(R.cpuCount) || R.cpuCount < 0 || R.cpuCount > Wire.MaxCpu ||
+            !Array.isArray(R.candidates) || R.candidates.length !== R.cpuCount ||
+            R.candidates.some(I => !Number.isInteger(I) || I < -1 || I >= CandidateCount) ||
             (R.error !== null && (typeof R.error !== 'string' || R.error.length > 2048))) throw new Error('invalid native solo report');
-        for (const [Id, Control] of Controls) if (Control.Connection.Closed) Controls.delete(Id);
-        const Matches = Roster.Active().filter(C => C.Puid === Puid && ['neighborhood', 'cages'].includes(C.ActivityName) &&
-            C.PlayerBody && require('./PlayerBody').GenerationForConnection(C) === '2K22');
-        if (Matches.length !== 1) return null;
-        const C = Matches[0], Now = Date.now();
-        let Control = Controls.get(C.Id);
-        if (Control && (Control.Instance !== R.instance || Control.Report.pid !== R.pid)) {
-            if (Now - Control.SeenAt <= HeartbeatMs) {
-                const Failure = new Error('another solo native instance is active'); Failure.Status = 409; throw Failure;
-            }
-            if (Pending.has(C.Id)) Abort(C, 'remote native instance changed');
-            Controls.delete(C.Id); Control = null;
-        }
-        if (!Control) {
-            Control = { Connection: C, Instance: R.instance, Epoch: Nonce().toString(16), SeenAt: Now, Report: R };
-            Controls.set(C.Id, Control);
-        }
-        Control.SeenAt = Now; Control.Report = R;
-        let P = Pending.get(C.Id);
-        if (P?.Remote) Poll(C, P);
-        else if (!P && C.GotNext && !C.GotNext.Playing) require('./GotNext').MaybeStartMatch(C);
-        P = Pending.get(C.Id);
-        if (!P?.Remote || P.Control !== Control) return null;
-        const B = Buffer.alloc(24 + RequestBytes);
-        B.writeBigUInt64LE(BigInt('0x' + P.Instance), 0); B.writeBigUInt64LE(BigInt('0x' + P.Epoch), 8);
-        B.writeUInt32LE(LeaseMs, 16); P.Request.copy(B, 24);
-        return B;
     }
-    return { TryStart, QueueChanged, Stop, Disconnect, Finish, HandleUpdate, OnReport, Pending, IsReady, Poll };
+    function OnReport(C) {
+        const Control = Controls.get(C.Id), R = Control.SoloReport;
+        let P = Pending.get(C.Id);
+        if (P) Poll(C, P);
+        P = Pending.get(C.Id);
+        if (!P || P.Control !== Control) return null;
+        return R.epoch === P.Epoch && R.match === P.MatchId.toString(16) && R.armed === true ? P.Lease : P.Envelope;
+    }
+    return { TryStart, QueueChanged, Stop, Disconnect, Finish, HandleUpdate, OnReport, Pending, IsReady, Poll, ValidateReport, Abort };
 })();
+
+function OnControlReport(Puid, R, Receipt) {
+    Solo.ValidateReport(Receipt);
+    if (Receipt.instance !== R.Instance.toString(16)) throw new Error('native control instance mismatch');
+    const Matches = Roster.Active().filter(C => C.Puid === Puid && ['neighborhood', 'cages'].includes(C.ActivityName) &&
+        C.PlayerBody && require('./PlayerBody').GenerationForConnection(C) === '2K22');
+    if (Matches.length !== 1) return null;
+    for (const [Id, Control] of Controls) if (Control.Connection.Closed) Controls.delete(Id);
+    const C = Matches[0], Now = Date.now();
+    let Control = Controls.get(C.Id);
+    if (Control && (Control.Instance !== R.Instance || Control.SoloReport.pid !== Receipt.pid)) {
+        if (Now - Control.SeenAt <= Wire.HeartbeatMs) {
+            const Failure = new Error('another native instance is active'); Failure.Status = 409; throw Failure;
+        }
+        Multiplayer.Stop(C, 'native instance changed'); Solo.Abort(C, 'remote native instance changed');
+        Controls.delete(C.Id); Control = null;
+    }
+    if (!Control) {
+        Control = { Connection: C, Instance: R.Instance, Epoch: Nonce() };
+        Controls.set(C.Id, Control);
+    }
+    Control.SeenAt = Now; Control.Report = R; Control.SoloReport = Receipt;
+    if (!Multiplayer.HasMatch(C) && !Solo.Pending.has(C.Id) && C.GotNext && !C.GotNext.Playing)
+        require('./GotNext').MaybeStartMatch(C);
+    const Park = Multiplayer.OnReport(C), Single = Solo.OnReport(C);
+    if (!Park && !Single) return null;
+    const Header = Buffer.alloc(16);
+    Header.writeUInt32LE(0x3743504e, 0); Header.writeUInt32LE(7, 4);
+    Header.writeUInt32LE(Park?.length || 0, 8); Header.writeUInt32LE(Single?.length || 0, 12);
+    return Buffer.concat([Header, ...(Park ? [Park] : []), ...(Single ? [Single] : [])]);
+}
 
 function TryStart(C, Found) {
     return Multiplayer.TryStart(C, Found) || Solo.TryStart(C, Found);
@@ -656,6 +704,7 @@ function Stop(C, Why) {
 function Disconnect(C) {
     Multiplayer.Disconnect(C);
     Solo.Disconnect(C);
+    Controls.delete(C.Id);
 }
 function Finish(C, Found, Game, Why) {
     return Game.NativeSolo ? Solo.Finish(C, Found, Game, Why) : Multiplayer.Finish(C, Found, Game, Why);
@@ -666,6 +715,6 @@ function HandleUpdate(C, Bytes) {
 module.exports = {
     TryStart, Stop, Disconnect, Finish, HandleUpdate, CancelWait, WaitForQueue, FrameFor,
     QueueChanged: Multiplayer.QueueChanged, HasTemplatePool: Multiplayer.HasTemplatePool,
-    OnReport: Multiplayer.OnReport, OnSoloReport: Solo.OnReport,
+    OnControlReport,
     Pending: Solo.Pending, IsReady: Solo.IsReady, Poll: Solo.Poll,
 };

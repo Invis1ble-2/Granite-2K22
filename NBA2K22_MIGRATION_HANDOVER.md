@@ -1,6 +1,6 @@
 # NBA 2K22 交接
 
-更新：2026-10-30。保留未完成事项、必要工程约束与简短复盘；已验收问题不保留冗长静态调查。
+更新：2026-11-01。保留未完成事项、必要工程约束与简短复盘；已验收问题不保留冗长静态调查。
 
 ## 最近验收
 
@@ -18,14 +18,15 @@
 - **MyCOURT 混编开赛**：用户确认真人与 NBA 球员混编可正常开赛，profile-derived PUID 方案游戏内验收通过。慢加载、访客重进、换人重开、双真人及房主离房等场景仍需分别确认，不外推为全部运行场景通过。
 - **Gatorade 健身房适配**：十三组器材及反应训练内手眼练习均已由用户验收。用户补充前几日完成的卧推仍显示11次、力量+3，确认训练记录及加成显示跨天保留；加成正常生效。
 - **公园 3v3 Got Next 点位**：用户已验收。`ShipCourts2K22.js` 按原始 `park_setup.RDAT / BOULEVARD / DEFAULT_LAYOUT` 绑定逻辑布局：`SHORT_TOP_LEFT` 为近侧右/左、无组队点；其余五场为远侧左/右及组队点。修复遗漏的布局绑定、侧别及队列顺序；2v2 和赛后算法未改动。本次 JS 语法及差异检查通过，不外推其他场景或完整比赛流程已验收。
+- **MyCourt 首次进入与连续场景切换（2026-10-31 用户已验收）**：用户连续换存档进入 MyCourt、连续切换场景十几次，均未再出现进入失败，确认本问题修复通过。`Connection.js/WorldState.js` 补齐 travel 命令的实际请求 ID ACK，以及 handoff 期间旧 socket 自身 PLAYER 请求的 ACK/新版对象回包；保留客户端正常关闭旧连接顺序。两个 JS 语法及差异检查已通过。
+- **篮球样式开赛下发（用户已确认装备球可带入场内）**：2K22 COURT bit130 `BallType`、bit131 `OverrideBallType` 均为 4 字节；开赛按主队到客队顺序取第一个非默认真人 `PreferredBallType`，单人人机取真人，MyCOURT 取房主，比赛期间固定，结束/断线清理。
 
 ## 未完成 / 待确认
-- **MyCourt 首次进入偶发失败（2026-10-30 00:46，未解决）**：用户复测仍失败。Opal 日志显示 neighborhood travel handoff 保留旧连接及 ACK/pending；新 CRIB connection 2 在 00:46:14 完成 Connect、active、484-byte init success，并在 init 后 100ms 发送 ownership bootstrap `3F0000D4D06`。之后没有 `PlayerHandshake` 或 `0x16A0D01E` room request，客户端报错 `727e66ac` 后返回公园。客户端静态调查仅确认该码被传给 `TkWorld_ExitPark`，不能作为 ownership 根因。此前“发送 change-server 后立即关闭旧连接”会导致客户端回到主菜单，已撤销。明日最小入口：对照旧连接 ACK/carrier 与 bootstrap 对象安装、related-ID/房间请求条件；本轮先记录，不再继续改功能代码。
 - **Ante-Up 内部玩法**：Got Next 点位及左右选位已验收；排队推进与完整多人比赛未验收。本次金额修复后的退出重进、Game Room 双向互切与 Got Next 回归仍待验收。VC 仅练习值，不扣款或结算。
+- **比赛开始前的玩家数据面板展示无实际数据显示**
 - **Game Room 内部设施**：设施不可用；用户反馈，待调查。
 - **Pro-Am & REC可用性未知**
 - Myteam模式适配（未开始，暂无计划）
-
 
 ## 通用玩法断线/异常状态恢复（独立，基础恢复已验收、多人未完成）：用户明确目标：多人比赛仍有真人则保留比赛、离场真人由 AI 接管；全部真人离场才终止并释放全部占位；单人玩法断线直接清玩家状态和占位。
   - **基础恢复已验收（2026-10-27 用户确认）**：通用 Close 清除 `BestBodies`；2K22 握手无当前 GotNext/Shootaround 归属时恢复 WALKING/清场地键；设备占位变化通知同场在线玩家；启用 TCP 保活（不是固定玩法时长强退）。此前 4 个 JS 文件语法与限定差异检查通过；不外推多人 AI 接管及末人离场收尾已通过。

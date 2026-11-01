@@ -261,7 +261,11 @@ function Dispatch(Client, Bytes) {
         OnTravelRequest(Client, FrameData, Bytes);
         return;
     }
-    if (Client.TravelHandoff) return;
+    if (Client.TravelHandoff) {
+        // Pending requests on this socket can block the destination connection.
+        if (FrameData.PacketId === WorldState.Packet) WorldState.CompletePendingPlayer(Client, Bytes);
+        return;
+    }
     if (MyCourt.IsRoomClosed(Client)) {
         // Keep late traffic out of the next room, but complete self PLAYER
         // requests: ACK alone leaves the native pending queue blocking travel.
@@ -383,6 +387,10 @@ function OnTravelRequest(Client, FrameData, Bytes) {
             Log.Error(`change server for ${Client.Identifier} could not be sent.`);
             return;
         }
+        const RequestId = Bytes.readBigUInt64BE(16);
+        if (RequestId !== 0n && !Client.Send(Requests.Build(RequestId))) {
+            Log.Error(`travel request ${RequestId} for ${Client.Identifier} could not be acknowledged.`);
+        }
         PlayerObject.PublishDestroy(Client);
         Squad.Disconnect(Client);
         Client.TravelHandoff = true;
@@ -392,7 +400,7 @@ function OnTravelRequest(Client, FrameData, Bytes) {
         }
         Log.Verbose(
             `  travel handoff retained connection ${Client.Id}; ` +
-                `request ACKs and pending player state remain active`,
+                `request ACKs and pending self PLAYER replies stay on the old socket`,
         );
         if (PreviousActivity) RefreshRosterForActivity(PreviousActivity, 'peer left', null, Client.RoomScope || null);
         Log.Info(`${Client.Identifier} is travelling to ${Destination.Name} @ ${Log.Clock()}`);
