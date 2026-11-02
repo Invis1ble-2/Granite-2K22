@@ -40,15 +40,28 @@ const Exact2K19 = Object.freeze({
     SkuSelector: 0xd52e6eb0,
 });
 
+// Interior dates from NBA2K22 FUN_1404238a0's native schedule avoid season transitions.
+const ContentSeasonDates = Object.freeze([
+    '2021-09-15 12:00:00',
+    '2021-10-25 12:00:00',
+    '2021-12-10 12:00:00',
+    '2022-01-20 12:00:00',
+    '2022-03-01 12:00:00',
+    '2022-04-15 12:00:00',
+    '2022-05-25 12:00:00',
+    '2022-07-11 12:00:00',
+    '2022-08-15 12:00:00',
+]);
+
 function Gzip(Bytes) {
     return Zlib.gzipSync(Bytes, { level: 9, Mtime: 0 });
 }
 
-function BuildContentSeasonConfigBlob() {
+function BuildContentSeasonConfigBlob(ContentSeason = 8) {
     // NBA2K22 FUN_1420996a0 imports this JSON into the native config manager.
     // Override only content time; retain the native schedule and global clock.
     return Gzip(Buffer.from(JSON.stringify({
-        CONTENT_SEASONS: { DEBUG_TIME_OVERRIDE: '2022-07-11 12:00:00' },
+        CONTENT_SEASONS: { DEBUG_TIME_OVERRIDE: ContentSeasonDates[ContentSeason - 1] },
     }), 'utf8'));
 }
 
@@ -177,7 +190,7 @@ function Build(Input, Context = {}) {
         .AddU64(Crcs.SessionKey, Session.key)
         .AddU64(Crcs.ManifestTimestamp, 0n)
         .AddBinary(Crcs.Parameters, BuildParameterBlob())
-        .AddBinary(Crcs.ConfigUpdates, BuildContentSeasonConfigBlob())
+        .AddBinary(Crcs.ConfigUpdates, BuildContentSeasonConfigBlob(Context.ContentSeason))
         .AddBinary(Crcs.Services, Endpoints)
         .AddBinary(Crcs.Manifest, Gzip(Buffer.alloc(0)));
     const Environment = GetU32(Fields, Crcs.Environment);

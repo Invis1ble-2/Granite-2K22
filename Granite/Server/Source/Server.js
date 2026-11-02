@@ -97,10 +97,14 @@ const CareerSlot = 0x5eeda966;
 function LoadConfig(File = Settings.File) {
     const Root = Path.resolve(File) === Settings.File ? Settings.GraniteRoot : Path.dirname(File);
     const Raw = Settings.Read(File);
+    const ContentSeason = Raw.ContentSeason === undefined ? 8 : Raw.ContentSeason;
+    if (!Number.isInteger(ContentSeason) || ContentSeason < 1 || ContentSeason > 9)
+        throw new Error('Config.json ContentSeason must be an integer from 1 to 9');
     const Resolve = (Value) => Path.resolve(Root, Value);
     return {
         ...Raw,
         ...Settings.Network(Raw),
+        ContentSeason,
         CertificateDirectory: Resolve(Raw.CertificateDirectory || 'Storage/Certificate'),
         CaptureDirectory: Resolve(process.env.GRANITE_CAPTURE_DIR || Raw.CaptureDirectory || 'Storage/Captures/Http'),
         UserContentDirectory: Resolve(
@@ -522,6 +526,7 @@ function CreateHandler(Config, Dependencies = {}) {
                 process.env.GRANITE_FORCED_GRIND_POINTS === undefined
                     ? undefined
                     : Number(process.env.GRANITE_FORCED_GRIND_POINTS),
+            ContentSeason: Config.ContentSeason,
             EndpointFile: Config.EndpointTable,
             PublicHost: Config.PublicHost,
             WorldPort: Config.WorldPort,
