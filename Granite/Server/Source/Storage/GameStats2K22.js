@@ -172,7 +172,6 @@ class GameStats2K22 {
     Recover(Directory) {
         if (!Directory) return;
         const Games = { ...this.State.games };
-        let Readable = 0;
         let Errors = 0;
         let Changed = false;
         for (const File of Json.Files(Directory, true)) {
@@ -180,21 +179,11 @@ class GameStats2K22 {
                 const Report = Normalize(Json.Read(File));
                 if (!Report) continue;
                 Changed = Add(Games, Report) || Changed;
-                Readable++;
             } catch { Errors++; }
         }
         if (Changed || this.State.recovered !== (Errors === 0))
             this.Commit({ version: 1, recovered: Errors === 0, games: Games });
-        let EligiblePlayers = 0;
-        let ExcludedPlayers = 0;
-        for (const Game of Object.values(Games)) {
-            for (const Player of Object.values(Game.players)) {
-                if (Consensus(Player)) EligiblePlayers++;
-                else ExcludedPlayers++;
-            }
-        }
-        Logger.Info(`2K22 stats recovery: ${Readable} reports, ${Object.keys(Games).length} games, ` +
-            `${EligiblePlayers} countable / ${ExcludedPlayers} excluded player results, ${Errors} unreadable records`);
+        if (Errors) Logger.Error(`2K22 stats recovery failed to read ${Errors} record(s)`);
     }
 }
 

@@ -89,7 +89,6 @@ function WaitForQueue(C, Found) {
             catch (Failure) { Waiting.delete(Key); Log.Error(`ParkCpu delayed start withheld: ${Failure.message}`); }
         }, WaitMs);
         W.Timer.unref?.();
-        Log.Info(`ParkCpu ${Found.Raw.Name}: ${Ids.length} human seat(s); waiting 10 stable seconds before CPU fill`);
     }
     return Date.now() - W.Since >= WaitMs;
 }
@@ -141,7 +140,7 @@ const Multiplayer = (() => {
     function Notice(C, Why) {
         if (C.ParkCpuNotice === Why) return;
         C.ParkCpuNotice = Why;
-        Log.Info(`ParkCpu fill withheld for ${C.Identifier}: ${Why}`);
+        Log.Error(`ParkCpu fill withheld for ${C.Identifier}: ${Why}`);
     }
     function HasTemplatePool(C, Instance) {
         const Control = Controls.get(C.Id);
@@ -198,7 +197,6 @@ const Multiplayer = (() => {
             } catch (Failure) { Log.Error(`ParkCpu player cleanup failed: ${Failure.message}`); }
         }
         CourtData.BroadcastCourtGroup(P.Context, P.Found.Groups[0]);
-        Log.Info(`ParkCpu multiplayer ${P.TeamSize}v${P.TeamSize} ${P.MatchId.toString(16)} ended: ${Why}; shared CPU and court state cleared`);
         return true;
     }
     function Stop(C, Why = 'queue changed') {
@@ -223,7 +221,6 @@ const Multiplayer = (() => {
             P.Bodies.set(Id, Buffer.from(Frame.subarray(32)));
             for (const M of P.Members) if (!M.Connection.SendObject(Frame)) throw new Error('CPU publication failed');
         }
-        Log.Info(`ParkCpu multiplayer ${P.Found.Raw.Name}: all ${P.Members.length} clients armed; published ${P.Cpu.length} shared CPU objects`);
     }
     function Commit(P) {
         if (!SameQueue(P.Snapshot, Snapshot(P.Anchor, P.Found))) throw new Error('court seats changed before commit');
@@ -247,7 +244,6 @@ const Multiplayer = (() => {
         P.Phase = 'starting'; P.StartedAt = Date.now();
         for (const M of P.Members) if (!M.Connection.SendObject(Prepared.Frame)) throw new Error('court roster publication failed');
         for (const M of P.Members) if (!require('./GotNext').GrantPlaying(M.Connection)) throw new Error('PLAYING grant failed');
-        Log.Info(`ParkCpu multiplayer ${P.TeamSize}v${P.TeamSize}: exact teams sent; ${P.Members.length} real network members, ${P.Cpu.length} CPU; awaiting native start and game connections`);
     }
     function Tick(P) {
         if (P.Done || Courts.get(P.Key) !== P) return;
@@ -288,11 +284,13 @@ const Multiplayer = (() => {
                 if (P.Phase === 'starting') {
                     if (Reports.every(R => R.Flags & Wire.Flag.Started) && Game.GameReady) {
                         P.Phase = 'playing';
-                        Log.Info(`ParkCpu multiplayer ${P.MatchId.toString(16)}: all native initializations and game connections confirmed; in-game synchronization still requires user acceptance`);
                     } else if (Now - P.StartedAt > 30000) throw new Error('native start or game synchronization timed out');
                 }
             }
-        } catch (Failure) { Remove(P, Failure.message, P.Phase === 'starting' || P.Phase === 'playing'); }
+        } catch (Failure) {
+            Log.Error(`ParkCpu multiplayer ${P.Found.Raw.Name} stopped: ${Failure.message}; restoring queue state`);
+            Remove(P, Failure.message, P.Phase === 'starting' || P.Phase === 'playing');
+        }
     }
     function Begin(C, Found, S, Key) {
         const First = S.Members[0].Control.Report;
@@ -334,7 +332,6 @@ const Multiplayer = (() => {
         Courts.set(Key, P);
         for (const M of P.Members) Participants.set(M.Connection.Id, P);
         Watch(P, () => Tick(P));
-        Log.Info(`ParkCpu multiplayer ${Found.Raw.Name}: froze ${P.Members.length} human seat(s), ${P.Cpu.length} empty seat(s); templates: ${Selected.map(Profile => Profile.Name).join(', ')}; awaiting v7 CPU control on every client`);
         return true;
     }
     function QueueChanged(C, Found) {
@@ -457,7 +454,6 @@ const Solo = (() => {
             const Owner = P.Control.Connection;
             if (Owner.GotNext !== P.Spot || !OnlyQueuedHuman(Owner, Found)) {
                 Stop(Owner);
-                Log.Info(`ParkCpu solo ${Found.Raw.Name}: queue changed during preparation; retaining human queue seats`);
             }
         }
     }
@@ -490,7 +486,6 @@ const Solo = (() => {
         PlayerObject.ClearCachedBody(C);
         // Away seats may already be free, leaving no human seat change to broadcast.
         CourtData.BroadcastCourtGroup(C, P.Found.Groups[0]);
-        Log.Info(`ParkCpu solo ${P.Found.Raw.Name} ended (client disconnected); CPU objects removed, player cache cleared and queue restored`);
         return true;
     }
     function Abort(C, Why) {
@@ -539,8 +534,6 @@ const Solo = (() => {
         if (!C.SendObject(Prepared.Frame)) throw new Error('court roster send failed');
         if (!require('./GotNext').GrantPlaying(C)) throw new Error('PLAYING grant failed');
         P.Phase = 'starting'; P.StartedAt = Date.now();
-        const Chosen = P.Candidates.map((Choices, I) => `${I}:${P.SelectedCandidates[I] + 1}/${CandidateCount}:OVR=${Choices[P.SelectedCandidates[I]].Rating}`);
-        Log.Info(`ParkCpu solo ${P.Found.Raw.Name}: ${P.Cpu.length} CPU rosters verified against authorized candidates (${Chosen.join(', ')}); ${P.TeamSize}v${P.TeamSize} teams sent before PLAYING`);
     }
     function Publish(C, P) {
         P.Phase = 'preloading'; P.PreloadAt = Date.now();
@@ -549,7 +542,6 @@ const Solo = (() => {
             P.Bodies.set(Id, Buffer.from(Frame.subarray(32)));
             if (!C.SendObject(Frame)) throw new Error('CPU PLAYER publication failed');
         }
-        Log.Info(`ParkCpu solo ${P.Found.Raw.Name}: published ${P.Cpu.length} generated PLAYER objects; awaiting authenticated game roster receipts`);
     }
     function Poll(C, P) {
         if (Pending.get(C.Id) !== P) return;
@@ -570,7 +562,6 @@ const Solo = (() => {
             } else if (P.Phase === 'starting') {
                 if (IsReady(R, P) && R.started === true) {
                     P.Phase = 'native-started';
-                    Log.Info(`ParkCpu solo ${P.Found.Raw.Name}: client validated ${P.TeamSize * 2} prepared native rosters at InitPlayingGame; awaiting in-game play`);
                 } else if (Date.now() - P.StartedAt > 30000) Abort(C, 'guarded native StartGame was not confirmed');
             }
         } catch (E) { Abort(C, E.message); }
@@ -591,11 +582,11 @@ const Solo = (() => {
         if (!WaitForQueue(C, Found)) return false;
         const Control = Controls.get(C.Id);
         if (!Control || Date.now() - Control.SeenAt > HeartbeatMs || !Installed(Control.SoloReport)) {
-            if (!C.ParkCpuSoloNotice) Log.Info('ParkCpu solo withheld: authenticated game control with Module 00010227 is required');
+            if (!C.ParkCpuSoloNotice) Log.Error('ParkCpu solo withheld: authenticated game control with Module 00010227 is required');
             C.ParkCpuSoloNotice = true; return false;
         }
         if (!Multiplayer.HasTemplatePool(C, Control.Instance.toString(16))) {
-            if (!C.ParkCpuSoloNotice) Log.Info('ParkCpu solo withheld: authenticated client template pool is unavailable or differs from the server catalog');
+            if (!C.ParkCpuSoloNotice) Log.Error('ParkCpu solo withheld: authenticated client template pool is unavailable or differs from the server catalog');
             C.ParkCpuSoloNotice = true; return false;
         }
         const Receipt = Control.SoloReport;
@@ -622,7 +613,6 @@ const Solo = (() => {
             P.Envelope.writeBigUInt64LE(Control.Instance, 0); P.Envelope.writeBigUInt64LE(Control.Epoch, 8);
             P.Envelope.writeUInt32LE(LeaseMs, 16); Request.copy(P.Envelope, 24);
             P.Lease = Buffer.alloc(32); P.Envelope.copy(P.Lease, 0, 0, 24); P.Lease.writeBigUInt64LE(MatchId, 24);
-            Log.Info(`ParkCpu solo ${Found.Raw.Name}: CPU overall ${Opts.CpuOverallMode === 'fixed' ? `fixed ${Opts.CpuFixedOverall}` : 'random 80-99'}; ${CandidateCount} authorized candidates per CPU; templates: ${Selected.map(Choices => Choices[0].Name).join(', ')}; awaiting authenticated game control authorization`);
             Watch(P, () => Poll(C, P));
         } catch (E) { Abort(C, E.message); }
         return true;
@@ -633,7 +623,6 @@ const Solo = (() => {
         require('./GotNext').Release(C);
         // Away seats may already be free; Release then has no seat change to broadcast.
         CourtData.BroadcastCourtGroup(C, Found.Groups[0]);
-        Log.Info(`ParkCpu solo ${Found.Raw.Name} ended (${Reason}); CPU objects removed and queue restored`);
         return true;
     }
     function HandleUpdate(C, Bytes) {

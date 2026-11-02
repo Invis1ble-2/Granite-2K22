@@ -11,7 +11,6 @@ function CreateHandler() {
     let Options = null;
     try { Options = SessionOptions(); }
     catch (_) { Log.Error('ParkCpu control unavailable: existing Granite session configuration could not be read'); }
-    if (Options) Log.Info('ParkCpu v7 uses existing Granite login sessions; CPU generation and ratings are server-authored');
     const Peers = new Map();
     return function Handle(Req, Res) {
         if (Req.url !== Endpoint) return false;

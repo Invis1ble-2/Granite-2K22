@@ -6,6 +6,7 @@
 const Fs = require('node:fs');
 const Https = require('node:https');
 const Path = require('node:path');
+const Settings = require('../../../Shared/Config');
 const Logger = require('./Core/Logger');
 const Names = require('./Core/Names');
 const Capture = require('./Core/Capture');
@@ -93,17 +94,13 @@ const ProAm = require('./Services/ProAm/Endpoints');
 const CareerSaveId = 0xd5e5f21d;
 const CareerSlot = 0x5eeda966;
 
-function LoadConfig(File = Path.resolve(__dirname, '../Config.json')) {
-    const Root = Path.dirname(File);
-    const Raw = JSON.parse(Fs.readFileSync(File, 'utf8'));
+function LoadConfig(File = Settings.File) {
+    const Root = Path.resolve(File) === Settings.File ? Settings.GraniteRoot : Path.dirname(File);
+    const Raw = Settings.Read(File);
     const Resolve = (Value) => Path.resolve(Root, Value);
     return {
         ...Raw,
-        Port: Number(process.env.GRANITE_PORT || Raw.Port || 21000),
-        Host: process.env.GRANITE_HOST || Raw.Host || '0.0.0.0',
-        PublicHost: Raw.PublicHost || '127.0.0.1',
-        WorldPort: Number(process.env.OPAL_PORT || Raw.WorldPort || 20054),
-        RelayPort: Number(process.env.OPAL_RELAY_PORT || Raw.RelayPort || 28091),
+        ...Settings.Network(Raw),
         CertificateDirectory: Resolve(Raw.CertificateDirectory || 'Storage/Certificate'),
         CaptureDirectory: Resolve(process.env.GRANITE_CAPTURE_DIR || Raw.CaptureDirectory || 'Storage/Captures/Http'),
         UserContentDirectory: Resolve(
@@ -122,6 +119,7 @@ function LoadConfig(File = Path.resolve(__dirname, '../Config.json')) {
         ),
         CareerGrind: Resolve(process.env.GRANITE_CAREER_GRIND || Raw.CareerGrind || 'Storage/Career/GrindPoints.json'),
         WalletsFile: Resolve(process.env.GRANITE_WALLETS_FILE || Raw.WalletsFile || 'Storage/Inventory/Wallets.json'),
+        OwnedItemsFile: Resolve(Raw.OwnedItemsFile || process.env.GRANITE_OWNED_ITEMS || 'Storage/Inventory/OwnedItems.json'),
         GatoradeBoostsFile: Resolve(Raw.GatoradeBoostsFile || 'Storage/Inventory/GatoradeBoosts.json'),
         CareerBadgesFile: Resolve(Raw.CareerBadgesFile || 'Storage/Career/BadgePoints.json'),
         InstantMaxProgression:
@@ -387,7 +385,6 @@ function CreateHandler(Config, Dependencies = {}) {
         } else {
             try {
                 StoreCatalog2K22Instance = StoreCatalog2K22Storage.LoadFile(Config.StoreCatalog2K22File);
-                Logger.Info(`2K22 store catalog loaded: ${Config.StoreCatalog2K22File}`);
             } catch (Failure) {
                 Logger.Error(`2K22 store catalog load failed: ${Failure.message}`);
                 throw Failure;
@@ -418,8 +415,6 @@ function CreateHandler(Config, Dependencies = {}) {
     const AutomaticOwnedItems = Config.AutomaticOwnership === true
         ? Dependencies.AutomaticOwnedItems || LoadAutomaticItems(StoreCatalog2K22Instance)
         : [];
-    if (AutomaticOwnedItems.length)
-        Logger.Info(`2K22 automatic ownership enabled: ${AutomaticOwnedItems.length} permanent items for signed-in accounts`);
     const StoreCatalogPrices = Dependencies.StoreCatalogPrices ||
         (StoreCatalog2K22Instance ? LoadCatalogPrices(StoreCatalog2K22Instance) : new Map());
     const ProAmTeams = Dependencies.ProAmTeams || new Map();

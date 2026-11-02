@@ -6,12 +6,13 @@
 const Init = require('./Init');
 const Worlds = require('../Protocol/Worlds');
 const { Crc } = require('../Core/Names');
+const Network = require('../Core/Config').Network();
 
 const Relay = {
     Retired: Init.RetiredRelay,
     Local: {
-        Ip: process.env.OPAL_RELAY_HOST || '127.0.0.1',
-        Port: Number(process.env.OPAL_RELAY_PORT) || 28091,
+        Ip: Network.PublicHost,
+        Port: Network.RelayPort,
     },
 };
 

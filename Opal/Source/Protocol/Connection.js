@@ -24,6 +24,7 @@ const Shootaround = require('./Shootaround');
 const Squad = require('./Squad');
 const Gambling = require('./Gambling');
 const MyCourt = require('./MyCourt');
+const Settings = require('../Core/Config');
 
 const State = {
     Opening: 0,
@@ -43,7 +44,7 @@ const LingerMs = 250;
 let NextId = 0;
 
 class Connection {
-    constructor(Socket, Req, Port = Number(process.env.OPAL_PORT) || 20054) {
+    constructor(Socket, Req, Port = Settings.Network().WorldPort) {
         this.Id = ++NextId;
         this.Port = Port;
         this.Socket = Socket;

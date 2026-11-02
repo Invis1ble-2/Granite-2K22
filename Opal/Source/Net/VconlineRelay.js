@@ -170,6 +170,19 @@ class Router {
         this.Pacer?.Prune(this.Clients.values());
     }
 
+    CloseSession({ RelayId, Token }) {
+        const SessionKey = `${RelayId}:${Token.toString('hex')}`;
+        let Removed = 0;
+        for (const [Key, Client] of this.Clients) {
+            if (Client.SessionKey !== SessionKey) continue;
+            this.Clients.delete(Key);
+            Removed++;
+        }
+        // The world connection can close without a native UDP disconnect packet.
+        this.Pacer?.Sessions.delete(SessionKey);
+        return Removed;
+    }
+
     Deliver(Deliveries, FallbackType = Type.Unreliable) {
         let Sent = 0;
         for (const Delivery of Deliveries) {
@@ -325,46 +338,22 @@ let Socket = null;
 let ActiveRouterValue = null;
 
 function TimingOptions(Env = process.env) {
-    const LockstepDelayFrames = Number(Env.OPAL_LOCKSTEP_DELAY_FRAMES ?? Env.GRANITE_LOCKSTEP_BUFFER_FRAMES ?? 12);
-    const LockstepHz = Settings.FrameRate();
-    if (!Number.isInteger(LockstepDelayFrames) || LockstepDelayFrames < 1 || LockstepDelayFrames > 49)
-        throw new Error('OPAL_LOCKSTEP_DELAY_FRAMES must be 1..49');
-    if (Env.GRANITE_LOCKSTEP_BUFFER_FRAMES !== undefined &&
-        Number(Env.GRANITE_LOCKSTEP_BUFFER_FRAMES) !== LockstepDelayFrames)
-        throw new Error('Granite and Opal lockstep buffer frame counts must match');
-    return { LockstepDelayFrames, LockstepHz };
+    return { LockstepDelayFrames: Settings.LockstepBufferFrames(Env), LockstepHz: Settings.FrameRate() };
 }
 
 function Start({
-    port: Port = Number(process.env.OPAL_RELAY_PORT) || 28091,
-    host: Host = process.env.OPAL_RELAY_BIND || '0.0.0.0',
+    port: Port = Settings.Network().RelayPort,
+    host: Host = Settings.Network().RelayBind,
 } = {}) {
     if (Socket) return Socket;
 
     const { LockstepDelayFrames, LockstepHz } = TimingOptions();
-    if (LockstepDelayFrames)
-        Log.Info(
-            `mode-3 input scheduling: configured buffer ${LockstepDelayFrames} frames; ` +
-                `target ${LockstepHz ? `${LockstepHz} Hz (${(1000 / LockstepHz).toFixed(2)} ms/tick)` : 'native startup rate'}; ` +
-                'effective frame offset follows native STARTUP packet period; real-input cache enabled',
-        );
 
     const Udp = Dgram.createSocket('udp4');
-    const Counts = new TrafficSummary();
-    const FlushTraffic = () => {
-        const Line = Counts.Take();
-        if (Line) Log.Verbose(`  ${Line}`);
-        const Pacing = Active.Pacer?.Summary(Active.Now(), Active.Clients.values());
-        if (Pacing) Log.Info(`[${Log.Clock()}] ${Pacing}`);
-    };
     const Active = new Router(
         (Packet, Client) => {
-            Counts.Attempted++;
             Udp.send(Packet, Client.Port, Client.Address, (Failure) => {
-                if (Failure) {
-                    Counts.Failed++;
-                    Log.Error(`relay send to ${Client.Address}:${Client.Port} failed: ${Failure.message}`);
-                } else Counts.Completed++;
+                if (Failure) Log.Error(`relay send to ${Client.Address}:${Client.Port} failed: ${Failure.message}`);
             });
         },
         undefined,
@@ -373,52 +362,12 @@ function Start({
 
     Udp.on('message', (Packet, Remote) => {
         try {
-            const Result = Active.Handle(Packet, Remote);
-            if (Result.Kind === 'connect') {
-                Log.Info(
-                    `relay client ${Remote.address}:${Remote.port} connected as machine ` +
-                        `0x${Result.Client.MachineId.toString(16).toUpperCase()} @ ${Log.Clock()}`,
-                );
-                Log.Verbose(
-                    `  relay connect accepted, id ${Result.Client.RelayId}, ` +
-                        `session token fingerprint ${require('node:crypto').createHash('sha256').update(Result.Client.Token).digest('hex').slice(0, 12)}`,
-                );
-                if (Result.SessionSize > 1)
-                    Log.Info(
-                        `2K22 relay session has ${Result.SessionSize} machines; ` +
-                            `native leader is 0x${Result.LeaderMachineId.toString(16).toUpperCase()} @ ${Log.Clock()}`,
-                    );
-            } else if (Result.Kind === 'disconnect') {
-                Log.Info(`relay client ${Remote.address}:${Remote.port} disconnected @ ${Log.Clock()}`);
-            } else {
-                Counts.In++;
-                if (!Result.Sent && !Result.Queued) Counts.NoRecipients++;
-                const Timing = Result.Client.Lockstep;
-                if (Timing && !Result.Client.LockstepTimingLogged) {
-                    Result.Client.LockstepTimingLogged = true;
-                    Log.Info(
-                        `mode-3 timing: machine ${Timing.Index} (0x${Result.Client.MachineId.toString(16).toUpperCase()}), ` +
-                            `configured ${LockstepDelayFrames} frames, effective ${Timing.Delay} frames ` +
-                            `(${(1000 * Timing.Delay / Timing.FrameRate).toFixed(2)} ms), ` +
-                            `packet period ${Timing.SendPeriod} frames, ${Timing.FrameRate} Hz @ ${Log.Clock()}`,
-                    );
-                }
-                for (const Control of Result.P2PControls || []) {
-                    const Sequence = Control.MatchSequence === null ? '' : `, match sequence ${Control.MatchSequence}`;
-                    Log.Verbose(
-                        `  Play Now ${Control.Name} ` +
-                            `${Control.Type === P2PControlType.Leave ? 'for' : 'from'} ` +
-                            `0x${Control.SubjectMachineId.toString(16).toUpperCase()}${Sequence}; ` +
-                            `leader 0x${Result.LeaderMachineId.toString(16).toUpperCase()}`,
-                    );
-                }
-            }
+            Active.Handle(Packet, Remote);
         } catch (Failure) {
             Log.Error(
                 `relay dropped ${Packet.length}-byte datagram from ` +
                     `${Remote.address}:${Remote.port}: ${Failure.message}`,
             );
-            Log.Verbose(`  relay bytes ${Packet.toString('hex')}`);
         }
     });
 
@@ -440,8 +389,6 @@ function Start({
 
     Socket = Udp;
     ActiveRouterValue = Active;
-    const SummaryTimer = setInterval(FlushTraffic, 5000);
-    SummaryTimer.unref();
     const PacingTimer = Active.Pacer
         ? setInterval(() => {
               try {
@@ -453,9 +400,7 @@ function Start({
         : null;
     PacingTimer?.unref();
     Udp.once('close', () => {
-        clearInterval(SummaryTimer);
         if (PacingTimer) clearInterval(PacingTimer);
-        FlushTraffic();
     });
     Udp.bind(Port, Host, () => {
         const Address = Udp.address();

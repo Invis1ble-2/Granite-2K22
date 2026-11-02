@@ -11,9 +11,10 @@ const Log = require('../Core/Log');
 const WebSocket = require('./Websocket');
 const { Connection, Dispatch } = require('../Protocol/Connection');
 const Position = require('../Protocol/Position');
+const Settings = require('../Core/Config');
 
 const CertificateDirectory =
-    process.env.OPAL_SSL || Path.resolve(__dirname, '..', '..', '..', 'Granite', 'Server', 'Storage', 'Certificate');
+    process.env.OPAL_SSL || Path.resolve(Settings.GraniteRoot, Settings.Read().CertificateDirectory || 'Storage/Certificate');
 const DefaultKeyName = process.env.OPAL_KEY_NAME || (process.env.OPAL_SSL ? 'Bad.key' : 'Granite.key');
 const DefaultCertificateName = process.env.OPAL_CERT_NAME || (process.env.OPAL_SSL ? 'Bad.crt' : 'Granite.crt');
 const DefaultCertificate = {
@@ -94,7 +95,7 @@ function Attach(Client) {
     });
 }
 
-function Start({ port: Port = Number(process.env.OPAL_PORT) || 20054, Certificate = null } = {}) {
+function Start({ port: Port = Settings.Network().WorldPort, Certificate = null } = {}) {
     const Server = Https.createServer(LoadCertificate(Certificate));
     const ParkCpuEndpoint = require('./ParkCpuEndpoint').CreateHandler();
     const OnlineFrameRateEndpoint = require('./OnlineFrameRateEndpoint').CreateHandler();
@@ -130,8 +131,8 @@ function Start({ port: Port = Number(process.env.OPAL_PORT) || 20054, Certificat
     Server.on('error', (E) => {
         if (E.code === 'EADDRINUSE') {
             Log.Error(
-                `port ${Port} is already in use. Opal defaults to 20054; ` +
-                    `stop the other listener or set OPAL_PORT.`,
+                `port ${Port} is already in use; ` +
+                    `stop the other listener or change WorldPort in Config.json.`,
             );
         } else {
             Log.Error(`listener failed: ${E.message}`);

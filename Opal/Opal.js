@@ -7,8 +7,9 @@ const Log = require('./Source/Core/Log');
 const Listener = require('./Source/Net/Listener');
 const VconlineRelay = require('./Source/Net/VconlineRelay');
 const { LingerMs } = require('./Source/Protocol/Connection');
+const Settings = require('./Source/Core/Config');
 
-const Port = Number(process.env.OPAL_PORT) || 20054;
+const Port = Settings.Network().WorldPort;
 
 if (require.main === module) {
     if (process.argv.includes('--verbose')) Log.SetLevel(Log.Level.Verbose);
@@ -17,17 +18,6 @@ if (require.main === module) {
     try {
         VconlineRelay.Start();
         Listener.Start({ port: Port });
-        try {
-            const CourtTables = require('./Source/Activity/CourtTables');
-            const CourtData = require('./Source/Protocol/CourtData');
-            const Park = CourtTables.For('neighborhood');
-            const Stage = CourtTables.For('stage');
-            Log.Info(
-                `courts: park ${Park.Courts.length} (${CourtData.ParkFormat()}) / ` +
-                    `stage ${Stage.Courts.length} bitstream, 32B envelope, ` +
-                    `gotNextLocation ${process.env.OPAL_GOTNEXT_LOCATION === '1' ? 'ON' : 'off'}`,
-            );
-        } catch (_) {}
     } catch (E) {
         Log.Error(`opal could not start: ${E.message}`);
         process.exit(1);

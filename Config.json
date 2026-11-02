@@ -2,6 +2,21 @@
     "Port": 21000,
     "Host": "0.0.0.0",
     "PublicHost": "172.19.163.2",
+    "WorldPort": 20054,
+    "RelayPort": 28091,
+    "RelaySessionPort": 9768,
+    "RelayBind": "0.0.0.0",
+    "LockstepBufferFrames": 6,
+    "OnlineFrameRate": {
+        "FrameRate": 120
+    },
+    "ParkCpu": {
+        "Enabled": true,
+        "TwoOnTwo": true,
+        "ThreeOnThree": true,
+        "CpuOverallMode": "random",
+        "CpuFixedOverall": 99
+    },
     "CertificateDirectory": "Storage/Certificate",
     "CaptureDirectory": "Storage/Captures/Http",
     "UserContentDirectory": "Storage/UserContent",
@@ -16,9 +31,6 @@
     "CdnDirectory": "Storage/Cdn",
     "NBA2K22StoreCatalog": "Storage/Inventory/StoreCatalog2K22.json",
     "EndpointTable": "Storage/Session/Login/Endpoints2K19.json",
-    "WorldPort": 20054,
-    "RelayPort": 28091,
-    "RelaySessionPort": 9768,
     "MaximumBodyBytes": 67108864,
-    "Verbose": true
+    "Verbose": false
 }

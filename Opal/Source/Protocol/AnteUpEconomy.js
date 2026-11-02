@@ -2,8 +2,7 @@
 // Licensed under the PolyForm Noncommercial License 1.0.0. See LICENSE.md.
 'use strict';
 
-const Fs = require('node:fs');
-const Path = require('node:path');
+const Settings = require('../../../Shared/Config');
 const Policy = require('../../../Shared/AnteUp');
 const { MatchRecords, DirectoryFor } = require('../../../Shared/AnteUpMatches');
 const Log = require('../Core/Log');
@@ -11,8 +10,8 @@ let Records = null;
 
 function Recover() {
     if (!Policy.EconomicsEnabled || Records) return;
-    const Root = Path.resolve(__dirname, '../../../Granite/Server');
-    const Config = JSON.parse(Fs.readFileSync(Path.join(Root, 'Config.json'), 'utf8'));
+    const Root = Settings.GraniteRoot;
+    const Config = Settings.Read();
     const Store = new MatchRecords(DirectoryFor(Config, Root));
     let Cancelled = 0;
     // A new Opal process cannot resume the previous process's frozen games.

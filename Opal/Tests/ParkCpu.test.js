@@ -5,7 +5,7 @@ const B=require('../Source/Protocol/PlayerBody'),P=require('../Source/Protocol/P
 const Slots=require('../Source/Protocol/Slots'),Tables=require('../Source/Activity/CourtTables'),Courts=require('../Source/Protocol/Courts');
 const FL=require('../Source/Codec/FieldList'),F=require('../Source/Codec/Frame'),U=require('../Source/Protocol/Userdata');
 require('../Source/Core/Log').SetLevel(0);
-const Config=Path.resolve(__dirname,'../Config.json');
+const Config=require('../../Shared/Config').File;
 const H=P.ExtractHandshakeBody(Fs.readFileSync(Path.join(__dirname,'Fixtures/NBA2K22/PlayerHandshake.bin')));
 function ReceiptProfile(Seed, Id) {
     let State=(Seed^0x50433232)>>>0;

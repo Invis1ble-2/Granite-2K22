@@ -859,7 +859,9 @@ function PrepareStageTeams(Name, Home, Away, Profiles) {
 
 function ClearGameTeams(Activity, Name, Generation = '2K19') {
     const Key = GameCourt(Activity, Name, Generation).Guid.toString();
-    require('./AnteUpEconomy').Cancel(CourtTeams.get(Key));
+    const Teams = CourtTeams.get(Key);
+    require('./AnteUpEconomy').Cancel(Teams);
+    if (Teams?.Transport) require('../Net/VconlineRelay').ActiveRouter()?.CloseSession(Teams.Transport);
     return CourtTeams.delete(Key);
 }
 

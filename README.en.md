@@ -25,20 +25,33 @@ These results cover only the verified scenarios. Other player counts/modes, repe
 | Feature | Details |
 | --- | --- |
 | CPU fill / enhanced CPUs | Fills empty Park slots. |
-| 120 FPS Park | Enable by default, and the launch script's `6/6/120` synchronization settings. |
+| 120 FPS Park | Enabled by default. The root `Config.json` selects a shared 6-frame buffer and 120 FPS for both services. Use matching client/server versions. |
 | Animation restriction bypass | Shows all native animation candidates and bypasses height, attribute, and progression requirements by default. Normal purchases still apply. |
 | All animations owned | Set `EnableAnimationUnlockAll=1` in `Granite.ini` to equip without purchasing. Disabled by default. |
 | Automatic permanent-item ownership | Server option `AutomaticOwnership=true`, enabled by default. Covers permanent items such as clothing and shoes, not consumables. |
 | Instant career unlocks | `InstantMaxProgression` / `InstantMaxBadges` are enabled by default, unlocking progression and badge budgets |
 | Fixed VC | New wallets start with `888888` VC. Purchases deduct VC by default; `VirtualCurrencyStatic=true` keeps the balance fixed. |
 
-Client configs are in `Granite.ini` beside `Module.dll` and apply on the next game launch. Server configs are in `Granite/Server/Config.json`. 
+Client settings are in `Granite.ini` beside `Module.dll` and apply on the next game launch. Granite, Opal, and `StartServers.bat` share the project-root `Config.json`, replacing the two separate server configuration files.
+
+| Setting | Purpose / current value |
+| --- | --- |
+| `PublicHost` | Shared advertised IPv4. Use `127.0.0.1` locally or the server's virtual-LAN IPv4 for multiplayer. |
+| `Host` / `RelayBind` | Granite HTTPS / Opal UDP relay bind addresses; both default to `0.0.0.0`. |
+| `Port` / `WorldPort` / `RelayPort` | Granite HTTPS / Opal WSS / UDP relay ports; currently `21000` / `20054` / `28091`. |
+| `LockstepBufferFrames` | One buffer frame count for login parameters and the relay; currently `6`, allowed range `1..49`. |
+| `OnlineFrameRate.FrameRate` | Online frame rate; currently `120`, supports `60` or `120`. |
+| `ParkCpu` | CPU fill switches, team sizes, and overall settings; retains the original Opal fields. |
+
+Relative storage paths such as `Storage/...` still resolve from `Granite/Server`. Restart both services after changing network or timing settings. The batch script and separate commands `node Granite/Server/Server.js` and `node Opal/Opal.js` all read this configuration. Existing port, bind-address, and buffer-frame environment overrides remain supported; if both buffer variables are set, they must match. Advertised addresses always use `PublicHost`.
+
+Opal logs errors only by default; normal connections, court publication, and match state changes stay quiet. For troubleshooting, run `node Opal/Opal.js --verbose` from the project root to see the remaining diagnostics. Periodic lockstep summaries and successful ParkCpu stage logs have been removed.
 
 ## Setup and Multiplayer
 
 Requirements: Windows 10/11 (with built-in Edge WebView2 runtime) and Node.js 18.20.8+. Building native components requires Visual Studio 2022 with the Desktop development with C++ workload; building the GUI launcher requires Go 1.22+ and the Wails v2 CLI.
 
-1. Set `PublicHost` in `Granite/Server/Config.json` to `127.0.0.1` for local use, or the server's virtual-LAN IPv4 for multiplayer. Keep `Host` at `0.0.0.0`.
+1. Set `PublicHost` in the root `Config.json` to `127.0.0.1` for local use, or the server's virtual-LAN IPv4 for multiplayer. Keep `Host` at `0.0.0.0`.
 2. Run `StartServers.bat` to start Granite and Opal with matching advertised addresses.
 3. Use the matching `Module.dll` on every client. Update these fields in `Granite.ini` beside the DLL, preserving other settings:
 

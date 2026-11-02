@@ -25,20 +25,33 @@
 | 功能 | 说明 |
 | --- | --- |
 | 可选总评人机补位 | 服务端可选随机 80–99 或固定 80–99 总评人机补齐公园空位，默认随机。 |
-| 公园 120 FPS | 默认已启用，并配置启动脚本中已知可行的 `6/6/120` 同步参数，勿混用旧版。 |
+| 公园 120 FPS | 默认启用，根目录 `Config.json` 统一配置 6 帧缓冲和 120 FPS，两端自动使用相同参数，勿混用旧版。 |
 | 动画限制解除 | 默认显示全部原生动画候选并跳过身高、属性、进度限制，仍走正常购买流程。 |
 | 动画全部拥有 | `Granite.ini` 中 `EnableAnimationUnlockAll=1`，默认关闭；开启后无需购买。 |
 | 永久物品自动拥有 | 服务端 `AutomaticOwnership=true`，默认开启；涵盖服装、鞋等永久物品，不含消耗品。 |
 | 生涯快速解锁 | `InstantMaxProgression` / `InstantMaxBadges` 默认开启，解锁成长进度与徽章进度 |
 | 固定 VC | 新钱包初始为 `888888` VC；默认正常扣款，`VirtualCurrencyStatic=true` 可固定余额。 |
 
-客户端配置位于 `Module.dll` 同目录的 `Granite.ini`，下次启动游戏生效；服务端配置位于 `Granite/Server/Config.json`。
+客户端配置位于 `Module.dll` 同目录的 `Granite.ini`，下次启动游戏生效；Granite、Opal 与 `StartServers.bat` 共用项目根目录的 `Config.json`，原来的两份服务端配置已合并。
+
+| 配置字段 | 用途 / 当前值 |
+| --- | --- |
+| `PublicHost` | 两端统一对外 IPv4；本机填 `127.0.0.1`，联机填服务器虚拟网卡 IPv4。 |
+| `Host` / `RelayBind` | Granite HTTPS / Opal UDP relay 的监听地址，默认均为 `0.0.0.0`。 |
+| `Port` / `WorldPort` / `RelayPort` | Granite HTTPS / Opal WSS / UDP relay 端口，当前为 `21000` / `20054` / `28091`。 |
+| `LockstepBufferFrames` | 登录参数和 relay 共用的缓冲帧数，当前为 `6`，允许 `1..49`；无需再分别配置两端。 |
+| `OnlineFrameRate.FrameRate` | 联机帧率，当前为 `120`，支持 `60` 或 `120`。 |
+| `ParkCpu` | 人机补位开关、适用人数及总评设置，保留原 Opal 字段。 |
+
+`Storage/...` 等存储相对路径仍以 `Granite/Server` 为基准。修改网络或同步参数后需重启两端；通过脚本或分别执行 `node Granite/Server/Server.js`、`node Opal/Opal.js` 均读取同一配置。原有端口、监听地址及缓冲帧数环境变量仍可覆盖配置；若同时设置两端缓冲帧数变量，其值必须一致。对外地址统一以 `PublicHost` 为准。
+
+Opal 默认仅输出错误日志，正常连接、球场发布和比赛状态不刷屏。需要排查时可在根目录执行 `node Opal/Opal.js --verbose`，查看保留的调试信息；lockstep 周期汇总和 ParkCpu 成功阶段日志已移除。
 
 ## 启动与联机
 
 环境：Windows 10/11（自带 Edge WebView2 运行时）、Node.js 18.20.8+；编译原生模块需 Visual Studio 2022 的 C++ 桌面开发组件，编译 GUI 启动器需 Go 1.22+ 与 Wails v2 CLI。
 
-1. 本机使用时，将 `Granite/Server/Config.json` 的 `PublicHost` 设为 `127.0.0.1`；虚拟局域网联机则设为服务器虚拟网卡 IPv4。`Host` 保持 `0.0.0.0`。
+1. 本机使用时，将根目录 `Config.json` 的 `PublicHost` 设为 `127.0.0.1`；虚拟局域网联机则设为服务器虚拟网卡 IPv4。`Host` 保持 `0.0.0.0`。
 2. 运行 `StartServers.bat`，统一启动 Granite 与 Opal，并同步对外地址。
 3. 每台客户端使用配套 `Module.dll`，修改其同目录 `Granite.ini` 的以下字段，保留其他已有设置：
 

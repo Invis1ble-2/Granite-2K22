@@ -8,6 +8,7 @@ const { Hex } = require('../Core/Crc32');
 const FieldList = require('../Codec/FieldList');
 const Frame = require('../Codec/Frame');
 const Worlds = require('./Worlds');
+const Settings = require('../Core/Config');
 
 const PacketId = 0x9ffcdad0;
 const SubOpcode = 0x86073f8c;
@@ -82,13 +83,7 @@ function BuildSpectator(Args) {
 }
 
 function HostFor(Socket) {
-    if (process.env.OPAL_PUBLIC_HOST) return process.env.OPAL_PUBLIC_HOST;
-    const Raw = (Socket && Socket.localAddress) || '127.0.0.1';
-    const Address = Raw.replace(/^::ffff:/, '');
-    if (Address === '127.0.0.1' || Address === '::1' || Address === '0.0.0.0' || Address === '::') {
-        return process.env.OPAL_RELAY_HOST || '127.0.0.1';
-    }
-    return Address;
+    return Settings.Network().PublicHost;
 }
 
 function UrlFor(Socket, Port, Path = '/') {

@@ -4,10 +4,11 @@
 
 const Fs = require('node:fs');
 const Path = require('node:path');
+const Settings = require('../../../Shared/Config');
 
 function SessionOptions() {
-    const Root = Path.resolve(__dirname, '../../../Granite/Server');
-    const Config = JSON.parse(Fs.readFileSync(Path.join(Root, 'Config.json'), 'utf8'));
+    const Root = Settings.GraniteRoot;
+    const Config = Settings.Read();
     return {
         Directory: Path.resolve(Root, process.env.GRANITE_SESSION_DIR || Config.SessionDirectory || 'Storage/Sessions'),
         RequireVerified: Config.RequireVerifiedIdentity === true || process.env.CELESTIAL_REQUIRE_VERIFIED_IDENTITY === '1',
