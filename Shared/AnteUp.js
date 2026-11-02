@@ -4,8 +4,8 @@
 'use strict';
 
 const Config = require('./AnteUp.json');
-if (Config.mode !== 'practice')
-    throw new Error('Ante-Up only supports practice economics; settlement is not implemented');
+if (!['practice', 'settlement'].includes(Config.mode))
+    throw new Error('Invalid Ante-Up economics mode');
 const Id = BigInt(Config.gamblingId);
 if (Id <= 0n || Id > 0xffffffffffffffffn) throw new Error('Invalid Ante-Up gamblingId');
 const Names = new Set(),
@@ -28,6 +28,7 @@ const Courts = Config.courts.map((C) => {
 });
 if (!Courts.length) throw new Error('Ante-Up needs a court price table');
 module.exports = Object.freeze({
+    EconomicsEnabled: Config.mode === 'settlement',
     GamblingId: Id,
     Courts: Object.freeze(Courts),
     ByName: (Name) => Courts.find((C) => C.name === Name),

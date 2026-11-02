@@ -16,7 +16,7 @@ These results cover only the verified scenarios. Other player counts/modes, repe
 ## Known Issues
 
 - **MyCOURT**: Friend joining and mutual visibility are broken; online gameplay and leaving behavior remain unverified.
-- **Ante-Up**: Starting 1v1 still unavailable. Queue progression and complete multiplayer matches are unverified. VC amounts are for practice display only, with no deductions or payouts.
+- **Ante-Up**: Starting 1v1 is still unavailable. Queue progression and complete multiplayer matches are unverified. Entry debits, 2x winner payouts with no house cut, and refunds for void/cancelled games are implemented but await in-game verification; static VC must be disabled.
 - **Facilities**: Game Room facilities and gym activities are unavailable. The moat area lacks Got Next spots, and trampoline courts have entry issues.
 - **Other content**: Unlisted modes are not guaranteed to work. This is not yet a complete replacement for official services.
 

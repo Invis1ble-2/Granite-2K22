@@ -1,15 +1,15 @@
 {
-    "mode": "practice",
+    "mode": "settlement",
     "gamblingId": "1",
-    "description": "Local test prices, not recovered retail prices. Practice mode does not debit or award VC.",
+    "description": "NBA 2K22 court prices verified in game. Entry debits the bet; winners receive 2x with no house cut; void games refund paid bets.",
     "courts": [
-        { "name": "GAMBLING_ONE_V_ONE", "index": 0, "entryVc": 500 },
+        { "name": "GAMBLING_ONE_V_ONE", "index": 0, "entryVc": 100 },
         { "name": "GAMBLING_THREE_V_THREE_1", "index": 2, "entryVc": 500 },
-        { "name": "GAMBLING_THREE_V_THREE_2", "index": 3, "entryVc": 500 },
-        { "name": "GAMBLING_THREE_V_THREE_3", "index": 4, "entryVc": 500 },
-        { "name": "GAMBLING_THREE_V_THREE_4", "index": 5, "entryVc": 500 },
-        { "name": "GAMBLING_THREE_V_THREE_5", "index": 6, "entryVc": 500 },
-        { "name": "GAMBLING_TWO_V_TWO_1", "index": 7, "entryVc": 500 },
-        { "name": "GAMBLING_TWO_V_TWO_2", "index": 8, "entryVc": 500 }
+        { "name": "GAMBLING_THREE_V_THREE_2", "index": 3, "entryVc": 10000 },
+        { "name": "GAMBLING_THREE_V_THREE_3", "index": 4, "entryVc": 5000 },
+        { "name": "GAMBLING_THREE_V_THREE_4", "index": 5, "entryVc": 1500 },
+        { "name": "GAMBLING_THREE_V_THREE_5", "index": 6, "entryVc": 2500 },
+        { "name": "GAMBLING_TWO_V_TWO_1", "index": 7, "entryVc": 1000 },
+        { "name": "GAMBLING_TWO_V_TWO_2", "index": 8, "entryVc": 2500 }
     ]
 }

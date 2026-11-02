@@ -839,7 +839,9 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
     const Previous = CourtTeams.get(Guid.toString());
     CourtTeams.set(Guid.toString(), Teams);
     try {
-        return Court.Build(Court.Entry, Profiles);
+        const Prepared = Court.Build(Court.Entry, Profiles);
+        require('./AnteUpEconomy').Start(Teams);
+        return Prepared;
     } catch (Failure) {
         if (Previous) CourtTeams.set(Guid.toString(), Previous);
         else CourtTeams.delete(Guid.toString());
@@ -856,7 +858,9 @@ function PrepareStageTeams(Name, Home, Away, Profiles) {
 }
 
 function ClearGameTeams(Activity, Name, Generation = '2K19') {
-    return CourtTeams.delete(GameCourt(Activity, Name, Generation).Guid.toString());
+    const Key = GameCourt(Activity, Name, Generation).Guid.toString();
+    require('./AnteUpEconomy').Cancel(CourtTeams.get(Key));
+    return CourtTeams.delete(Key);
 }
 
 function GameTeams(Activity, Name, Generation = '2K19') {

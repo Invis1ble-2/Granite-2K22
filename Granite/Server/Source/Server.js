@@ -22,6 +22,8 @@ const { PlayerCards2K22 } = require('./Storage/PlayerCards2K22');
 const { GameStats2K22 } = require('./Storage/GameStats2K22');
 const GatoradeStore = require('./Storage/GatoradeBoosts');
 const WalletStore = require('./Storage/Wallets');
+const AnteUpLedger = require('./Storage/AnteUpLedger');
+const { MatchRecords: AnteUpMatchRecords, DirectoryFor: AnteUpDirectory } = require('../../../Shared/AnteUpMatches');
 const Gatorade = require('./Services/MyCareer/Gatorade');
 const { CareerKey } = require('./Services/MyCareer/Attributes/Constants');
 const { CreateCelestialIdentity } = require('./Security/CelestialIdentity');
@@ -405,6 +407,7 @@ function CreateHandler(Config, Dependencies = {}) {
         );
     const WalletsFile = Config.WalletsFile || Path.resolve(__dirname, '../Storage/Inventory/Wallets.json');
     const Wallets = Dependencies.Wallets || WalletStore.Load(WalletsFile);
+    const AnteUpMatches = new AnteUpMatchRecords(AnteUpDirectory(Config, Path.resolve(__dirname, '..')));
     const VcPrices = Dependencies.VcPrices || new Map();
     const Purchases = Dependencies.Purchases || new Map();
     const OwnedItemsFile =
@@ -493,6 +496,7 @@ function CreateHandler(Config, Dependencies = {}) {
             AttributeProfiles,
             BuildProfiles: AttributeProfiles,
             Wallets,
+            AnteUpMatches,
             SaveWallets: Dependencies.SaveWallets || (() => {
                 if (!Dependencies.Wallets) WalletStore.Save(WalletsFile, Wallets);
             }),
@@ -539,6 +543,13 @@ function CreateHandler(Config, Dependencies = {}) {
                 if (!Dependencies.CareerGrind) SaveCareerGrind(CareerGrindFile, CareerGrind);
             },
         };
+        try {
+            AnteUpLedger.Reconcile(Context);
+        } catch (Failure) {
+            Logger.Error(`Ante-Up settlement unavailable: ${Failure.message}`);
+            Send(Res, Req, new Builder().AddU32(Names.Crc('RESULT'), Names.Crc('FAILURE')).Build(), Base);
+            return;
+        }
         if (!TargetQuery && (Route === 'attributes/get' || Route === 'mycareer/save'))
             PlayerCards.Observe(Context, Parsed?.Fields || []);
         // Discover only the authenticated control address; Opal owns online timing.

@@ -142,6 +142,7 @@ function Start({ port: Port = Number(process.env.OPAL_PORT) || 20054, Certificat
     Position.Start();
 
     Server.listen(Port, () => {
+        require('../Protocol/AnteUpEconomy').Recover();
         Log.Info(`opal listening on wss://0.0.0.0:${Port} @ ${Log.Clock()}`);
     });
 

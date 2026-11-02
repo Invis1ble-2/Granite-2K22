@@ -5,6 +5,7 @@
 
 const Fs = require('node:fs');
 const Path = require('node:path');
+const AnteUpLedger = require('./AnteUpLedger');
 const MaximumBalance = 0xffffffffffffffffn;
 let SaveSequence = 0;
 
@@ -44,6 +45,7 @@ function Load(File) {
         const Key = NormalizeKey(RawKey);
         Wallets.set(Key, NormalizeBalance(Value, Key));
     }
+    Wallets.AnteUp = AnteUpLedger.Validate(Raw.anteUp === undefined ? AnteUpLedger.Empty() : Raw.anteUp);
     return Wallets;
 }
 
@@ -54,7 +56,9 @@ function Save(File, Wallets) {
         const Key = NormalizeKey(RawKey);
         Accounts[Key] = NormalizeBalance(Value, Key).toString();
     }
-    const Document = `${JSON.stringify({ version: 1, accounts: Accounts }, null, 2)}\n`;
+    const State = { version: 1, accounts: Accounts };
+    if (Wallets.AnteUp !== undefined) State.anteUp = AnteUpLedger.Validate(Wallets.AnteUp);
+    const Document = `${JSON.stringify(State, null, 2)}\n`;
     Fs.mkdirSync(Path.dirname(File), { recursive: true });
     const Temporary = `${File}.${process.pid}.${Date.now()}.${++SaveSequence}.tmp`;
     try {

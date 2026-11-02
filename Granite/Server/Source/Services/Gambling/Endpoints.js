@@ -8,6 +8,8 @@ const { Builder, GetU64, GetFields, Types, DateToVCDate } = require('../../Codec
 const { Crc32 } = require('../../Core/Crc32');
 const Policy = require('../../../../../Shared/AnteUp');
 const Logger = require('../../Core/Logger');
+const AnteUpLedger = require('../../Storage/AnteUpLedger');
+const { BalanceFor } = require('../VirtualCurrency/Balance');
 
 const Result = Crc32('RESULT');
 const Success = Crc32('SUCCESS');
@@ -49,16 +51,16 @@ function BuildCurrentLimits() {
         Reply.AddU64(Crc32(`LIMIT_${I}`), BigInt(Policy.ByIndex(I)?.entryVc || 0));
     }
     Logger.Verbose(
-        `Ante-Up practice limits: id=${Policy.GamblingId}, ${Policy.LimitCount} court indices; no VC settlement`,
+        `Ante-Up limits: id=${Policy.GamblingId}, ${Policy.LimitCount} court indices; economics=${Policy.EconomicsEnabled ? '2x/no cut' : 'practice'}`,
     );
     return Reply.Build();
 }
 
-function BuildPlaceBet(Input) {
+function BuildPlaceBet(Input, Context = {}) {
     const Fields = Input?.Parsed?.Fields || [];
     const Index = GetU64(Fields, PlaceBetRequest.CourtIndex);
     const ContextId = GetU64(Fields, PlaceBetRequest.ContextId);
-    const Typed = [PlaceBetRequest.CourtIndex, PlaceBetRequest.ContextId].every((Crc) => {
+    const Typed = [PlaceBetRequest.CourtIndex, PlaceBetRequest.ContextId, PlaceBetRequest.Currency].every((Crc) => {
         const Records = GetFields(Fields, Crc);
         return Records.length === 1 && Records[0].Type === Types.U64;
     });
@@ -69,10 +71,19 @@ function BuildPlaceBet(Input) {
         );
         return new Builder().AddU32(Result, Crc32('FAILURE')).Build();
     }
-    Logger.Verbose(
-        `Ante-Up practice entry: ${Court.name}, index=${Index}, displayed price=${Court.entryVc}; VC unchanged`,
-    );
-    return new Builder()
+    if (Policy.EconomicsEnabled) {
+        try {
+            const Bet = AnteUpLedger.PlaceBet(Input, Context, Court, ContextId);
+            if (!Bet.Ok) return new Builder().AddU32(Result,
+                Bet.Result === 'INSUFFICIENT_FUNDS' ? 0xf4e7a9b4 : Crc32('FAILURE')).Build();
+        } catch (Failure) {
+            Logger.Error(`Ante-Up wager could not be saved: ${Failure.message}`);
+            return new Builder().AddU32(Result, Crc32('FAILURE')).Build();
+        }
+    } else {
+        Logger.Verbose(`Ante-Up practice entry: ${Court.name}, index=${Index}; VC unchanged`);
+    }
+    const Reply = new Builder()
         .AddU32(Result, Success)
         .AddU32(PlaceBetResponse.RollA, RollValues[0])
         .AddU32(PlaceBetResponse.RollB, RollValues[0])
@@ -80,8 +91,9 @@ function BuildPlaceBet(Input) {
         .AddU64(PlaceBetResponse.Value1080, 0n)
         .AddU64(PlaceBetResponse.Value1088, 0n)
         .AddU64(PlaceBetResponse.Value1096, 0n)
-        .AddU64(PlaceBetResponse.Value1120, 0n)
-        .Build();
+        .AddU64(PlaceBetResponse.Value1120, 0n);
+    if (Policy.EconomicsEnabled) Reply.AddU64(0xce7d633f, BalanceFor(Context));
+    return Reply.Build();
 }
 
 const Endpoints = Object.freeze({
@@ -147,7 +159,7 @@ function Build(Input, Context = {}) {
     const Route = String(Context.Route || '').toLowerCase();
     const Endpoint = Resolve(Route) || Endpoints.CurrentLimits;
     if (Endpoint.Id === Endpoints.CurrentLimits.Id) return BuildCurrentLimits();
-    if (Endpoint.Id === Endpoints.PlaceBet.Id) return BuildPlaceBet(Input);
+    if (Endpoint.Id === Endpoints.PlaceBet.Id) return BuildPlaceBet(Input, Context);
     return BuildIdaStub(Input, Context, Endpoint.Id, `NBA2K19 Gambling ${Endpoint.Route}`);
 }
 

@@ -798,6 +798,7 @@ function SendPostGameWarp(Player, Destination, FacingTarget) {
 function FinishPublicGame(Connection, Found, Game, WinnerSide, Reason) {
     if (!Game || Game.Ended || !Found || Found.Groups.length !== 2) return false;
     if (Game.NativeSolo || Game.NativePark) return require('./ParkCpu').Finish(Connection, Found, Game, Reason);
+    require('./AnteUpEconomy').Finish(Game, WinnerSide, Reason);
     Game.Ended = true;
     Game.Phase = 'ending';
     Game.WinnerSide = WinnerSide;
