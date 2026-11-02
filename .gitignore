@@ -18,3 +18,4 @@ __pycache__/
 AGENTS.md
 Granite/Module/NativePark.ini
 Opal/NativeParkControl.json
+.pi/

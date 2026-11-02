@@ -1,0 +1,16 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Granite Launcher",
+  "outputfilename": "Launcher",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "info": {
+    "companyName": "Celestial",
+    "productName": "Granite Launcher · NBA 2K22",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright (c) 2026 Celestial",
+    "comments": "Granite GUI Launcher for NBA 2K22"
+  }
+}
