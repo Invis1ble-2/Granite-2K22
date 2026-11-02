@@ -30,7 +30,6 @@ export namespace main {
 	    launcherDir: string;
 	    gamePath: string;
 	    gameOk: boolean;
-	    injectorOk: boolean;
 	    moduleOk: boolean;
 	    iniExists: boolean;
 	    gameRunning: boolean;
@@ -46,7 +45,6 @@ export namespace main {
 	        this.launcherDir = source["launcherDir"];
 	        this.gamePath = source["gamePath"];
 	        this.gameOk = source["gameOk"];
-	        this.injectorOk = source["injectorOk"];
 	        this.moduleOk = source["moduleOk"];
 	        this.iniExists = source["iniExists"];
 	        this.gameRunning = source["gameRunning"];

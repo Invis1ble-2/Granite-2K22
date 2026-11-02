@@ -134,7 +134,6 @@ func (a *App) fileStatusLocked() FileStatus {
 		LauncherDir: a.directory,
 		GamePath:    a.gamePath,
 		GameOk:      gameOk,
-		InjectorOk:  isRegularFile(filepath.Join(a.directory, "Injector.exe")),
 		ModuleOk:    isRegularFile(filepath.Join(a.directory, "Module.dll")),
 		IniExists:   isRegularFile(filepath.Join(a.directory, "Granite.ini")),
 		GameRunning: a.isGameRunningLocked(),

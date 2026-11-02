@@ -39,22 +39,16 @@ type ToggleDef struct {
 // Mirrors Granite/Module/ModuleConfig.h Load() definitions and defaults.
 var ModuleToggles = []ToggleDef{
 	{0, "features", "Features", "EnableCrashHandler", L("崩溃报告", "Crash Reports"), L("保存崩溃转储", "Save crash dumps"), true},
-	{1, "features", "Features", "EnablePriceWatchdog", L("属性价格同步", "Attribute Prices"), L("同步生涯属性价格", "Sync career prices"), true},
-	{2, "features", "Features", "EnableBadgeBudgets", L("徽章预算", "Badge Budgets"), L("同步生涯徽章预算", "Sync badge budgets"), true},
-	{3, "features", "Features", "EnableAnimationShopAll", L("全部商店动画", "All Shop Animations"), L("显示全部候选动画", "List all shop items"), true},
-	{4, "features", "Features", "EnableAnimationRequirementBypass", L("解除动画限制", "Bypass Requirements"), L("忽略身高与属性门槛", "Ignore stat & height gates"), true},
-	{5, "features", "Features", "EnableAnimationUnlockAll", L("免费装备动画", "Own All Animations"), L("无需购买直接装备", "Equip without buying"), false},
-	{6, "logging", "Logging", "EnableFileLogging", L("写入文件", "Log Files"), L("输出至 console logs", "Write to console logs"), true},
-	{7, "logging", "Logging", "EnableConsole", L("控制台窗口", "Console Window"), L("显示独立调试窗口", "Show debug console"), true},
-	{8, "logging", "Logging", "LogModule", L("模块", "Module"), L("", ""), false},
-	{9, "logging", "Logging", "LogHttp", L("HTTP", "HTTP"), L("", ""), true},
-	{10, "logging", "Logging", "LogNativePark", L("街区", "Neighborhood"), L("", ""), false},
-	{11, "logging", "Logging", "LogOnlineFrameRate", L("联机帧率", "Frame Rate"), L("", ""), false},
-	{12, "logging", "Logging", "LogCareerProgression", L("生涯成长", "Progression"), L("", ""), false},
-	{13, "logging", "Logging", "LogSoloPark", L("单人公园", "Solo Park"), L("", ""), false},
-	{14, "logging", "Logging", "LogAttributePrice", L("属性价格", "Prices"), L("", ""), false},
-	{15, "logging", "Logging", "LogBadgeBudget", L("徽章预算", "Badges"), L("", ""), false},
-	{16, "logging", "Logging", "LogAnimationUnlock", L("动画", "Animations"), L("", ""), false},
+	{1, "features", "Features", "EnableBadgeBudgets", L("徽章预算", "Badge Budgets"), L("同步生涯徽章预算", "Sync badge budgets"), true},
+	{2, "features", "Features", "EnableAnimationShopAll", L("全部商店动画", "All Animations in shop"), L("显示全部动画", "List all animations available"), true},
+	{3, "features", "Features", "EnableAnimationRequirementBypass", L("解除动画限制", "Bypass Requirements"), L("忽略身高与属性门槛", "Ignore attribute & height gates"), true},
+	{4, "features", "Features", "EnableAnimationUnlockAll", L("获得全动画", "Own All Animations"), L("无需购买直接装备", "Own without buying"), false},
+	{5, "logging", "Logging", "EnableFileLogging", L("写入日志文件", "Write Log Files"), L("输出至 console logs", "Write to console logs"), true},
+	{6, "logging", "Logging", "EnableConsole", L("控制台窗口", "Console Window"), L("显示独立调试窗口", "Show debug console"), true},
+	{7, "logging", "Logging", "LogModule", L("所有模块日志", "Module"), L("控制所有除了Http模块的输出日志", "Control output logs for all modules except Http"), false},
+	{8, "logging", "Logging", "LogHttp", L("HTTP日志", "HTTP"), L("记录 HTTP 请求和响应", "Log HTTP requests and responses"), true},
+	{9, "logging", "Logging", "LogOnlineFrameRate", L("联机帧率解锁日志", "Online Frame Rate Unlock"), L("记录联机帧率解锁相关信息", "Log online frame rate information"), false},
+	{10, "logging", "Logging", "LogSoloPark", L("单人公园日志", "Solo Park"), L("记录单人公园相关活动", "Log solo park activities"), false},
 }
 
 const (
@@ -100,7 +94,6 @@ type FileStatus struct {
 	LauncherDir string      `json:"launcherDir"`
 	GamePath    string      `json:"gamePath"`
 	GameOk      bool        `json:"gameOk"`
-	InjectorOk  bool        `json:"injectorOk"`
 	ModuleOk    bool        `json:"moduleOk"`
 	IniExists   bool        `json:"iniExists"`
 	GameRunning bool        `json:"gameRunning"`

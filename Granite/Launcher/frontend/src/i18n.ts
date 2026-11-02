@@ -58,8 +58,8 @@ export const UI_TEXT = {
 
   serverIpv4: bi('IP 地址', 'IP Address'),
   httpsPort: bi('端口', 'Port'),
-  useLocalhost: bi('本机', 'Local'),
-  useDefaultPort: bi('默认', '21000'),
+  useLocalhost: bi('使用默认本机地址', 'Use Localhost'),
+  useDefaultPort: bi('使用默认端口', 'Use Default Port'),
 
   save: bi('保存', 'Save'),
   revert: bi('撤销', 'Revert'),

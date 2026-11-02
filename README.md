@@ -54,12 +54,12 @@ ServerPort = 21000
 
 ### GUI 启动器
 
-将 `Launcher.exe`、配套 `Injector.exe`、`Module.dll` 和已有的 `Granite.ini` 放在同一目录，然后打开启动器：
+将 `Launcher.exe`、配套 `Module.dll` 和已有的 `Granite.ini` 放在同一目录，然后打开启动器。注入功能已内置，无需 `Injector.exe`：
 
 1. 在“开始游戏”中浏览选择 `NBA2K22.exe`，路径会保存到启动器旁的 `Path.txt`。仍兼容旧文件中的目录或可执行文件路径，以及 `Launcher.exe --game "绝对路径\NBA2K22.exe"`；指定路径只会预填界面，不自动启动游戏。
 2. 在“连接设置”中填写服务器 IPv4 和 HTTPS 端口，点击保存。只更新 `[Network]` 下的两个连接字段。
 3. 在“Module 设置”的“功能”“日志与输出”页调整开关并保存。设置项和默认值以 `Granite/Module/ModuleConfig.h` 的实际读取定义为准，当前为 6 个功能开关、11 个日志与输出开关，以及连接页的 2 个网络字段；不从 INI 模板推导设置列表。现有值仍按 Module 自身的规则从运行配置读取；只保存改动的开关，保留其他配置与注释，下次启动游戏生效。
-4. 点击“启动游戏”，界面会显示启动阶段；失败时自动展开日志，可复制错误详情。“模块注入完成”仅代表注入器成功返回，仍需自行确认进入街区和联机表现。
+4. 点击“启动游戏”，界面会显示启动阶段；失败时自动展开日志，可复制错误详情。“模块注入完成”仅代表 DLL 已成功加载，仍需自行确认进入街区和联机表现。
 5. 侧栏底部可即时切换浅色/深色主题及中文/English。首次跟随系统外观和界面语言，手动选择后按当前 Windows 用户记住偏好；切换不会丢弃未保存的设置，也不会改写 Module 配置。
 
 启动器仅支持 NBA 2K22，不管理服务端进程。首次使用请手动验收主题和语言切换、关闭重开后的偏好保留、路径保存与重开读取、连接和 Module 设置保存、玩家身份及游戏启动；界面缩放和游戏内效果也需实际确认。
@@ -68,11 +68,11 @@ ServerPort = 21000
 
 - `Granite/Server`：HTTPS 接口、登录、存档、商店与 VC。
 - `Opal`：街区、场景、排队与比赛 relay。
-- `Granite/Module`、`Granite/Injector`：客户端注入 DLL 与原生注入工具（C++）。
-- `Granite/Launcher`：基于 Wails v2（Go + React + TypeScript + WebView2）的轻量化 GUI 启动器。
+- `Granite/Module`：客户端注入 DLL（C++）。
+- `Granite/Launcher`：基于 Wails v2（Go + React + TypeScript + WebView2）的轻量化 GUI 启动器，内置 DLL 注入功能。
 - `Granite/Server/Storage`：运行数据；CDN 资源放入其 `Cdn` 子目录。
 
-编译原生模块与注入器（在 VS 开发者命令行执行）：
+编译原生模块（在 VS 开发者命令行执行）：
 
 ```bat
 msbuild Granite\Granite.sln -p:Configuration=Release -p:Platform=x64
@@ -82,10 +82,10 @@ msbuild Granite\Granite.sln -p:Configuration=Release -p:Platform=x64
 
 ```bat
 cd Granite\Launcher
-wails build -clean -trimpath -o ..\..\..\Build\Release\Launcher.exe
+wails build -clean -trimpath -platform windows/amd64 -o ..\..\..\Build\Release\Launcher.exe
 ```
 
-产物统一位于 `Granite/Build/Release`（包含 `Module.dll`、`Injector.exe` 与单文件 `Launcher.exe`）。客户端 Hook 仅适用于当前适配的 2K22 可执行文件，不保证兼容其他版本。
+产物统一位于 `Granite/Build/Release`（`Module.dll` 与内置注入功能的单文件 `Launcher.exe`），不再构建或分发独立 `Injector.exe`。客户端 Hook 仅适用于当前适配的 2K22 可执行文件，不保证兼容其他版本。
 
 ## 致谢与许可
 

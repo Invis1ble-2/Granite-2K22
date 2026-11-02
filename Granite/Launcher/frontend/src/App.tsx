@@ -7,7 +7,6 @@ import { Locale, LocalizedLike, pickText, UI_TEXT } from './i18n';
 import {
   CourtBlueprintSvg,
   IconArrowRight,
-  IconBolt,
   IconCheck,
   IconChevron,
   IconCopy,
@@ -490,7 +489,6 @@ export default function App() {
   };
 
   const gameOk = Boolean(files?.gameOk);
-  const injectorOk = Boolean(files?.injectorOk);
   const moduleOk = Boolean(files?.moduleOk);
   const iniExists = Boolean(files?.iniExists);
   const gameRunning = Boolean(files?.gameRunning);
@@ -498,7 +496,7 @@ export default function App() {
   const steamOk = Boolean(steam?.loggedIn);
   const steamInstalled = Boolean(steam?.installed);
   const steamRunning = Boolean(steam?.running);
-  const allFilesOk = gameOk && injectorOk && moduleOk;
+  const allFilesOk = gameOk && moduleOk;
   const canLaunch = !busy && !gameRunning && allFilesOk && steamOk;
   const featureDefs = useMemo(() => toggleDefs.filter((d) => d.category === 'features'), [toggleDefs]);
   const loggingDefs = useMemo(() => toggleDefs.filter((d) => d.category === 'logging'), [toggleDefs]);
@@ -749,18 +747,8 @@ export default function App() {
               </button>
             </section>
 
-            {/* 3-Column Hardware Status Pills */}
+            {/* Launch File Status */}
             <section className="hardware-row">
-              <div className={`card hw-chip ${injectorOk ? 'ok' : 'err'}`}>
-                <IconBolt className={`hw-icon ${injectorOk ? 'ok' : 'err'}`} />
-                <span className="hw-name">Injector.exe</span>
-                {injectorOk ? (
-                  <span className="hw-dot ok" />
-                ) : (
-                  <span className="hw-tag err">{t(UI_TEXT.fileMissing)}</span>
-                )}
-              </div>
-
               <div className={`card hw-chip ${moduleOk ? 'ok' : 'err'}`}>
                 <IconCpu className={`hw-icon ${moduleOk ? 'ok' : 'err'}`} />
                 <span className="hw-name">Module.dll</span>
@@ -1138,7 +1126,7 @@ export default function App() {
                       {outputLogDefs.map((def) => renderToggleCard(def, false))}
                     </div>
                   )}
-                  <div className="toggles-grid three-col">
+                  <div className={`toggles-grid ${channelLogDefs.length <= 4 ? 'two-col' : 'three-col'}`}>
                     {channelLogDefs.map((def) => renderToggleCard(def, true))}
                   </div>
                 </div>

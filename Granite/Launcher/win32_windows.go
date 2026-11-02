@@ -10,7 +10,6 @@ import (
 	"strings"
 	"syscall"
 	"unicode/utf16"
-	"unicode/utf8"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -25,12 +24,12 @@ var (
 	procWideCharToMultiByte      = modKernel32.NewProc("WideCharToMultiByte")
 	procReplaceFileW             = modKernel32.NewProc("ReplaceFileW")
 
-	modUser32                       = windows.NewLazySystemDLL("user32.dll")
-	procFindWindowExW               = modUser32.NewProc("FindWindowExW")
-	procGetWindowThreadProcessId    = modUser32.NewProc("GetWindowThreadProcessId")
-	procGetSystemMetrics            = modUser32.NewProc("GetSystemMetrics")
-	procLoadImageW                  = modUser32.NewProc("LoadImageW")
-	procSendMessageW                = modUser32.NewProc("SendMessageW")
+	modUser32                    = windows.NewLazySystemDLL("user32.dll")
+	procFindWindowExW            = modUser32.NewProc("FindWindowExW")
+	procGetWindowThreadProcessId = modUser32.NewProc("GetWindowThreadProcessId")
+	procGetSystemMetrics         = modUser32.NewProc("GetSystemMetrics")
+	procLoadImageW               = modUser32.NewProc("LoadImageW")
+	procSendMessageW             = modUser32.NewProc("SendMessageW")
 
 	modShell32         = windows.NewLazySystemDLL("shell32.dll")
 	procSHChangeNotify = modShell32.NewProc("SHChangeNotify")
@@ -176,21 +175,6 @@ func encodeACP(text string) ([]byte, bool) {
 		return nil, false
 	}
 	return out[:r2], true
-}
-
-func decodeInjectorOutput(line []byte) string {
-	if len(line) == 0 {
-		return ""
-	}
-	var s string
-	if utf8.Valid(line) {
-		s = string(line)
-	} else if acp, ok := decodeACP(line); ok {
-		s = acp
-	} else {
-		s = string(line)
-	}
-	return strings.TrimSuffix(s, "\r")
 }
 
 func atomicReplaceFile(targetPath string, content []byte, targetExists bool) error {

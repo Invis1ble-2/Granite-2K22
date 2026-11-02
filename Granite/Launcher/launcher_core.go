@@ -6,10 +6,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"io"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -25,10 +23,9 @@ const (
 	steamID64Base            uint64 = 76561197960265728
 	defaultGoldbergAccountID uint32 = 22202
 	nba2k22SteamAppID        string = "1644960"
-	injectorExitTargetExited = 26
-	steamRelaunchExitCode    = 53
-	win32StillActive         = 259
-	maxRelaunchHops          = 3
+	steamRelaunchExitCode           = 53
+	win32StillActive                = 259
+	maxRelaunchHops                 = 3
 )
 
 type launchSink func(isStage bool, text LocalizedText)
@@ -1145,98 +1142,6 @@ func waitForRelaunchedGame(gamePath string, seenPIDs map[uint32]bool, timeout ti
 	return 0, 0
 }
 
-func runInjector(directory string, pid uint32, sink launchSink) (int, *LocalizedText) {
-	injectorPath := filepath.Join(directory, "Injector.exe")
-	pidText := strconv.FormatUint(uint64(pid), 10)
-
-	cmd := exec.Command(injectorPath, pidText)
-	cmd.Dir = directory
-	cmd.SysProcAttr = &windows.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.CREATE_NO_WINDOW,
-	}
-
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		detail := describeWindowsError(err)
-		msg := LiteralText(detail)
-		return -1, &msg
-	}
-	cmd.Stdout = pw
-	cmd.Stderr = pw
-
-	if err := cmd.Start(); err != nil {
-		_ = pw.Close()
-		_ = pr.Close()
-		detail := describeWindowsError(err)
-		msg := L("无法启动注入器："+detail, "Could not start the injector: "+detail)
-		return -1, &msg
-	}
-	_ = pw.Close()
-
-	sink(false, L("[注入器] 已启动，目标 PID："+pidText, "[Injector] Started for game PID: "+pidText))
-
-	var pending []byte
-	buf := make([]byte, 4096)
-	var pipeErr *LocalizedText
-	for {
-		n, readErr := pr.Read(buf)
-		if n > 0 {
-			pending = append(pending, buf[:n]...)
-			for {
-				idx := bytes.IndexByte(pending, '\n')
-				if idx < 0 {
-					break
-				}
-				line := decodeInjectorOutput(pending[:idx])
-				sink(false, LiteralText(line))
-				pending = pending[idx+1:]
-			}
-		}
-		if readErr != nil {
-			if readErr != io.EOF {
-				detail := describeWindowsError(readErr)
-				m := L("读取注入器输出失败："+detail, "Could not read injector output: "+detail)
-				pipeErr = &m
-			}
-			break
-		}
-	}
-	if len(pending) > 0 {
-		sink(false, LiteralText(decodeInjectorOutput(pending)))
-	}
-	_ = pr.Close()
-
-	waitErr := cmd.Wait()
-	exitCode := 0
-	if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	} else if waitErr != nil {
-		detail := describeWindowsError(waitErr)
-		msg := L("无法取得注入器返回结果："+detail, "Could not get the injector result: "+detail)
-		return -1, &msg
-	}
-
-	codeStr := strconv.Itoa(exitCode)
-	if exitCode == injectorExitTargetExited {
-		sink(false, L(
-			"[注入器] 目标进程在原生代码就绪前退出（退出码 26）。",
-			"[Injector] Target process exited before native code was ready (exit code 26).",
-		))
-	} else {
-		sink(false, L("[注入器] 退出码："+codeStr, "[Injector] Exit code: "+codeStr))
-	}
-
-	if exitCode != 0 {
-		msg := L(
-			"模块注入失败，注入器退出码："+codeStr+"。请展开日志查看原因。",
-			"Module injection failed. Injector exit code: "+codeStr+". Expand the log for details.",
-		)
-		return exitCode, &msg
-	}
-	return 0, pipeErr
-}
-
 func startGameProcess(gamePath string) (windows.Handle, uint32, error) {
 	appPtr, err := windows.UTF16PtrFromString(gamePath)
 	if err != nil {
@@ -1279,13 +1184,11 @@ func launchGame(gamePath, directory string, sink launchSink) (windows.Handle, bo
 	if !strings.EqualFold(filepath.Base(gamePath), "NBA2K22.exe") || !isRegularFile(gamePath) {
 		return 0, false, L("请选择有效的 NBA2K22.exe。", "Select a valid NBA2K22.exe.")
 	}
-	for _, req := range []string{"Injector.exe", "Module.dll"} {
-		if !isRegularFile(filepath.Join(directory, req)) {
-			return 0, false, L(
-				"启动器目录缺少 "+req+"。请将配套文件放在 Launcher.exe 旁。",
-				"Missing "+req+". Place the matching files beside Launcher.exe.",
-			)
-		}
+	if !isRegularFile(filepath.Join(directory, "Module.dll")) {
+		return 0, false, L(
+			"启动器目录缺少 Module.dll。请将配套文件放在 Launcher.exe 旁。",
+			"Missing Module.dll. Place the matching file beside Launcher.exe.",
+		)
 	}
 	steam := probeLiveSteamStatus(nil)
 	if !steam.LoggedIn {
