@@ -55,11 +55,51 @@ function BuildGameDelivery(Command, RawPayload) {
     return Frame.Build(0x9e3471ed, null, Body, Frame.InnerHeader.Object);
 }
 
+function PublishCourtReplay(Connection, Bytes, RawPayload) {
+    if (Connection.Closed || Connection.TravelHandoff || !Connection.GotNext?.Playing ||
+        Connection.GotNext.Court == null || !['neighborhood', 'cages'].includes(Connection.ActivityName)) return 0;
+    const PlayerBody = require('./PlayerBody');
+    if (PlayerBody.GenerationForConnection(Connection) !== '2K22') return 0;
+    const Group = require('./GotNext').GroupFor(Connection, Connection.GotNext.Court);
+    if (!Group) return 0;
+    const CourtData = require('./CourtData');
+    const PacketId = CourtData.ReplayPacketIdFor(Connection.ActivityName, Group.CourtName);
+    if (PacketId === undefined) return 0;
+    const Game = CourtData.GameTeams(Connection.ActivityName, Group.CourtName, '2K22');
+    if (!Game?.GameReady || Game.Ended) return 0;
+    const Participants = [...Game.Home, ...Game.Away];
+    if (!Participants.includes(Connection.Puid)) return 0;
+
+    if (RawPayload === null) {
+        const Payload = Read(Bytes);
+        if (!Payload || Payload.Command !== ReplayCommand) return 0;
+        try {
+            RawPayload = Zlib.inflateSync(Payload.Blob, { maxOutputLength: 0xffff });
+        } catch (_) {
+            return 0;
+        }
+    }
+    if (!Buffer.isBuffer(RawPayload) || RawPayload.length <= 4 || RawPayload.length > 0xffff ||
+        RawPayload.readUInt16LE(0) !== RawPayload.length || RawPayload[2] !== PacketId) return 0;
+
+    // 1410BF930 supplies the complete replay record. SERVER+160 consumes its raw
+    // body; FieldList storage is internal to the client, not another wire wrapper.
+    const Delivery = Frame.Build(0x7433cf29, null, RawPayload, Frame.InnerHeader.None);
+    let Sent = 0;
+    for (const Peer of Roster.Peers(Connection)) {
+        if (Peer.ActivityName !== Connection.ActivityName ||
+            PlayerBody.GenerationForConnection(Peer) !== '2K22' || Participants.includes(Peer.Puid)) continue;
+        if (Peer.SendObject(Delivery)) Sent++;
+    }
+    return Sent;
+}
+
 function RelayGameCommand(Connection, Bytes, Command, RawPayload = null) {
     const Peers = GamePeers(Connection);
     const Delivery = RawPayload ? BuildGameDelivery(Command, RawPayload) : Bytes;
     let Sent = 0;
     for (const Peer of Peers) if (Peer.SendObject(Delivery)) Sent++;
+    const Published = Command >>> 0 === ReplayCommand ? PublishCourtReplay(Connection, Bytes, RawPayload) : 0;
     const Count = Connection.CompressedCommands?.get(Command >>> 0) || 0;
     if (Count === 1 && Sent) {
         Log.Info(
@@ -72,7 +112,7 @@ function RelayGameCommand(Connection, Bytes, Command, RawPayload = null) {
                 `${Connection.Identifier} to ${Sent} active-court peer(s)`,
         );
     }
-    return Sent;
+    return Sent + Published;
 }
 
 function Read(Bytes) {

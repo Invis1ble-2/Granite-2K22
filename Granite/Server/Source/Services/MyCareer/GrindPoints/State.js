@@ -3,7 +3,7 @@
 
 'use strict';
 
-const { GetU64, GetField } = require('../../../Codec/FieldList');
+const { GetU64, GetField, Types } = require('../../../Codec/FieldList');
 const { CareerKey } = require('../Attributes/Constants');
 const { MaxTotal, MaxCounter, Clamp } = require('../../../Storage/CareerGrind');
 
@@ -15,6 +15,7 @@ const Fields = Object.freeze({
     ClientTotal: 0x479bb1dc,
     CounterIncrement: 0xe52096da,
     Counter: 0xff44548c,
+    OverallPoints: 0x7d6fd245,
     Flag: 0x3a6ad728,
     Session: 0x36be118e,
     Badge: 0x3073a024,
@@ -28,6 +29,7 @@ const Fields2K22 = Object.freeze({
     GrindPoints: 0x9479e41f,
     RawPoints: 0x447e70ad,
     ClientTotal: 0xc015fb98,
+    ClientOverallPoints: 0x2c8f64c2,
 });
 
 function RequestFields(FieldValues) {
@@ -41,6 +43,11 @@ function NumberOf(FieldValues, Crc) {
     if (!Field) return null;
     const Value = GetU64(FieldValues, Crc);
     return Number(BigInt.asIntN(64, Value));
+}
+
+function OverallPointsOf(FieldValues) {
+    const Field = GetField(FieldValues, Fields2K22.ClientOverallPoints, 0, Types.F32);
+    return Field && Number.isFinite(Field.value) ? Math.fround(Field.value) : null;
 }
 
 // Runtime threshold observed for level 20 in NBA2K22.exe.unpacked.exe.
@@ -57,13 +64,13 @@ function StateFor(Context = {}) {
     let Stored = Context.CareerGrind.get(Key) || null;
     const Minimum = MinimumTotalFor(Context);
     if (Minimum && (!Stored || Stored.total < Minimum)) {
-        Stored = { total: Minimum, counter: Stored?.counter ?? 0 };
+        Stored = { ...Stored, total: Minimum, counter: Stored?.counter ?? 0 };
         Context.CareerGrind.set(Key, Stored);
         if (typeof Context.SaveCareerGrind === 'function') Context.SaveCareerGrind();
     }
     const Forced = Number(Context.ForcedGrindPoints ?? process.env.GRANITE_FORCED_GRIND_POINTS);
     if (Number.isSafeInteger(Forced) && Forced >= 0) {
-        return { total: Clamp(Math.max(Forced, Minimum), 0, MaxTotal), counter: Stored?.counter ?? 0 };
+        return { ...Stored, total: Clamp(Math.max(Forced, Minimum), 0, MaxTotal), counter: Stored?.counter ?? 0 };
     }
     return Stored;
 }
@@ -87,9 +94,13 @@ function Apply(FieldValues, Context = {}) {
         MaxTotal,
     );
     const Counter = Clamp((Previous ? Previous.counter : 0) + Increment, 0, MaxCounter);
-    const Next = { total: Total, counter: Counter };
+    const Next = { ...Previous, total: Total, counter: Counter };
+    // 2K22 reports the cumulative total after its local update, including any
+    // adjustment. Store it directly; adding the separate delta would count it twice.
+    const OverallPoints = OverallPointsOf(FieldValues);
+    if (OverallPoints !== null) Next.overallPoints = OverallPoints;
     Context.CareerGrind.set(Key, Next);
     return { key: Key, Previous, next: Next, Added, Increment };
 }
 
-module.exports = { Fields, Fields2K22, RequestFields, StateFor, apply: Apply, NumberOf, MaxProgressionPoints };
+module.exports = { Fields, Fields2K22, RequestFields, StateFor, apply: Apply, NumberOf, OverallPointsOf, MaxProgressionPoints };

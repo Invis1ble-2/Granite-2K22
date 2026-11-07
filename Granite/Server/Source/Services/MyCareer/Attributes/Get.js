@@ -98,6 +98,8 @@ function Build(Input, Context = {}) {
             GrindPoints.Fields.Counter,
             BigInt(Grind.counter),
         );
+        if (Number.isFinite(Grind.overallPoints))
+            Reply.AddF32(GrindPoints.Fields.OverallPoints, Grind.overallPoints);
     }
     BadgeReport.Accept(Input, Context);
     Badges.Append(Reply, Context);

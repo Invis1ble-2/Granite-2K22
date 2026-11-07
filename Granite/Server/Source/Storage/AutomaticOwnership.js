@@ -6,6 +6,7 @@
 const { LoadFile } = require('./StoreCatalog2K22');
 const { OwnedKey, ListOwnedItems } = require('./OwnedItems');
 const { ProductFor: GatoradeProduct } = require('./GatoradeBoosts');
+const ShotFeedback = require('./ShotFeedback2K22');
 
 // Explicit permanent categories only: never grant consumable or unknown categories.
 const PermanentGroups = Object.freeze([
@@ -17,18 +18,20 @@ const PermanentGroups = Object.freeze([
 function LoadAutomaticItems(Source) {
     const Catalog = typeof Source === 'string' ? LoadFile(Source) : Source;
     if (!Catalog?.groupItems) throw new Error('automatic ownership requires a loaded 2K22 store catalog');
+    const Items = PermanentGroups.flatMap(Group =>
+        (Catalog.groupItems[Group] || []).map(Entry => Entry.item_id));
+    // These EXE-backed items have no storefront thumbnails and are excluded
+    // from the local shop catalog, but still unlock through native ownership.
+    Items.push(...ShotFeedback.ItemIds);
     const Unique = new Map();
-    for (const Group of PermanentGroups) {
-        for (const Entry of Catalog.groupItems[Group] || []) {
-            const Item = Entry.item_id;
-            if (GatoradeProduct(Item)) continue;
-            Unique.set(Item, {
-                item: `0x${Item.toString(16).toUpperCase().padStart(8, '0')}`,
-                purchaseType: null,
-                price: '0',
-                at: new Date(0).toISOString(),
-            });
-        }
+    for (const Item of Items) {
+        if (GatoradeProduct(Item)) continue;
+        Unique.set(Item, {
+            item: `0x${Item.toString(16).toUpperCase().padStart(8, '0')}`,
+            purchaseType: null,
+            price: '0',
+            at: new Date(0).toISOString(),
+        });
     }
     return [...Unique.values()];
 }

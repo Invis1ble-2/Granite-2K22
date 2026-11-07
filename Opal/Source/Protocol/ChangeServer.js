@@ -83,7 +83,7 @@ function BuildSpectator(Args) {
 }
 
 function HostFor(Socket) {
-    return Settings.Network().PublicHost;
+    return Settings.PublicHostFor(Socket);
 }
 
 function UrlFor(Socket, Port, Path = '/') {

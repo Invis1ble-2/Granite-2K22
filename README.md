@@ -32,18 +32,20 @@
 | 生涯快速解锁 | `InstantMaxProgression` / `InstantMaxBadges` 默认开启，解锁成长进度与徽章进度 |
 | 固定 VC | 新钱包初始为 `888888` VC；默认正常扣款，`VirtualCurrencyStatic=true` 可固定余额。 |
 
-客户端配置位于 `Module.dll` 同目录的 `Granite.ini`，下次启动游戏生效；Granite、Opal 与 `StartServers.bat` 共用项目根目录的 `Config.json`，原来的两份服务端配置已合并。
+客户端配置位于 `Module.dll` 同目录的 `Granite.ini`，下次启动游戏生效；服务端配置位于项目根目录的 `Config.json`，按 `Shared`（两端共用）、`Granite`（HTTPS 与业务）、`Opal`（街区与 relay）分组，`StartServers.bat` 也读取此文件。
 
 | 配置字段 | 用途 / 当前值 |
 | --- | --- |
-| `PublicHost` | 两端统一对外 IPv4；本机填 `127.0.0.1`，联机填服务器虚拟网卡 IPv4。 |
-| `Host` / `RelayBind` | Granite HTTPS / Opal UDP relay 的监听地址，默认均为 `0.0.0.0`。 |
-| `Port` / `WorldPort` / `RelayPort` | Granite HTTPS / Opal WSS / UDP relay 端口，当前为 `21000` / `20054` / `28091`。 |
-| `LockstepBufferFrames` | 登录参数和 relay 共用的缓冲帧数，当前为 `6`，允许 `1..49`；无需再分别配置两端。 |
-| `OnlineFrameRate.FrameRate` | 联机帧率，当前为 `120`，支持 `60` 或 `120`。 |
-| `ParkCpu` | 人机补位开关、适用人数及总评设置，保留原 Opal 字段。 |
+| `Shared.PublicHost` | 两端统一对外 IPv4；联机填服务器虚拟网卡 IPv4，通过 `127.0.0.1` 连接的本机客户端自动使用回环地址。 |
+| `Granite.Host` / `Opal.RelayBind` | Granite HTTPS / Opal UDP relay 的监听地址，默认均为 `0.0.0.0`。 |
+| `Granite.Port` / `Opal.WorldPort` / `Opal.RelayPort` | Granite HTTPS / Opal WSS / UDP relay 端口，当前为 `21000` / `20054` / `28091`。 |
+| `Shared.LockstepBufferFrames` | 登录参数和 relay 共用的缓冲帧数，当前为 `6`，允许 `1..49`；无需再分别配置两端。 |
+| `Shared.OnlineFrameRate.FrameRate` | 联机帧率，当前为 `120`，支持 `60` 或 `120`。 |
+| `Shared.ContentSeason` | 两端共用的内容赛季，支持整数 `1..9`。 |
+| `Shared.CertificateDirectory` / `Shared.SessionDirectory` | 两端共用的证书和登录会话目录。 |
+| `Opal.ParkCpu` | 人机补位开关、适用人数及总评设置。 |
 
-`Storage/...` 等存储相对路径仍以 `Granite/Server` 为基准。修改网络或同步参数后需重启两端；通过脚本或分别执行 `node Granite/Server/Server.js`、`node Opal/Opal.js` 均读取同一配置。原有端口、监听地址及缓冲帧数环境变量仍可覆盖配置；若同时设置两端缓冲帧数变量，其值必须一致。对外地址统一以 `PublicHost` 为准。
+Granite 的存档、商店、VC、快速解锁及日志配置放在 `Granite` 分组。`Storage/...` 等存储相对路径仍以 `Granite/Server` 为基准。修改网络或同步参数后需重启两端；通过脚本或分别执行 `node Granite/Server/Server.js`、`node Opal/Opal.js` 均读取同一配置。原有端口、监听地址及缓冲帧数环境变量仍可覆盖配置；若同时设置两端缓冲帧数变量，其值必须一致。远程连接使用 `Shared.PublicHost`，回环连接的街区、换服和 relay 地址自动使用 `127.0.0.1`。
 
 Opal 默认仅输出错误日志，正常连接、球场发布和比赛状态不刷屏。需要排查时可在根目录执行 `node Opal/Opal.js --verbose`，查看保留的调试信息；lockstep 周期汇总和 ParkCpu 成功阶段日志已移除。
 
@@ -51,7 +53,7 @@ Opal 默认仅输出错误日志，正常连接、球场发布和比赛状态不
 
 环境：Windows 10/11（自带 Edge WebView2 运行时）、Node.js 18.20.8+；编译原生模块需 Visual Studio 2022 的 C++ 桌面开发组件，编译 GUI 启动器需 Go 1.22+ 与 Wails v2 CLI。
 
-1. 本机使用时，将根目录 `Config.json` 的 `PublicHost` 设为 `127.0.0.1`；虚拟局域网联机则设为服务器虚拟网卡 IPv4。`Host` 保持 `0.0.0.0`。
+1. 将根目录 `Config.json` 的 `Shared.PublicHost` 设为服务器虚拟网卡 IPv4；仅本机使用时也可填 `127.0.0.1`。`Granite.Host` 和 `Opal.RelayBind` 保持 `0.0.0.0`，以同时接受本机和远程连接。
 2. 运行 `StartServers.bat`，统一启动 Granite 与 Opal，并同步对外地址。
 3. 每台客户端使用配套 `Module.dll`，修改其同目录 `Granite.ini` 的以下字段，保留其他已有设置：
 
@@ -61,7 +63,7 @@ ServerHost = 127.0.0.1
 ServerPort = 21000
 ```
 
-联机时将 `ServerHost` 改为服务器虚拟网卡 IPv4（不含协议或端口），所有玩家加入同一虚拟局域网且使用不同玩家 ID。仅服务器电脑运行服务端；防火墙放行 TCP `21000`、TCP `20054`、UDP `28091`，自定义端口时对应调整。
+远程客户端将 `ServerHost` 改为服务器虚拟网卡 IPv4（不含协议或端口）；服务器本机客户端可继续填 `127.0.0.1`，无需切换 `Shared.PublicHost`。所有远程玩家加入同一虚拟局域网，所有玩家使用不同玩家 ID。仅服务器电脑运行服务端；防火墙放行 TCP `21000`、TCP `20054`、UDP `28091`，自定义端口时对应调整。
 
 配置地址不代表联机已验收，请自行验证互见、切场景、开赛、结束及退出重进。
 

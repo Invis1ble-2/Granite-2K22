@@ -113,6 +113,8 @@ class Connection {
             );
             return false;
         }
+        if (require('./PlayerBody').GenerationForConnection(this) === '2K22')
+            Payload = require('./CourtLayout2K22').ForSocket(Payload, this.Socket);
         return this.Send(Payload);
     }
 
@@ -445,7 +447,7 @@ function RefreshRosterForActivity(Activity, Reason = 'roster changed', Exclude =
     );
     let Sent = 0;
     for (const Peer of Recipients) {
-        const Reply = Activities.BuildInit(Activity, RosterData, Peer.MachineId, RelayTokenFor(Peer));
+        const Reply = Activities.BuildInit(Activity, RosterData, Peer.MachineId, RelayTokenFor(Peer), Peer.Socket);
         if (!Peer.Send(Reply)) continue;
         Sent++;
         Log.Verbose(
@@ -648,7 +650,7 @@ function OnConnect(Client, FrameData, Bytes) {
     Roster.Add(Client);
 
     const RosterData = EntriesWithUserdata(Client.ActivityKey, Client.RoomScope);
-    const Reply = Activities.BuildInit(Activity, RosterData, Client.MachineId, RelayTokenFor(Client));
+    const Reply = Activities.BuildInit(Activity, RosterData, Client.MachineId, RelayTokenFor(Client), Client.Socket);
     if (!Client.Send(Reply)) {
         Log.Error(`init reply to ${Client.Identifier} could not be written.`);
         return;

@@ -1,37 +1,43 @@
 {
-    "Port": 21000,
-    "Host": "0.0.0.0",
-    "PublicHost": "172.19.163.2",
-    "WorldPort": 20054,
-    "RelayPort": 28091,
-    "RelaySessionPort": 9768,
-    "RelayBind": "0.0.0.0",
-    "LockstepBufferFrames": 6,
-    "ContentSeason": 3,
-    "OnlineFrameRate": {
-        "FrameRate": 120
+    "Shared": {
+        "PublicHost": "172.19.163.2",
+        "ContentSeason": 2,
+        "LockstepBufferFrames": 6,
+        "OnlineFrameRate": {
+            "FrameRate": 120
+        },
+        "CertificateDirectory": "Storage/Certificate",
+        "SessionDirectory": "Storage/Sessions"
     },
-    "ParkCpu": {
-        "Enabled": true,
-        "TwoOnTwo": true,
-        "ThreeOnThree": true,
-        "CpuOverallMode": "random",
-        "CpuFixedOverall": 99
+    "Granite": {
+        "Host": "0.0.0.0",
+        "Port": 21000,
+        "RelaySessionPort": 9768,
+        "CaptureDirectory": "Storage/Captures/Http",
+        "UserContentDirectory": "Storage/UserContent",
+        "OwnedItemsFile": "Storage/Inventory/OwnedItems.json",
+        "WalletsFile": "Storage/Inventory/Wallets.json",
+        "AutomaticOwnership": true,
+        "AttributeProfiles": "Storage/Career/AttributeProfiles.json",
+        "VirtualCurrencyStatic": false,
+        "InstantMaxProgression": true,
+        "InstantMaxBadges": true,
+        "CdnDirectory": "Storage/Cdn",
+        "NBA2K22StoreCatalog": "Storage/Inventory/StoreCatalog2K22.json",
+        "EndpointTable": "Storage/Session/Login/Endpoints2K19.json",
+        "MaximumBodyBytes": 67108864,
+        "Verbose": false
     },
-    "CertificateDirectory": "Storage/Certificate",
-    "CaptureDirectory": "Storage/Captures/Http",
-    "UserContentDirectory": "Storage/UserContent",
-    "SessionDirectory": "Storage/Sessions",
-    "OwnedItemsFile": "Storage/Inventory/OwnedItems.json",
-    "WalletsFile": "Storage/Inventory/Wallets.json",
-    "AutomaticOwnership": true,
-    "AttributeProfiles": "Storage/Career/AttributeProfiles.json",
-    "VirtualCurrencyStatic": false,
-    "InstantMaxProgression": true,
-    "InstantMaxBadges": true,
-    "CdnDirectory": "Storage/Cdn",
-    "NBA2K22StoreCatalog": "Storage/Inventory/StoreCatalog2K22.json",
-    "EndpointTable": "Storage/Session/Login/Endpoints2K19.json",
-    "MaximumBodyBytes": 67108864,
-    "Verbose": false
+    "Opal": {
+        "WorldPort": 20054,
+        "RelayPort": 28091,
+        "RelayBind": "0.0.0.0",
+        "ParkCpu": {
+            "Enabled": true,
+            "TwoOnTwo": true,
+            "ThreeOnThree": true,
+            "CpuOverallMode": "random",
+            "CpuFixedOverall": 99
+        }
+    }
 }

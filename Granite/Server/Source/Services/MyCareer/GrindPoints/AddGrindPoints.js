@@ -22,11 +22,17 @@ function Build(Input, Context = {}) {
     AppendAttributeRows(Reply, Context);
     const StateData = Applied
         ? State.StateFor(Context)
-        : { total: Math.max(0, State.NumberOf(Fields, RequestFields.ClientTotal) ?? 0), counter: 0 };
+        : {
+            total: Math.max(0, State.NumberOf(Fields, RequestFields.ClientTotal) ?? 0),
+            counter: 0,
+            overallPoints: State.OverallPointsOf(Fields),
+        };
     Reply.AddU64(State.Fields.GrindPoints, BigInt(StateData.total)).AddU64(
         State.Fields.Counter,
         BigInt(StateData.counter),
     );
+    if (Number.isFinite(StateData.overallPoints))
+        Reply.AddF32(State.Fields.OverallPoints, StateData.overallPoints);
     if (Applied) {
         Logger.Info(
             `grind points for ${Applied.key}: +${Applied.Added} -> ${StateData.total} ` +

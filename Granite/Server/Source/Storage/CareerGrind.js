@@ -23,7 +23,10 @@ function LoadCareerGrind(File) {
                 const Total = Number(Value.total);
                 const Counter = Number(Value.counter);
                 if (!Number.isInteger(Total) || !Number.isInteger(Counter)) continue;
-                Grind.set(String(Key), { total: Clamp(Total, 0, MaxTotal), counter: Clamp(Counter, 0, MaxCounter) });
+                const State = { total: Clamp(Total, 0, MaxTotal), counter: Clamp(Counter, 0, MaxCounter) };
+                const OverallPoints = Number.isFinite(Value.overallPoints) ? Math.fround(Value.overallPoints) : NaN;
+                if (Number.isFinite(OverallPoints)) State.overallPoints = OverallPoints;
+                Grind.set(String(Key), State);
             }
         }
     } catch (Failure) {

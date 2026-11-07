@@ -11,7 +11,7 @@
 
 namespace ParkCpu
 {
-inline constexpr uint32_t ModuleVersion = 0x00010227;
+inline constexpr uint32_t ModuleVersion = 0x00010228;
 inline constexpr uint64_t CpuMask = 0xfffff00000000000ULL, CpuPrefix = 0x0222c00000000000ULL;
 inline constexpr uint32_t MaxTemplates = 72, MaxLeaseMs = 8000;
 inline constexpr unsigned MaxPlayers = 10;
@@ -1132,7 +1132,7 @@ inline std::string BuildReceipt(const char* Error = nullptr, bool Started = fals
     if (Error && GenerationError.empty()) GenerationError = Error;
     ReceiptStarted |= Started;
     std::ostringstream Text;
-    Text << "{\"version\":6,\"module\":\"00010227\",\"installed\":" <<
+    Text << "{\"version\":6,\"module\":\"00010228\",\"installed\":" <<
         (Profile::Ready && Multiplayer::OnlineHookReady ? "true" : "false") << ",\"pid\":" << GetCurrentProcessId()
          << ",\"match\":\"" << std::hex << Current.Match << "\",\"teamSize\":" << std::dec << Current.TeamSize
          << ",\"cpuCount\":" << Current.CpuCount << ",\"created\":[";
@@ -1667,14 +1667,163 @@ inline uint64_t __fastcall Playing(void* Session)
     SetLastError(Error); return Result;
 }
 
+#include "CpuWardrobeCatalog.h"
+
+namespace Wardrobe
+{
+using RandomClothesFn = void(__fastcall*)(void*);
+inline RandomClothesFn OriginalClothes = nullptr;
+struct Item
+{
+    uint64_t Unknown;
+    uint32_t Name, Style, Category, Padding;
+};
+static_assert(sizeof(Item) == 0x18);
+using PredicateFn = int(__fastcall*)(uint32_t);
+using NameFn = const char*(__fastcall*)(uint32_t);
+using SetSlotFn = void(__fastcall*)(void*, int, const void*, int);
+using CopyNameFn = bool(__fastcall*)(void*, const char*, int, int);
+
+inline bool Purchasable(uint32_t Hash)
+{
+    return std::binary_search(std::begin(CpuWardrobeCatalog::Clothing),
+        std::end(CpuWardrobeCatalog::Clothing), Hash);
+}
+inline uint32_t Random()
+{
+    auto* Rng = *reinterpret_cast<void**>(ExeBase + 0x67c4138);
+    const auto Vtable = *static_cast<void***>(Rng);
+    return reinterpret_cast<uint32_t(__fastcall*)(void*)>(Vtable[0x70 / 8])(Rng);
+}
+inline std::vector<Item> Candidates(void* Server)
+{
+    // FUN_14161A920: pool owner +0x18 count, +0x20 array of 24-byte records.
+    void* Owner = nullptr; void* Rows = nullptr; int Count = 0, Excluded = 0, Type = 0;
+    if (!Read(ExeBase + 0x665db78, &Owner, sizeof(Owner)) ||
+        !At(Owner, 0x18, Count) || Count <= 0 || Count > 100000 || !At(Owner, 0x20, Rows)) return {};
+    std::vector<Item> Items(static_cast<size_t>(Count));
+    if (!Read(Rows, Items.data(), Items.size() * sizeof(Item)) ||
+        !Read(ExeBase + 0x665db98, &Excluded, sizeof(Excluded)) || !At(Server, 0xf8, Type)) return {};
+    const auto Eligible = reinterpret_cast<PredicateFn>(ExeBase + 0x175b760);
+    const auto EligibleOnline = reinterpret_cast<PredicateFn>(ExeBase + 0x175b100);
+    std::vector<Item> Result;
+    for (int I = 0; I < Count; ++I)
+    {
+        const auto& Entry = Items[I];
+        if ((Excluded && I == Excluded) || !Purchasable(Entry.Name) || !Eligible(Entry.Style) ||
+            (Type == 6 && !EligibleOnline(Entry.Name))) continue;
+        Result.push_back(Entry);
+    }
+    return Result;
+}
+inline void Remove(void* Server, unsigned Slot, unsigned Count)
+{
+    const auto SetSlot = reinterpret_cast<SetSlotFn>(ExeBase + 0x16ea210);
+    for (unsigned I = Slot; I + 1 < Count; ++I)
+    {
+        void* Next = nullptr;
+        At(Server, 0x1dd0 + (I + 1) * 8, Next);
+        SetSlot(Server, static_cast<int>(I), Next, 0x118);
+    }
+    SetSlot(Server, static_cast<int>(Count - 1), nullptr, 0);
+    auto* Bytes = static_cast<unsigned char*>(Server);
+    Bytes[0x1dc8] = static_cast<unsigned char>(Count - 1);
+    Bytes[0x1dc9] = 1;
+}
+inline void __fastcall Clothes(void* Server)
+{
+    OriginalClothes(Server);
+    const DWORD Error = GetLastError();
+    uint64_t Id = 0;
+    if (!At(Server, 0xa0, Id) || !IsCpu(Id)) { SetLastError(Error); return; }
+    unsigned char Count = 0;
+    if (!At(Server, 0x1dc8, Count) || Count > 31) { SetLastError(Error); return; }
+    std::vector<Item> Pool;
+    bool Loaded = false;
+    for (unsigned Slot = 0; Slot < Count;)
+    {
+        unsigned char* Record = nullptr; uint32_t Hash = 0, Category = 0;
+        if (!At(Server, 0x1dd0 + Slot * 8, Record) || !At(Record, 0x108, Hash) ||
+            !At(Record, 0x10c, Category)) { ++Slot; continue; }
+        if (Purchasable(Hash)) { ++Slot; continue; }
+        if (!Loaded) { Pool = Candidates(Server); Loaded = true; }
+        unsigned Matches = 0;
+        for (const auto& Entry : Pool) if (Entry.Category == Category) ++Matches;
+        if (!Matches)
+        {
+            Remove(Server, Slot, Count--);
+            continue;
+        }
+        unsigned Choice = Random() % Matches;
+        for (const auto& Entry : Pool)
+        {
+            if (Entry.Category != Category || Choice--) continue;
+            // FUN_14161A920 writes a zeroed 0x118-byte record, UTF-8 name at +8,
+            // content CRC at +0x108 and category CRC at +0x10c, before entity creation.
+            const auto Name = reinterpret_cast<NameFn>(ExeBase + 0x1084320)(Entry.Name);
+            if (!Name) { Remove(Server, Slot, Count--); break; }
+            unsigned char Replacement[0x118]{};
+            reinterpret_cast<CopyNameFn>(ExeBase + 0xfbfaf0)(Replacement + 8, Name, 0x100, 0);
+            memcpy(Replacement + 0x108, &Entry.Name, sizeof(Entry.Name));
+            memcpy(Replacement + 0x10c, &Entry.Category, sizeof(Entry.Category));
+            reinterpret_cast<SetSlotFn>(ExeBase + 0x16ea210)(Server, static_cast<int>(Slot), Replacement, sizeof(Replacement));
+            ++Slot;
+            break;
+        }
+    }
+    SetLastError(Error);
+}
+inline RandomClothesFn OriginalShoes = nullptr;
+inline bool PurchasableShoe(uint32_t Hash)
+{
+    return std::binary_search(std::begin(CpuWardrobeCatalog::Shoes),
+        std::end(CpuWardrobeCatalog::Shoes), Hash);
+}
+inline void __fastcall Shoes(void* Server)
+{
+    OriginalShoes(Server);
+    const DWORD Error = GetLastError();
+    uint64_t Id = 0; uint32_t Hash = 0;
+    if (!At(Server, 0xa0, Id) || !IsCpu(Id) || !At(Server, 0x1c40, Hash) || PurchasableShoe(Hash))
+    { SetLastError(Error); return; }
+    // CustomShoeData +4 is CRC32 of the resource stem (e.g. shoe_1194_default).
+    int Count = 0;
+    std::vector<void*> Choices;
+    if (Read(ExeBase + 0x665dba8, &Count, sizeof(Count)) && Count > 0 && Count <= 1024)
+    {
+        std::vector<void*> Pool(static_cast<size_t>(Count));
+        if (Read(ExeBase + 0x665dbb0, Pool.data(), Pool.size() * sizeof(void*)))
+            for (auto* Entry : Pool)
+                if (At(Entry, 4, Hash) && PurchasableShoe(Hash)) Choices.push_back(Entry);
+    }
+    if (!Choices.empty())
+    {
+        using CopyShoeFn = void(__fastcall*)(void*, const void*);
+        reinterpret_cast<CopyShoeFn>(ExeBase + 0x8fbe30)(static_cast<unsigned char*>(Server) + 0x1c3c,
+            Choices[Random() % Choices.size()]);
+        static_cast<unsigned char*>(Server)[0x1d8c] = 1;
+    }
+    else if (auto* G = Profile::Generating)
+    {
+        G->Valid = false;
+        Profile::Reject(&G->Error, "cpu-wardrobe-no-purchasable-shoes");
+    }
+    SetLastError(Error);
+}
+} // namespace Wardrobe
+
 // Single installation entry for all CPU park modes.
-inline constexpr unsigned HookCount = 2;
+inline constexpr unsigned HookCount = 4;
 struct Site { size_t Rva; const char* Bytes; size_t Size; void* Detour; void** Original; };
 inline const Site Sites[] = {
     {0x166b330, "\x48\x8b\xc4\x55\x53\x56\x41\x55\x41\x56\x48\x8d\x68\x88\x48\x81\xec\x50\x01\x00\x00", 21,
         reinterpret_cast<void*>(&Generate), reinterpret_cast<void**>(&OriginalGenerate)},
     {0x1de3450, "\x40\x57\x41\x55\x41\x56\x48\x83\xec\x30\x48\x89\x6c\x24\x58\x49\x8b\xf8\x4c\x8b\x41\x10", 22,
         reinterpret_cast<void*>(&BuildDefense), reinterpret_cast<void**>(&OriginalDefense)},
+    {0x161a920, "\x4c\x8b\xdc\x55\x56\x41\x55\x49\x8d\xab\xc8\xfe\xff\xff\x48\x81\xec\x20\x02\x00\x00", 21,
+        reinterpret_cast<void*>(&Wardrobe::Clothes), reinterpret_cast<void**>(&Wardrobe::OriginalClothes)},
+    {0x161acd0, "\x40\x53\x48\x81\xec\x70\x01\x00\x00\x8b\x05\xc9\x2e\x04\x05\x48\x8b\xd9\xc7\x44", 20,
+        reinterpret_cast<void*>(&Wardrobe::Shoes), reinterpret_cast<void**>(&Wardrobe::OriginalShoes)},
     {0x167d3c0, "\x48\x89\x5c\x24\x18\x48\x89\x6c\x24\x20\x57\x48\x83\xec\x20", 15, nullptr, nullptr},
     {Profile::ApiSites[0].Rva, Profile::ApiSites[0].Bytes, Profile::ApiSites[0].Size, nullptr, nullptr},
     {Profile::ApiSites[1].Rva, Profile::ApiSites[1].Bytes, Profile::ApiSites[1].Size, nullptr, nullptr},
@@ -1685,6 +1834,12 @@ inline const Site Sites[] = {
     {Profile::ApiSites[6].Rva, Profile::ApiSites[6].Bytes, Profile::ApiSites[6].Size, nullptr, nullptr},
     {Profile::ApiSites[7].Rva, Profile::ApiSites[7].Bytes, Profile::ApiSites[7].Size, nullptr, nullptr},
     {Profile::ApiSites[8].Rva, Profile::ApiSites[8].Bytes, Profile::ApiSites[8].Size, nullptr, nullptr},
+    {0x1084320, "\x48\x83\xec\x28\xe8\xf7\x12\x00\x00\x85\xc0\x79\x07\x33\xc0\x48\x83\xc4\x28\xc3", 20, nullptr, nullptr},
+    {0x16ea210, "\x48\x89\x5c\x24\x08\x48\x89\x6c\x24\x10\x48\x89\x74\x24\x18\x57\x48\x83\xec\x40", 20, nullptr, nullptr},
+    {0xfbfaf0, "\x48\x89\x54\x24\x10\x53\x56\x57\x41\x54\x41\x55\x41\x56\x41\x57\x48\x83\xec\x20", 20, nullptr, nullptr},
+    {0x175b100, "\x81\xf9\x67\x71\x37\x7a\x0f\x87\x35\x03\x00\x00\x0f\x84\x46\x06\x00\x00\x81\xf9", 20, nullptr, nullptr},
+    {0x175b760, "\x81\xf9\x53\xc1\x43\x8e\x0f\x87\xfa\x06\x00\x00\x0f\x84\xa0\x0d\x00\x00\x81\xf9", 20, nullptr, nullptr},
+    {0x8fbe30, "\x48\x89\x5c\x24\x08\x8b\x02\x48\x8b\xd9\x89\x01\x8b\x42\x04\x89\x41\x04\x0f\xb7", 20, nullptr, nullptr},
 };
 inline constexpr DWORD ReadinessTimeoutMs = 30'000, ReadinessPollMs = 250;
 inline std::atomic_bool InstallStarted = false;
@@ -1796,6 +1951,7 @@ inline void InstallHooks(HMODULE Executable)
     try { InstallControl(Executable); }
     catch (...) { Log(LogLevel::Error, L"PARK22 enhanced CPU hook installation failed"); }
     { std::lock_guard<std::mutex> Lock(Solo::ReceiptMutex); Solo::Receipt(); }
+    Log(LogLevel::Info, L"PARK22 CPU clothing restricted to purchasable store items (same-category replacements)");
     Log(LogLevel::Info, Profile::Ready ?
         L"PARK22 CPU enabled: park v6 / solo v6, shared profile execution, guarded 2v2/3v3/5v5 start and manual/no-help AI defense" :
         L"PARK22 CPU unavailable: enhanced CPU hook is not ready");

@@ -526,6 +526,15 @@ function Seat(Connection) {
     const Group = QueueFor(Connection, Connection.GotNext.Court, Connection.GotNext.Slot);
     if (!Group) return false;
     AdvanceLine(Connection, Group);
+    if (Connection.ActivityName === 'stage' && PlayerBody.GenerationForConnection(Connection) === '2K22') {
+        const Seats = Slots.SeatsOf(Group.SlotObjectId);
+        const Capacity = require('./CourtData').StageLineCapacity(Group.CourtName, Group.QueueIndex, Seats);
+        if (Capacity !== undefined &&
+            Seats.filter((Id) => Id !== 0n && Id !== Connection.Puid).length >= Capacity) {
+            Log.Verbose(`  ${Connection.Identifier}: Ante-Up line has no open seat in the current game phase`);
+            return false;
+        }
+    }
 
     const SeatData = Slots.Occupy(
         Group.SlotObjectId,
@@ -1092,19 +1101,25 @@ function IsFrozenParticipant(Game, Puid) {
 function Vacate(Connection) {
     require('./ParkCpu').Stop(Connection, 'participant vacated court');
     if (Connection.Puid === null) return [];
+    let ClearedStageCourt = null;
 
     if (require('./CourtData').IsBitstreamWorld(Connection.ActivityName) && Connection.GotNext) {
         const Found = CourtGroupsForMatch(Connection, Connection.GotNext.Court);
         if (Found) {
             const Game = require('./CourtData').GameTeams(Connection.ActivityName, Found.Raw.Name, PlayerBody.GenerationForConnection(Connection));
-            if (IsFrozenParticipant(Game, Connection.Puid))
+            if (IsFrozenParticipant(Game, Connection.Puid)) {
                 require('./CourtData').ClearGameTeams(Connection.ActivityName, Found.Raw.Name, PlayerBody.GenerationForConnection(Connection));
+                if (Connection.ActivityName === 'stage' && Found.Raw.TeamSize === 1 &&
+                    PlayerBody.GenerationForConnection(Connection) === '2K22') ClearedStageCourt = Found.Groups[0];
+            }
         }
     }
 
     const Freed = Slots.Release(Connection.Puid);
     for (const SlotId of Freed) require('./GymEquipment2K22').PublishSpot(Connection, SlotId);
     Connection.GotNext = null;
+    if (ClearedStageCourt && !Freed.length)
+        require('./CourtData').BroadcastCourtGroup(Connection, ClearedStageCourt);
     NotifyQueueChanges(Connection, Freed);
     if (Freed.length) {
         try {
@@ -1157,10 +1172,14 @@ function Release(Connection) {
     Connection.PlayerBody = Body;
 
     const Held = Connection.GotNext && CourtGroupsForMatch(Connection, Connection.GotNext.Court);
+    let ClearedStageCourt = null;
     if (Held && require('./CourtData').IsBitstreamWorld(Connection.ActivityName)) {
         const Game = require('./CourtData').GameTeams(Connection.ActivityName, Held.Raw.Name, PlayerBody.GenerationForConnection(Connection));
-        if (IsFrozenParticipant(Game, Connection.Puid))
+        if (IsFrozenParticipant(Game, Connection.Puid)) {
             require('./CourtData').ClearGameTeams(Connection.ActivityName, Held.Raw.Name, PlayerBody.GenerationForConnection(Connection));
+            if (Connection.ActivityName === 'stage' && Held.Raw.TeamSize === 1 &&
+                PlayerBody.GenerationForConnection(Connection) === '2K22') ClearedStageCourt = Held.Groups[0];
+        }
     }
     const Freed = Slots.Release(Connection.Puid);
     for (const SlotId of Freed) require('./GymEquipment2K22').PublishSpot(Connection, SlotId);
@@ -1180,6 +1199,8 @@ function Release(Connection) {
         }
     }
     Connection.GotNext = null;
+    if (ClearedStageCourt && !Freed.length)
+        require('./CourtData').BroadcastCourtGroup(Connection, ClearedStageCourt);
     NotifyQueueChanges(Connection, Freed);
 
     const Frame = PlayerObject.FrameFor(Connection);

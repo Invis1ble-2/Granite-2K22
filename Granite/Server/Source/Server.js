@@ -528,7 +528,7 @@ function CreateHandler(Config, Dependencies = {}) {
                     : Number(process.env.GRANITE_FORCED_GRIND_POINTS),
             ContentSeason: Config.ContentSeason,
             EndpointFile: Config.EndpointTable,
-            PublicHost: Config.PublicHost,
+            PublicHost: Settings.PublicHostFor(Req.socket, Config.PublicHost),
             WorldPort: Config.WorldPort,
             RelayPort: Config.RelayPort,
             RelayId: Config.RelaySessionPort,

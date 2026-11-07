@@ -379,11 +379,12 @@ function StageGeometry(Layout, Index) {
     return StageSpots.Geometry(Layout.StageCourt || Layout.SlamballCourt, Index);
 }
 
-function BuildSetupRecord(Layout, Index) {
+function BuildSetupRecord(Layout, Index, SpotCount) {
     if (Index < 0 || Index >= Layout.Locations.length) throw new Error('invalid Got Next setup index ' + Index);
     const Record = Buffer.alloc(0x90);
     const Location = Layout.Locations[Index];
     const Geo = Layout.StageCourt || Layout.SlamballCourt ? StageGeometry(Layout, Index) : null;
+    const Count = SpotCount ?? (Geo ? Geo.Count : Layout.size);
     const Base0 = Geo ? Geo.Base : LocalBase(Layout, Location);
     const Exit0 = Geo ? Geo.Exit : LocalBase(Layout, ExitLocation(Location));
     const Step0 = Geo ? Geo.StepLocal : [0.0, 0.0, 120.0];
@@ -408,7 +409,7 @@ function BuildSetupRecord(Layout, Index) {
     const XMin = Base0[0] - 120.0 - 75.0 * FacingX;
     const XMax = Base0[0] + 120.0 - 75.0 * FacingX;
     const ZMin = Base0[2] - 120.0;
-    const ZMax = Base0[2] + (Geo ? Geo.Count : Layout.size) * 120.0;
+    const ZMax = Base0[2] + Count * 120.0;
     const Corners = [
         [XMin, 0.0, ZMin],
         [XMin, 0.0, ZMax],
@@ -420,7 +421,7 @@ function BuildSetupRecord(Layout, Index) {
         Record.writeFloatLE(World[0], 0x60 + CornerIndex * 8);
         Record.writeFloatLE(World[2], 0x64 + CornerIndex * 8);
     });
-    Record.writeUInt32LE(Geo ? Geo.Count : Layout.size, 0x80);
+    Record.writeUInt32LE(Count, 0x80);
     Record[0x84] = Geo ? Number(Geo.SquadOnly) : Index === 2 ? 1 : 0;
     Record[0x85] = Geo ? Number(Geo.WinnerSpot) : Index === 0 ? 1 : 0;
     Record.writeUInt32LE(Geo ? Geo.Function : 0, 0x88);
@@ -486,6 +487,17 @@ function BuildParkCourt(Entry, Generation = '2K19') {
 function ParkEntries(Generation) {
     return Generation === '2K22' ? require('../Activity/StageSpots/ShipCourts2K22').Courts : Boulevard.BoulevardCourts;
 }
+
+function ReplayPacketIdFor(Activity, Name, Generation = '2K22') {
+    if (Generation !== '2K22') return undefined;
+    const Park = ParkEntries('2K22');
+    const Entries = Activity === 'neighborhood' ? Park : Activity === 'cages' ? SlamballSpots.Courts : null;
+    if (!Entries) return undefined;
+    const Index = Entries.findIndex((Entry) => Entry.name === Name);
+    // Reserve zero and keep both activities in disjoint, stable byte ranges.
+    return Index < 0 ? undefined : 1 + Index + (Activity === 'cages' ? Park.length : 0);
+}
+
 function BuildParkCourtByName(Name, Generation = '2K19') {
     const Entry = ParkEntries(Generation).find((E) => E.name === Name);
     return Entry ? BuildParkCourt(Entry, Generation) : null;
@@ -547,17 +559,37 @@ function LiveSpotRecord(Layout, QueueIndex, HolderBySlot) {
     return Record;
 }
 
+function StageLineCapacity(Name, QueueIndex, Seats = []) {
+    const Court = StageSpots.GamblingCourts.find((Entry) => Entry.name === Name);
+    const Queue = Court?.Queues[QueueIndex];
+    if (Court?.TeamSize !== 1 || Queue?.Function !== StageSpots.FunctionType.Line) return undefined;
+    const Game = CourtTeams.get(StageGuidFor(Name).toString());
+    if (Game?.GameReady && Game.AwayReleased && !Game.Ended) return Queue.Count;
+    // Keep waiting players through game end, without opening more empty seats.
+    const OccupiedExtent = Seats.reduce((Count, Id, Index) => Id ? Index + 1 : Count, 0);
+    return Math.min(Queue.Count, Math.max(1, OccupiedExtent));
+}
+
 function OccupancyPayload(Layout, CourtId, OwnerId, ObjectId, SeatsByQueue, Profiles, GameCourtValue = true, Generation = '2K19') {
-    const SetupRecords = Layout.Locations.map((_, I) => BuildSetupRecord(Layout, I));
+    const SetupRecords = Layout.Locations.map((_, I) => BuildSetupRecord(Layout, I,
+        Generation === '2K22' && Layout.Activity === 'stage'
+            ? StageLineCapacity(Layout.name, I, SeatsByQueue[I] || []) : undefined));
     const SpotRecords = Layout.Locations.map((_, I) => LiveSpotRecord(Layout, I, SeatsByQueue[I] || []));
     const Teams = GameCourtValue ? CourtTeams.get(BigInt(CourtId).toString()) : undefined;
     const PostGame = PostGameLocations(Layout);
+    // Native court status clamps queue vacancies to these two capacities.
+    const CourtCapacity = Generation === '2K22' && ['neighborhood', 'cages', 'stage'].includes(Layout.Activity) ? Layout.size : undefined;
     return BuildGotNextCourtDataPayload({
         Generation,
         CourtId,
         OwnerId,
+        PacketId: ReplayPacketIdFor(Layout.Activity, Layout.name, Generation),
         CourtType: Layout.CourtType,
         IsHalfCourt: Layout.IsHalfCourt,
+        // Original Ante-Up 1v1 uses ANY_TWO; the native default is NEVER.
+        StartGameOn: Generation === '2K22' && Layout.Activity === 'stage' && Layout.size === 1 ? 2 : undefined,
+        HomeSpotCount: CourtCapacity,
+        AwaySpotCount: CourtCapacity,
         CourtTransform: CourtTransform(Layout),
         CourtObjectId: ObjectId >>> 0,
         // FUN_14148AD80 registers graphics baskets by the court marker name CRC.
@@ -967,6 +999,7 @@ module.exports = {
     PrepareGameTeams,
     ClearGameTeams,
     GameTeams,
+    ReplayPacketIdFor,
     MarkGameConnected,
     PrepareStageTeams,
     ClearStageTeams,
@@ -980,6 +1013,7 @@ module.exports = {
     StageLowFor,
     StageGuidFor,
     StageLayoutFor,
+    StageLineCapacity,
     BuildStageCourt,
     PublishStageCourts,
     RefreshStageCourts,

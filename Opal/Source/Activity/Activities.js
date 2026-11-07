@@ -6,7 +6,8 @@
 const Init = require('./Init');
 const Worlds = require('../Protocol/Worlds');
 const { Crc } = require('../Core/Names');
-const Network = require('../Core/Config').Network();
+const Settings = require('../Core/Config');
+const Network = Settings.Network();
 
 const Relay = {
     Retired: Init.RetiredRelay,
@@ -91,14 +92,14 @@ function Lookup(ActivityKey, WorldKey) {
     return null;
 }
 
-function BuildInit(Activity, Players = null, SelfMachineId = null, RelayToken = null) {
+function BuildInit(Activity, Players = null, SelfMachineId = null, RelayToken = null, Socket = null) {
     return Init.Build({
         RelayToken,
         SessionId: Activity.SessionId,
         SessionVerify: Activity.SessionId + 1n,
         IncludeMatchType: Activity.IncludeMatchType,
         Variant: Activity.Variant,
-        Relay: Activity.Relay,
+        Relay: { ...Activity.Relay, Ip: Settings.PublicHostFor(Socket, Activity.Relay.Ip) },
         Players,
         SelfMachineId,
     });

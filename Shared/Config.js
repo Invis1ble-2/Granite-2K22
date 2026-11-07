@@ -13,7 +13,14 @@ function Read(ConfigFile = File) {
     const Config = JSON.parse(Fs.readFileSync(ConfigFile, 'utf8'));
     if (!Config || typeof Config !== 'object' || Array.isArray(Config))
         throw new Error(`${ConfigFile} must be an object`);
-    return Config;
+    const { Shared, Granite, Opal, ...Legacy } = Config;
+    for (const Key of ['Shared', 'Granite', 'Opal']) {
+        if (Config[Key] !== undefined &&
+            (!Config[Key] || typeof Config[Key] !== 'object' || Array.isArray(Config[Key])))
+            throw new Error(`${ConfigFile} ${Key} must be an object`);
+    }
+    // Keep the existing flat settings API and support older configuration files.
+    return { ...Shared, ...Granite, ...Opal, ...Legacy };
 }
 
 // Network and timing changes apply after both services restart; ParkCpu can reread the file.
@@ -37,6 +44,15 @@ function Network(Config = Startup, Env = process.env) {
     return Value;
 }
 
+function IsLoopbackSocket(Socket) {
+    const Address = String(Socket?.remoteAddress || '').replace(/^::ffff:/i, '');
+    return Address === '::1' || (Net.isIPv4(Address) && Address.startsWith('127.'));
+}
+
+function PublicHostFor(Socket, PublicHost = Network().PublicHost) {
+    return IsLoopbackSocket(Socket) ? '127.0.0.1' : PublicHost;
+}
+
 function FrameRate() {
     const Value = Startup.OnlineFrameRate?.FrameRate ?? Startup.ParkCpu?.FrameRate ?? 120;
     if (Value !== 60 && Value !== 120)
@@ -55,4 +71,4 @@ function LockstepBufferFrames(Env = process.env) {
     return Frames;
 }
 
-module.exports = { File, GraniteRoot, Read, Network, FrameRate, LockstepBufferFrames };
+module.exports = { File, GraniteRoot, Read, Network, IsLoopbackSocket, PublicHostFor, FrameRate, LockstepBufferFrames };

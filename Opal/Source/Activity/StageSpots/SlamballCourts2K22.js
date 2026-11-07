@@ -2,6 +2,9 @@
 
 const { Crc32 } = require('../../Core/Crc32');
 const { Geometry, AnchorsFor } = require('./GamblingCourts2K22');
+const ContentSeason = require('../../Core/Config').Read().ContentSeason ?? 8;
+if (!Number.isInteger(ContentSeason) || ContentSeason < 1 || ContentSeason > 9)
+    throw new Error('Config.json ContentSeason must be an integer from 1 to 9');
 
 // 2k_world_setup.iff/park_setup.RDAT: SLAMBALL / SLAMBALL_AREA.
 // Positions/rotations of the six trampoline courts are also present in
@@ -47,7 +50,8 @@ const Definitions = [
     ['SLAMBALL_3V3_BOTTOM_RIGHT', 3, [1309.591,1104.21594,-9192.383], 180, 'SLAMBALL_3V3_V_FLIPPED'],
     ['SLAMBALL_3V3_BOTTOM_LEFT', 3, [1309.591,1104.21594,-6592.383], 180, 'SLAMBALL_3V3_V_FLIPPED'],
     ['SLAMBALL_2V2_BOTTOM', 2, [1309.5,1104.21594,-12096.64], 180, 'SLAMBALL_2V2_V_FLIPPED'],
-    ['FULL1', 5, [3.943364,1104.41663,12539.0791], -90, 'FULL1_COURT'],
+    // upperpark level.SCNE / Object / Locator_04: VC_AssetMatrix is identity in S1–4, rotated in S5–9.
+    ['FULL1', 5, [3.943364,1104.41663,12539.0791], ContentSeason <= 4 ? 0 : -90, 'FULL1_COURT'],
 ];
 const Courts = Object.freeze(Definitions.map(([name, TeamSize, Pos, YawDeg, Logical]) =>
     Object.freeze({name, id:Crc32(name) >>> 0, TeamSize, Pos:Object.freeze(Pos),

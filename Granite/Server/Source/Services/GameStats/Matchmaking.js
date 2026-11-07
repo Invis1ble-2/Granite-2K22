@@ -130,7 +130,7 @@ function BadRequest() {
     return new Builder().AddU32(Crcs.ResultType, Results.BadRequest).Build();
 }
 
-function Success(Match, Recipient, Options) {
+function Success(Match, Recipient, Options, PublicHost = null) {
     const PackedPorts = (((Options.RelayPort & 0xffff) << 16) | (Match.RelayId & 0xffff)) >>> 0;
     const ListBuilder = new Builder()
         .AddU64(Crcs.TicketId, Match.TicketId)
@@ -139,7 +139,7 @@ function Success(Match, Recipient, Options) {
         .AddU32(Crcs.PacketVersion, Constants.PacketVersion)
         .AddU32(Crcs.MatchKind, Constants.MatchKind)
         .AddU32(Crcs.NetworkKind, Constants.NetworkKind)
-        .AddPacked(Crcs.RelayAddress, Options.RelayIp, PackedPorts)
+        .AddPacked(Crcs.RelayAddress, PublicHost ? Ipv4Word(PublicHost) : Options.RelayIp, PackedPorts)
         .AddBinary(Crcs.RelayToken, Match.RelayToken);
 
     if (Match.Players.every((Player) => Player.MachineData.length)) {
@@ -275,7 +275,7 @@ class Matchmaker {
             );
             return InProgress(Session);
         }
-        return Success(Match, Session, this.Options);
+        return Success(Match, Session, this.Options, Context.PublicHost);
     }
 
     Update(Input, Context = {}) {
@@ -293,7 +293,7 @@ class Matchmaker {
         this.Refresh(Session, Player);
         const Match = Session.Match || this.Pair(Session);
         if (!Match) return InProgress(Session);
-        return Success(Match, Session, this.Options);
+        return Success(Match, Session, this.Options, Context.PublicHost);
     }
 
     RemoveMachine(Input, Context = {}) {
