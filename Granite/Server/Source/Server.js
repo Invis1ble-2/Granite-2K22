@@ -86,6 +86,9 @@ const MyCareerUpload = require('./Services/MyCareer/Online/Upload');
 const MyCareerDelete = require('./Services/MyCareer/Online/Delete');
 const ContentMessageRetrieve = require('./Services/ContentMessage/Retrieve');
 const MyTeamActiveLineup = require('./Services/MyTeam/Lineup/GetActive');
+const MyTeamUserLineups = require('./Services/MyTeam/Lineup/GetUserLineups');
+const MyTeamUser = require('./Services/MyTeam/User/GetUser');
+const MyTeamAwardQueue = require('./Services/MyTeam/Awards/GetAwardQueue');
 const MyTeamItemCache = require('./Services/MyTeam/Collection/ItemCache');
 const MPStoreOverview = require('./Services/Store/MPStore/Overview');
 const MyCourtBanners = require('./Services/GameLoader/MyCourt/Banners');
@@ -707,6 +710,9 @@ function CreateHandler(Config, Dependencies = {}) {
             Reply = MyTeamCollection.Build(Input, Context);
         else if (Route === 'lineup/active' || Route === 'myteam/get_active_lineup' || MyTeamActiveLineup.Resolve(Route))
             Reply = MyTeamActiveLineup.Build(Input, Context);
+        else if (MyTeamUserLineups.Resolve(Route)) Reply = MyTeamUserLineups.Build(Input, Context);
+        else if (MyTeamUser.Resolve(Route)) Reply = MyTeamUser.Build(Input, Context);
+        else if (MyTeamAwardQueue.Resolve(Route)) Reply = MyTeamAwardQueue.Build(Input, Context);
         else if (MyTeamItemCache.Resolve(Route)) Reply = MyTeamItemCache.Build(Input, { ...Context, Route });
         else if (Route === 'blacktop/playwithfriends' || Route === 'blacktop/play_with_friends')
             Reply = BlacktopFriends.Build(Input, Context);

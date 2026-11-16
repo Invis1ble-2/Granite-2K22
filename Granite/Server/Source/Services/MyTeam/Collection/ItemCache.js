@@ -19,10 +19,11 @@ const JsonKeys = Object.freeze({
 });
 
 const CardListMember = 'collection';
+const ShortCardListMember = 'cards';
 
 const Documents = Object.freeze({
     DefaultCollection: Object.freeze({ [CardListMember]: [] }),
-    UserCollectionShort: Object.freeze({}),
+    UserCollectionShort: Object.freeze({ [ShortCardListMember]: [] }),
 });
 
 function GetDefaultCollection() {
@@ -31,7 +32,7 @@ function GetDefaultCollection() {
 }
 
 function UserCollectionShort() {
-    Logger.Verbose('MyTeam2k19/user_collection_short: answering an empty user collection');
+    Logger.Verbose('MyTeam2k19/user_collection_short: answering an empty user card list');
     return JsonBlob.Reply(Documents.UserCollectionShort);
 }
 
@@ -60,6 +61,7 @@ module.exports = {
     EndpointIds,
     JsonKeys,
     CardListMember,
+    ShortCardListMember,
     Documents,
     Status: 'IDA_TRACED_EMPTY_COLLECTION',
 };
