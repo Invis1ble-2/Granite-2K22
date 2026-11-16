@@ -515,6 +515,7 @@ function FinishOnlineGame(Connection, Game, Reason) {
     // End once for the whole game; late completion/ending retries must not revive it.
     Game.Ended = true;
     Game.Ready = false;
+    if (Game.Transport) require('../Net/VconlineRelay').ActiveRouter()?.CloseSession(Game.Transport);
     for (const Player of Game.Players) PublishOnlinePlayer(Player, Game, false);
     PublishOnlineCourt(Game);
     MyCourt.EndCribGame(Connection, Game.RoomKey);
@@ -547,7 +548,26 @@ function Disconnect(Connection) {
     const Game = Key && OnlineGames.get(Key);
     if (!Game) return false;
     if (!Game.Ended && Game.Players.includes(Connection)) {
-        FinishOnlineGame(Connection, Game, 'participant left MyCOURT');
+        const OwnerLeft = !MyCourt.IsGuest(Connection);
+        const Remaining = Game.Players.filter((Peer) => Peer !== Connection && !Peer.Closed);
+        if (OwnerLeft || Remaining.length === 0) {
+            FinishOnlineGame(Connection, Game, OwnerLeft ? 'MyCOURT owner left' : 'participant left MyCOURT');
+        } else {
+            Game.Players = Remaining;
+            Connection.Shootaround = null;
+            if (!Connection.Closed && PatchPlayer(Connection, GotNext.State.None, 0)) SendPlayer(Connection);
+            if (Game.Transport && Connection.MachineId !== null && Connection.MachineId !== undefined && BigInt(Connection.MachineId) !== 0n) {
+                require('../Net/VconlineRelay').ActiveRouter()?.DropMachine(Game.Transport, BigInt(Connection.MachineId));
+            }
+            if (!Game.Ready && Game.Players.every((Player) => Game.Connected.has(Player.Puid))) {
+                Game.Ready = true;
+                PublishOnlineCourt(Game);
+            }
+            Log.Info(
+                `MyCourt ${MyCourtGameLabel(Game.CourtType, '2K22', Game.MenuMode)} match ${Game.MatchId.toString(16).toUpperCase()}: ` +
+                    `visitor ${Connection.Identifier} left; ${Game.Players.length} human participant(s) continuing with native AI`,
+            );
+        }
     }
     ClearOnlineConnection(Connection);
     if (!OnlineMembers(Game).some((Peer) => Peer !== Connection)) OnlineGames.delete(Key);

@@ -7,6 +7,12 @@ const Startup = 0xdc4ad1e0,
     Input = 0xdee061c6;
 // NBA 2K22: machine index 15 is reserved for the F0 NAK marker.
 const History = 96, MachineSlots = 15, StartupBytes = 24;
+// Retail FUN_14188A200 / FUN_1417B13F0 (Online_UpdateLockstepFakeInfo): bit 0x10
+// marks server-synthesized missing frames; >900 consecutive frames (901) triggers
+// Online_RemoveMachine(slot, 0xC) synchronously across all surviving clients.
+const FakePacketFlag = 0x10, FakeFramesToRetire = 901;
+// FUN_14188C510 / FUN_14188C680 neutral 9-byte controller state (sticks centered at 256).
+const NeutralController = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x40]);
 
 function Frame(Type, Source, Body) {
     const FrameData = Buffer.alloc(16 + Body.length);
@@ -15,6 +21,22 @@ function Frame(Type, Source, Body) {
     FrameData.writeBigUInt64LE(Source, 8);
     Body.copy(FrameData, 16);
     return FrameData;
+}
+
+function BuildFakeBody(Slot, Wire, ControllerCount, RefToggle = 0, RefChecksum = 0) {
+    if (!Number.isInteger(Slot) || Slot < 0 || Slot >= MachineSlots ||
+        !Number.isInteger(ControllerCount) || ControllerCount < 1 || ControllerCount > 9) {
+        throw new Error('invalid lockstep fake-frame machine or controller count');
+    }
+    const Body = Buffer.allocUnsafe(2 + 4 + 9 * ControllerCount);
+    Body[0] = (Slot << 4) & 0xff;
+    Body[1] = Wire & 0xff;
+    Body[2] = FakePacketFlag | (RefToggle & 0x80);
+    Body[3] = 0x00;
+    Body[4] = RefChecksum & 0xff;
+    Body[5] = 0x00;
+    for (let I = 0; I < ControllerCount; I++) NeutralController.copy(Body, 6 + I * 9);
+    return Body;
 }
 
 function Decode(Body, Counts) {
@@ -63,7 +85,7 @@ class DelayService {
         this.FrameRate = FrameRate;
     }
 
-    Process(Payload, Sender, Recipients, SessionClients) {
+    Process(Payload, Sender, Recipients, SessionClients, LookupFake = null) {
         const Messages = [];
         let HasLockstep = false;
         for (let At = 0; At < Payload.length;) {
@@ -150,12 +172,20 @@ class DelayService {
                             Payload: Cached.Packet, Recipients: [Sender], Source: Peer,
                             FrameIndex: Cached.Absolute, Retransmit: true,
                         });
-                    } else if (Peer && Peer !== Sender) {
-                        // The target retains the authoritative history when our cache misses.
-                        Output.push({
-                            Payload: Frame(Input, Source, Buffer.from([0xf0, State.Index, Record.Nak.Machine, (Record.Nak.Frame - Peer.Lockstep.Delay) & 255])),
-                            Recipients: [Peer],
-                        });
+                    } else {
+                        const Fake = LookupFake?.(Sender.SessionKey, Record.Nak.Machine, Record.Nak.Frame);
+                        if (Fake) {
+                            Output.push({
+                                Payload: Frame(Input, Sender.MachineId, Fake.Body), Recipients: [Sender], Source: Sender,
+                                FrameIndex: Fake.Absolute, Retransmit: true,
+                            });
+                        } else if (Peer && Peer !== Sender) {
+                            // The target retains the authoritative history when our cache misses.
+                            Output.push({
+                                Payload: Frame(Input, Source, Buffer.from([0xf0, State.Index, Record.Nak.Machine, (Record.Nak.Frame - Peer.Lockstep.Delay) & 255])),
+                                Recipients: [Peer],
+                            });
+                        }
                     }
                     continue;
                 }
@@ -189,4 +219,8 @@ class DelayService {
     }
 }
 
-module.exports = { Startup, Input, History, MachineSlots, StartupBytes, Frame, Decode, DelayService };
+module.exports = {
+    Startup, Input, History, MachineSlots, StartupBytes,
+    FakePacketFlag, FakeFramesToRetire, NeutralController,
+    Frame, BuildFakeBody, Decode, DelayService,
+};

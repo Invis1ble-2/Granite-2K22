@@ -179,7 +179,22 @@ class Router {
             Removed++;
         }
         // The world connection can close without a native UDP disconnect packet.
-        this.Pacer?.Sessions.delete(SessionKey);
+        this.Pacer?.CloseSession(SessionKey);
+        return Removed;
+    }
+
+    DropMachine({ RelayId, Token } = {}, MachineId) {
+        if (!Buffer.isBuffer(Token) || MachineId === null || MachineId === undefined) return 0;
+        const SessionKey = `${RelayId}:${Token.toString('hex')}`;
+        const Target = BigInt(MachineId);
+        let Removed = 0;
+        for (const [Key, Client] of this.Clients) {
+            if (Client.SessionKey !== SessionKey || Client.MachineId !== Target) continue;
+            this.Clients.delete(Key);
+            Removed++;
+        }
+        this.Pacer?.DropMachine(SessionKey, Target);
+        this.Pacer?.Prune(this.Clients.values());
         return Removed;
     }
 
@@ -266,6 +281,7 @@ class Router {
             const MachineId = Packet.readBigUInt64BE(PrefixLength);
             if (MachineId !== Sender.MachineId) throw new Error('relay disconnect machine id does not match');
             this.Clients.delete(Key);
+            this.Pacer?.DropMachine(Sender.SessionKey, Sender.MachineId);
             this.Pacer?.Prune(this.Clients.values());
             return { Kind: 'disconnect', Client: Sender, Sent: 0 };
         }
@@ -306,7 +322,13 @@ class Router {
                 NewControls.push(Control);
             }
         }
-        const Deliveries = this.LockstepDelay?.Process(Payload, Sender, Recipients, SessionClients) || [
+        const Deliveries = this.LockstepDelay?.Process(
+            Payload,
+            Sender,
+            Recipients,
+            SessionClients,
+            (SessionKey, Slot, Wire) => this.Pacer?.LookupFake(SessionKey, Slot, Wire),
+        ) || [
             { Payload: Payload, Recipients: Recipients },
         ];
         let Sent = 0,

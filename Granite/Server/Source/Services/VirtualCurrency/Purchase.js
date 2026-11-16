@@ -5,7 +5,15 @@
 
 const { Builder, GetFields, GetField, Types } = require('../../Codec/FieldList');
 const { Crc32 } = require('../../Core/Crc32');
-const { AttributeIds, AttributesFor, AsBigInt, CareerKey } = require('../MyCareer/Attributes/Constants');
+const {
+    AttributeIds,
+    ExplicitAttributeIds,
+    MaxAttributeLevel,
+    AttributesFor,
+    AsBigInt,
+    CareerKey,
+} = require('../MyCareer/Attributes/Constants');
+const { PriceForLevel } = require('../MyCareer/Attributes/Price');
 const { BalanceFor, SetBalance } = require('./Balance');
 const { OwnedKey, RememberOwnedItem } = require('../../Storage/OwnedItems');
 const { IsAutomaticallyOwned } = require('../../Storage/AutomaticOwnership');
@@ -42,6 +50,14 @@ function NativeCatalogPrice(Item, Context = {}) {
     return Catalog instanceof Map && Catalog.has(Item >>> 0) ? Catalog.get(Item >>> 0) : null;
 }
 
+function AttributeUpgradePrice(From, Target, Context = {}) {
+    let Total = 0n;
+    for (let Level = From + 1n; Level <= Target; Level++) {
+        Total += PriceForLevel(Level, Context);
+    }
+    return Total;
+}
+
 function PriceFor(Item, Index, Fields, Context = {}) {
     const Skill = SkillBoosts.ProductFor(Item);
     if (Skill) return Skill.price;
@@ -52,6 +68,15 @@ function PriceFor(Item, Index, Fields, Context = {}) {
         if (Native !== null) return Native;
         const Expected = U64(GetField(Fields, ExpectedPriceField(Index)));
         if (Expected !== null && Expected > 0n) return Expected;
+    }
+    const AttributeId = AttributeForItem(Item, Context);
+    if (AttributeId !== null) {
+        const From = RequestLevel(Fields, 'FROM_LEVEL', Index);
+        const Target = RequestLevel(Fields, 'TO_LEVEL', Index);
+        const UpperLimit = ExplicitAttributeIds.has(AttributeId) ? BigInt(MaxAttributeLevel) : 99n;
+        if (From !== null && Target !== null && From >= 0n && Target >= From && Target <= UpperLimit) {
+            return AttributeUpgradePrice(From, Target, Context);
+        }
     }
     const Submitted = U64(GetField(Fields, CartField(Index, 'PRICE')));
     if (Submitted !== null) return Submitted;
@@ -118,6 +143,7 @@ function ApplyKnownAttribute(Item, Index, Fields, Context, Price, Attributes) {
     if (AttributeId === null) return { Ok: true, Changed: false };
     const From = RequestLevel(Fields, 'FROM_LEVEL', Index);
     const Target = RequestLevel(Fields, 'TO_LEVEL', Index);
+    const Submitted = RequestLevel(Fields, 'PRICE', Index);
     const Attribute = Attributes.find((Candidate) => Candidate.id === Number(AttributeId) >>> 0);
     if (!Attribute) return { Ok: false, Reason: 'unknown attribute' };
 
@@ -125,17 +151,21 @@ function ApplyKnownAttribute(Item, Index, Fields, Context, Price, Attributes) {
     if (From !== null && From !== Attribute.level) {
         return { Ok: false, Reason: `FROM_LEVEL mismatch (${From} != ${Attribute.level})` };
     }
+    if (From !== null && Target !== null && Submitted !== null && Submitted !== Price) {
+        return { Ok: false, Reason: `PRICE mismatch (${Submitted} != ${Price})` };
+    }
     const Next = Target === null ? Attribute.level + 1n : Target;
+    const UpperLimit = ExplicitAttributeIds.has(Attribute.id) ? BigInt(MaxAttributeLevel) : 99n;
     const MaxLevel =
         Attribute.maxLevel !== undefined
             ? Attribute.maxLevel
             : Attribute.cap >= Attribute.initial
-              ? Attribute.cap - Attribute.initial < 99n
+              ? Attribute.cap - Attribute.initial < UpperLimit
                   ? Attribute.cap - Attribute.initial
-                  : 99n
+                  : UpperLimit
               : 0n;
-    if (Next < Attribute.level || Next > 99n || (MaxLevel > 0n && Next > MaxLevel && MaxLevel < 25n)) {
-        return { Ok: false, Reason: `attribute cap reached (${Next} > ${MaxLevel})` };
+    if (Next < Attribute.level || Next > UpperLimit || (MaxLevel > 0n && Next > MaxLevel && MaxLevel < 25n)) {
+        return { Ok: false, Reason: `attribute cap reached (${Next} > ${UpperLimit})` };
     }
     const Previous = Attribute.level;
     Attribute.level = Next;

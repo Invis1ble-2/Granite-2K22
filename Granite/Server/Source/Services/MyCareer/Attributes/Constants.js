@@ -14,6 +14,8 @@ const AttributeIds2K22 = Object.freeze([
 const AttributeIds = AttributeIds2K22;
 // NBA 2K22 FUN_14195B5D0: the first 19 attributes have explicit levels; the last 5 are derived.
 const ExplicitAttributeIds = new Set(AttributeIds.slice(0, 19));
+// NBA 2K22 FUN_14068ED70 / DAT_145280980: price matrix has 75 upgrade levels per attribute (ToLevel < 0x4C).
+const MaxAttributeLevel = 75;
 
 const Name = 0x68b693b2;
 const Level = 0x6dbe0ea3;
@@ -202,6 +204,8 @@ function AttributesFor(Context = {}) {
 
 module.exports = {
     AttributeIds,
+    ExplicitAttributeIds,
+    MaxAttributeLevel,
     Name,
     Level,
     CurrentCap,

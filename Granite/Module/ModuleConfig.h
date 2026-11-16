@@ -13,7 +13,6 @@ namespace ModuleConfig
 
     // Loaded once before hooks and worker threads are installed.
     inline bool EnableCrashHandler = true;
-    inline bool EnablePriceWatchdog = true;
     inline bool EnableBadgeBudgets = true;
     inline bool EnableAnimationShopAll = true;
     inline bool EnableAnimationRequirementBypass = true;
@@ -30,7 +29,6 @@ namespace ModuleConfig
     inline bool LogOnlineFrameRate = false;
     inline bool LogCareerProgression = false;
     inline bool LogSoloPark = false;
-    inline bool LogAttributePrice = false;
     inline bool LogBadgeBudget = false;
     inline bool LogAnimationUnlock = false;
 
@@ -55,7 +53,6 @@ namespace ModuleConfig
             L"; Granite HTTPS port\r\nServerPort = 21000\r\n\r\n"
             L"[Features]\r\n"
             L"; Crash capture and minidumps\r\nEnableCrashHandler = 1\r\n\r\n"
-            L"; Career attribute direct prices and watchdog\r\nEnablePriceWatchdog = 1\r\n\r\n"
             L"; Career badge budget reporting\r\nEnableBadgeBudgets = 1\r\n\r\n"
             L"; Show all native animation shop candidates (season/exclusion/rule filters bypassed)\r\nEnableAnimationShopAll = 1\r\n\r\n"
             L"; Ignore animation height/attributes/progression requirements; normal purchases remain\r\nEnableAnimationRequirementBypass = 1\r\n\r\n"
@@ -70,7 +67,6 @@ namespace ModuleConfig
             L"; Online frame rate negotiation and lifecycle messages\r\nLogOnlineFrameRate = 0\r\n\r\n"
             L"; Career progression synchronization messages\r\nLogCareerProgression = 0\r\n\r\n"
             L"; Solo park validation and generated roster messages\r\nLogSoloPark = 0\r\n\r\n"
-            L"; Attribute price synchronization and watchdog messages\r\nLogAttributePrice = 0\r\n\r\n"
             L"; Badge budget buffering and reporting messages\r\nLogBadgeBudget = 0\r\n\r\n"
             L"; Animation hook setup status (not a feature toggle)\r\nLogAnimationUnlock = 0\r\n";
         constexpr DWORD Size = static_cast<DWORD>(sizeof(Defaults) - sizeof(wchar_t));
@@ -152,7 +148,6 @@ namespace ModuleConfig
 
         // Features
         EnableCrashHandler    = ReadToggle(L"Features", L"EnableCrashHandler", true, Ini);
-        EnablePriceWatchdog   = ReadToggle(L"Features", L"EnablePriceWatchdog", true, Ini);
         EnableBadgeBudgets    = ReadToggle(L"Features", L"EnableBadgeBudgets", true, Ini);
         EnableAnimationShopAll = ReadToggle(L"Features", L"EnableAnimationShopAll", true, Ini);
         EnableAnimationRequirementBypass = ReadToggle(L"Features", L"EnableAnimationRequirementBypass", true, Ini);
@@ -168,7 +163,6 @@ namespace ModuleConfig
         LogOnlineFrameRate  = ReadToggle(L"Logging", L"LogOnlineFrameRate", false, Ini);
         LogCareerProgression = ReadToggle(L"Logging", L"LogCareerProgression", false, Ini);
         LogSoloPark         = ReadToggle(L"Logging", L"LogSoloPark", false, Ini);
-        LogAttributePrice   = ReadToggle(L"Logging", L"LogAttributePrice", false, Ini);
         LogBadgeBudget      = ReadToggle(L"Logging", L"LogBadgeBudget", false, Ini);
         LogAnimationUnlock  = ReadToggle(L"Logging", L"LogAnimationUnlock", false, Ini);
         return Saved;

@@ -369,7 +369,8 @@ function OnTravelRequest(Client, FrameData, Bytes) {
         return;
     }
 
-    if (require('./ParkCpu').Stop(Client, 'participant travelling') && Client.GotNext) GotNext.Release(Client);
+    require('./ParkCpu').Stop(Client, 'participant travelling');
+    if (Client.GotNext) GotNext.Release(Client);
     const Url = ChangeServer.UrlFor(Client.Socket, Client.Port);
     const SessionId = Ask.MatchType || Destination.SessionId;
     const ServerType = ChangeServer.ServerTypeFor(Ask);
@@ -527,9 +528,9 @@ function OnConnect(Client, FrameData, Bytes) {
         Shootaround.Disconnect(Client);
         MyCourt.ClearConnection(Client);
         const Park = require('./ParkCpu');
-        const Held = Park.Stop(Client, 'participant changed activity');
+        Park.Stop(Client, 'participant changed activity');
         Park.Disconnect(Client);
-        if (Held && Client.GotNext) GotNext.Release(Client);
+        if (Client.GotNext) GotNext.Release(Client);
     }
     if (ChangingRoom && !ChangingActivity) {
         Shootaround.Disconnect(Client);

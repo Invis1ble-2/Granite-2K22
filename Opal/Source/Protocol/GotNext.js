@@ -607,6 +607,26 @@ function CourtGroupsForMatch(Connection, Court) {
     return null;
 }
 
+function PublishGameReady(Connection, Found, Group) {
+    const CourtData = require('./CourtData');
+    const Generation = PlayerBody.GenerationForConnection(Connection);
+    const Game = Found && CourtData.GameTeams(Connection.ActivityName, Found.Raw.Name, Generation);
+    if (Game && Found.Groups.length === 2 && !Game.AwayReleased) {
+        const AwayQueue = Found.Groups[1];
+        for (const Puid of Game.Away) Slots.ReleaseFrom(AwayQueue.SlotObjectId, Puid);
+        AdvanceLine(Connection, AwayQueue);
+        Game.AwayReleased = true;
+        Log.Info(
+            `${Connection.ActivityName} ${Found.Raw.Name}: opened the away line ` +
+                `for the next ${AwayQueue.Anchors.length} challenger(s); home remains occupied`,
+        );
+    }
+    CourtData.BroadcastCourtGroup(Connection, Group || Found?.Groups[0]);
+    Log.Info(
+        `${Connection.ActivityName} ${Found ? Found.Raw.Name : Group?.CourtName}: all game connections complete; published native court state 3 @ ${Log.Clock()}`,
+    );
+}
+
 function HandleGameConnected(Connection, Bytes) {
     const CourtData = require('./CourtData');
     if (
@@ -638,22 +658,8 @@ function HandleGameConnected(Connection, Bytes) {
                 `${Connection.ActivityName} ${Group.CourtName}: ${Ready.Ready}/${Ready.total} participants reported game connection complete @ ${Log.Clock()}`,
             );
             if (Ready.Advanced) {
-                const Game = CourtData.GameTeams(Connection.ActivityName, Group.CourtName, PlayerBody.GenerationForConnection(Connection));
                 const Found = CourtGroupsForMatch(Connection, Group.ObjectId);
-                if (Game && Found && Found.Groups.length === 2 && !Game.AwayReleased) {
-                    const AwayQueue = Found.Groups[1];
-                    for (const Puid of Game.Away) Slots.ReleaseFrom(AwayQueue.SlotObjectId, Puid);
-                    AdvanceLine(Connection, AwayQueue);
-                    Game.AwayReleased = true;
-                    Log.Info(
-                        `${Connection.ActivityName} ${Group.CourtName}: opened the away line ` +
-                            `for the next ${AwayQueue.Anchors.length} challenger(s); home remains occupied`,
-                    );
-                }
-                CourtData.BroadcastCourtGroup(Connection, Group);
-                Log.Info(
-                    `${Connection.ActivityName} ${Group.CourtName}: all game connections complete; published native court state 3 @ ${Log.Clock()}`,
-                );
+                PublishGameReady(Connection, Found, Group);
             }
         }
     }
@@ -829,25 +835,31 @@ function FinishPublicGame(Connection, Found, Game, WinnerSide, Reason) {
     const Changed = [];
     const Placements = new Map();
 
+    const Stayed = (Puid) => !Game.LiveHumans || Game.LiveHumans.has(String(Puid));
+
     if (!Winners.length) {
         for (const Puid of Participants) {
-            const Player = ByPuid.get(String(Puid));
+            const Player = Stayed(Puid) ? ByPuid.get(String(Puid)) : null;
             if (Player && ReleasePostGamePlayer(Player)) Changed.push(Player);
         }
     } else {
-        for (const [Index, Puid] of Winners.entries()) {
-            const Player = ByPuid.get(String(Puid));
-            const Point = WinnerPoint(Found.Raw, Index);
-            if (Player && PlacePostGamePlayer(Player, Found.Groups[0], Point, true, Index)) {
+        let WinnerSeat = 0;
+        for (const Puid of Winners) {
+            const Player = Stayed(Puid) ? ByPuid.get(String(Puid)) : null;
+            const Point = WinnerPoint(Found.Raw, WinnerSeat);
+            if (Player && PlacePostGamePlayer(Player, Found.Groups[0], Point, true, WinnerSeat)) {
                 Changed.push(Player);
                 Placements.set(String(Puid), { Kind: 'winner-court', Point, Facing: Found.Raw.Pos });
+                WinnerSeat++;
             }
         }
         const Losers = Participants.filter((Puid) => !WinnerSet.has(String(Puid)));
-        Losers.forEach((Puid, Index) => {
-            const Player = ByPuid.get(String(Puid));
-            const Point = LoserPoint(Found, Index, Losers.length);
+        const LiveLoserCount = Math.max(1, Losers.filter((Puid) => Stayed(Puid) && ByPuid.has(String(Puid))).length);
+        let LoserIndex = 0;
+        for (const Puid of Losers) {
+            const Player = Stayed(Puid) ? ByPuid.get(String(Puid)) : null;
             if (Player && ReleasePostGamePlayer(Player)) {
+                const Point = LoserPoint(Found, LoserIndex++, LiveLoserCount);
                 Changed.push(Player);
                 Placements.set(String(Puid), {
                     Kind: Found.Raw.TeamSize === 1 ? 'loser-basket-left' : 'loser-opposite-home',
@@ -855,7 +867,7 @@ function FinishPublicGame(Connection, Found, Game, WinnerSide, Reason) {
                     Facing: Found.Raw.Pos,
                 });
             }
-        });
+        }
     }
 
     require('./CourtData').ClearGameTeams(Connection.ActivityName, Found.Raw.Name, PlayerBody.GenerationForConnection(Connection));
@@ -1098,35 +1110,72 @@ function IsFrozenParticipant(Game, Puid) {
     return Game.Home.some((Member) => String(Member) === Id) || Game.Away.some((Member) => String(Member) === Id);
 }
 
+function CleanupFrozenParticipant(Connection, Found) {
+    if (!Found) return { Handled: false };
+    const CourtData = require('./CourtData');
+    const Generation = PlayerBody.GenerationForConnection(Connection);
+    const Game = CourtData.GameTeams(Connection.ActivityName, Found.Raw.Name, Generation);
+    if (!IsFrozenParticipant(Game, Connection.Puid)) return { Handled: false };
+    const Outcome = CourtData.DropGameParticipant(
+        Connection.ActivityName,
+        Found.Raw.Name,
+        Connection.Puid,
+        Connection.MachineId,
+        Generation,
+    );
+    if (!Outcome.Handled) return { Handled: false };
+    if (Outcome.Remaining > 0) {
+        const Protected = new Set([Found.Groups[0].SlotObjectId]);
+        if (!Game.AwayReleased && !Outcome.Advanced && Found.Groups[1]) Protected.add(Found.Groups[1].SlotObjectId);
+        if (Outcome.Advanced) PublishGameReady(Connection, Found, Found.Groups[0]);
+        Log.Info(
+            `${Connection.ActivityName} ${Found.Raw.Name}: ${Connection.Identifier} left active match; ` +
+                `${Outcome.Remaining} human participant(s) continuing with native AI @ ${Log.Clock()}`,
+        );
+        return { Handled: true, Remaining: Outcome.Remaining, Protected, ClearedCourt: null };
+    }
+    const AllIds = [
+        ...Game.Home,
+        ...Game.Away,
+        ...(Game.NativePark?.Cpu || []),
+        ...(Game.NativeSolo?.Cpu || []),
+    ];
+    for (const Puid of AllIds) {
+        for (const Group of Found.Groups) Slots.ReleaseFrom(Group.SlotObjectId, Puid);
+    }
+    if (Found.Groups[1]) AdvanceLine(Connection, Found.Groups[1]);
+    CourtData.ClearGameTeams(Connection.ActivityName, Found.Raw.Name, Generation);
+    Log.Info(
+        `${Connection.ActivityName} ${Found.Raw.Name}: last human participant (${Connection.Identifier}) left; ` +
+            `match cleared and court released @ ${Log.Clock()}`,
+    );
+    return { Handled: true, Remaining: 0, Protected: undefined, ClearedCourt: Found.Groups[0] };
+}
+
 function Vacate(Connection) {
     require('./ParkCpu').Stop(Connection, 'participant vacated court');
     if (Connection.Puid === null) return [];
-    let ClearedStageCourt = null;
+    let Frozen = { Handled: false };
 
     if (require('./CourtData').IsBitstreamWorld(Connection.ActivityName) && Connection.GotNext) {
         const Found = CourtGroupsForMatch(Connection, Connection.GotNext.Court);
-        if (Found) {
-            const Game = require('./CourtData').GameTeams(Connection.ActivityName, Found.Raw.Name, PlayerBody.GenerationForConnection(Connection));
-            if (IsFrozenParticipant(Game, Connection.Puid)) {
-                require('./CourtData').ClearGameTeams(Connection.ActivityName, Found.Raw.Name, PlayerBody.GenerationForConnection(Connection));
-                if (Connection.ActivityName === 'stage' && Found.Raw.TeamSize === 1 &&
-                    PlayerBody.GenerationForConnection(Connection) === '2K22') ClearedStageCourt = Found.Groups[0];
-            }
-        }
+        Frozen = CleanupFrozenParticipant(Connection, Found);
     }
 
-    const Freed = Slots.Release(Connection.Puid);
+    const Freed = Slots.Release(Connection.Puid, Frozen.Handled ? Frozen.Protected : undefined);
     for (const SlotId of Freed) require('./GymEquipment2K22').PublishSpot(Connection, SlotId);
     Connection.GotNext = null;
-    if (ClearedStageCourt && !Freed.length)
-        require('./CourtData').BroadcastCourtGroup(Connection, ClearedStageCourt);
+    const BroadcastDone = new Set();
+    if (Frozen.ClearedCourt) {
+        BroadcastDone.add(Frozen.ClearedCourt.CourtName);
+        require('./CourtData').BroadcastCourtGroup(Connection, Frozen.ClearedCourt);
+    }
     NotifyQueueChanges(Connection, Freed);
     if (Freed.length) {
         try {
             const CourtData = require('./CourtData');
             const World = CourtTables.For(Connection.ActivityName, Connection);
             if (World) {
-                const Done = new Set();
                 for (const Raw of World.Courts) {
                     for (const Group of Courts.GroupsFor(Raw, World.Room, World.SeqBase)) {
                         if (!Freed.includes(Group.SlotObjectId)) continue;
@@ -1137,8 +1186,8 @@ function Vacate(Connection) {
                                 CourtData.ParkCourtFormat(Group.CourtName) !== 'legacy')
                         ) {
                             const Key = Group.CourtName;
-                            if (Done.has(Key)) continue;
-                            Done.add(Key);
+                            if (BroadcastDone.has(Key)) continue;
+                            BroadcastDone.add(Key);
                             CourtData.BroadcastCourtGroup(Connection, Group);
                         } else {
                             Publish(Connection, Group);
@@ -1172,17 +1221,16 @@ function Release(Connection) {
     Connection.PlayerBody = Body;
 
     const Held = Connection.GotNext && CourtGroupsForMatch(Connection, Connection.GotNext.Court);
-    let ClearedStageCourt = null;
-    if (Held && require('./CourtData').IsBitstreamWorld(Connection.ActivityName)) {
-        const Game = require('./CourtData').GameTeams(Connection.ActivityName, Held.Raw.Name, PlayerBody.GenerationForConnection(Connection));
-        if (IsFrozenParticipant(Game, Connection.Puid)) {
-            require('./CourtData').ClearGameTeams(Connection.ActivityName, Held.Raw.Name, PlayerBody.GenerationForConnection(Connection));
-            if (Connection.ActivityName === 'stage' && Held.Raw.TeamSize === 1 &&
-                PlayerBody.GenerationForConnection(Connection) === '2K22') ClearedStageCourt = Held.Groups[0];
-        }
-    }
-    const Freed = Slots.Release(Connection.Puid);
+    const Frozen = Held && require('./CourtData').IsBitstreamWorld(Connection.ActivityName)
+        ? CleanupFrozenParticipant(Connection, Held)
+        : { Handled: false };
+    const Freed = Slots.Release(Connection.Puid, Frozen.Handled ? Frozen.Protected : undefined);
     for (const SlotId of Freed) require('./GymEquipment2K22').PublishSpot(Connection, SlotId);
+    const BroadcastDone = new Set();
+    if (Frozen.ClearedCourt) {
+        BroadcastDone.add(Frozen.ClearedCourt.CourtName);
+        require('./CourtData').BroadcastCourtGroup(Connection, Frozen.ClearedCourt);
+    }
     const World = CourtTables.For(Connection.ActivityName, Connection);
     if (World && Freed.length) {
         for (const Raw of World.Courts) {
@@ -1190,6 +1238,8 @@ function Release(Connection) {
                 if (!Freed.includes(Group.SlotObjectId)) continue;
                 AdvanceLine(Connection, Group);
                 if (require('./CourtData').IsBitstreamWorld(Connection.ActivityName)) {
+                    if (BroadcastDone.has(Group.CourtName)) continue;
+                    BroadcastDone.add(Group.CourtName);
                     require('./CourtData').BroadcastCourtGroup(Connection, Group);
                 } else {
                     Publish(Connection, Group);
@@ -1199,8 +1249,6 @@ function Release(Connection) {
         }
     }
     Connection.GotNext = null;
-    if (ClearedStageCourt && !Freed.length)
-        require('./CourtData').BroadcastCourtGroup(Connection, ClearedStageCourt);
     NotifyQueueChanges(Connection, Freed);
 
     const Frame = PlayerObject.FrameFor(Connection);
@@ -1350,6 +1398,7 @@ module.exports = {
     Warp,
     QueuesFor,
     QueueFor,
+    AdvanceLine,
     Seat,
     Vacate,
     GroupFor,

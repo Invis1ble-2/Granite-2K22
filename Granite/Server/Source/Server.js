@@ -19,6 +19,7 @@ const { LoadAutomaticItems } = require('./Storage/AutomaticOwnership');
 const { LoadCatalogPrices } = require('./Storage/StoreCatalog');
 const { LoadCareerOveralls, SaveCareerOveralls, RecordOverall } = require('./Storage/CareerOverall');
 const { LoadCareerGrind, SaveCareerGrind } = require('./Storage/CareerGrind');
+const { CareerSaveIds } = require('./Storage/CareerSaveIds');
 const { PlayerCards2K22 } = require('./Storage/PlayerCards2K22');
 const { GameStats2K22 } = require('./Storage/GameStats2K22');
 const GatoradeStore = require('./Storage/GatoradeBoosts');
@@ -45,6 +46,7 @@ const MyCareerAttributes = require('./Services/MyCareer/Attributes/Get');
 const MyCareerCard = require('./Services/MyCareer/Card');
 const MyCareerAddGrindPoints = require('./Services/MyCareer/GrindPoints/AddGrindPoints');
 const UpdateCareerBadges = require('./Services/MyCareer/Badges/Update');
+const CareerBadges = require('./Services/MyCareer/Badges/State');
 const MyCareerAttributePrices = require('./Services/MyCareer/Attributes/Price');
 const Balance = require('./Services/VirtualCurrency/Balance');
 const Consumables = require('./Services/VirtualCurrency/GetConsumableInfo');
@@ -117,6 +119,9 @@ function LoadConfig(File = Settings.File) {
         ),
         CareerAttributes: Resolve(
             process.env.GRANITE_CAREER_ATTRIBUTES || Raw.CareerAttributes || 'Storage/Career/Attributes.json',
+        ),
+        CareerSaveIds: Resolve(
+            process.env.GRANITE_CAREER_SAVE_IDS || Raw.CareerSaveIds || 'Storage/Career/SaveIds.json',
         ),
         CareerOverall: Resolve(
             process.env.GRANITE_CAREER_OVERALL || Raw.CareerOverall || 'Storage/Career/Overall.json',
@@ -331,9 +336,22 @@ function ResolveContext(Input, Sessions, Key, TargetQuery = false) {
         ? (SessionUser ?? AuthenticatedBodyUser)
         : (AuthenticatedBodyUser ?? SessionUser);
     const RequestedCareerSaveId = TargetQuery ? 0n : GetU64(Fields, CareerSaveId) ?? 0n;
+    const HasSaveField = !TargetQuery && Fields.some((Field) => Field.Crc === CareerSaveId);
     const RequestedSlot = TargetQuery ? null : GetU64(Fields, CareerSlot);
-    if (!TargetQuery && Current && RequestedSlot !== null)
-        Current = Sessions.bind(Key, { careerSlot: RequestedSlot.toString() }) || Current;
+    const SameSessionSlot =
+        RequestedSlot === null ||
+        (Current?.careerSlot !== undefined &&
+            Current?.careerSlot !== null &&
+            String(Current.careerSlot) === RequestedSlot.toString());
+    if (!TargetQuery && Current) {
+        const NextSession = {};
+        if (RequestedSlot !== null) NextSession.careerSlot = RequestedSlot.toString();
+        if (RequestedCareerSaveId !== 0n) NextSession.careerScopeId = RequestedCareerSaveId.toString();
+        else if (RequestedSlot !== null && (HasSaveField || !SameSessionSlot)) {
+            NextSession.careerScopeId = `slot-${RequestedSlot}`;
+        }
+        if (Object.keys(NextSession).length) Current = Sessions.bind(Key, NextSession) || Current;
+    }
     const CareerSlotValue =
         RequestedSlot !== null
             ? RequestedSlot.toString()
@@ -343,9 +361,9 @@ function ResolveContext(Input, Sessions, Key, TargetQuery = false) {
     const CareerScopeId =
         RequestedCareerSaveId !== 0n
             ? RequestedCareerSaveId.toString()
-            : CareerSlotValue !== null
-              ? `slot-${CareerSlotValue}`
-              : Current?.careerScopeId || '0';
+            : RequestedSlot !== null && (HasSaveField || !SameSessionSlot)
+              ? `slot-${RequestedSlot}`
+              : Current?.careerScopeId || (CareerSlotValue !== null ? `slot-${CareerSlotValue}` : '0');
     return {
         SessionKey: Key,
         HasLoginSession: Boolean(Current?.userId),
@@ -456,6 +474,9 @@ function CreateHandler(Config, Dependencies = {}) {
     const RequireVerifiedIdentity =
         Config.RequireVerifiedIdentity === true || process.env.CELESTIAL_REQUIRE_VERIFIED_IDENTITY === '1';
     const ArbitrationDirectory = Config.ArbitrationDirectory || Path.resolve(__dirname, '../Storage/Arbitration');
+    const SaveIds =
+        Dependencies.CareerSaveIds ||
+        new CareerSaveIds(Config.CareerSaveIds || Path.resolve(__dirname, '../Storage/Career/SaveIds.json'));
     const PlayerCards = Dependencies.PlayerCards || new PlayerCards2K22(
         Config.PlayerCardsFile || Path.join(Path.dirname(CareerAttributesFile), 'PlayerCards2K22.json'));
     const GameStats = Dependencies.GameStats || new GameStats2K22(
@@ -490,6 +511,7 @@ function CreateHandler(Config, Dependencies = {}) {
             Sessions,
             content: Content,
             Careers,
+            CareerSaveIds: SaveIds,
             PlayerCards,
             GameStats,
             AttributeProfiles,
@@ -568,21 +590,29 @@ function CreateHandler(Config, Dependencies = {}) {
         if (Route === 'mycareer/save' && Parsed?.Fields?.some((Field) => Field.Crc === CareerSlot)) {
             const Slot = GetU64(Parsed.Fields, CareerSlot);
             const Scope = Slot === null ? null : `slot-${Slot}`;
-            const ExistingKey = Context.userId !== null && Scope ? `${Context.userId}:${Scope}` : null;
             const SaveMarker = GetU64(Parsed.Fields, CareerSaveId);
             const IsNewSave = SaveMarker === 0n || SaveMarker === null;
-            if (IsNewSave && ExistingKey) {
-                PlayerCards.Forget({ ...Context, careerScopeId: Scope });
-                Careers.delete(ExistingKey);
-                AttributeProfiles.delete(ExistingKey);
-                CareerOveralls.delete(ExistingKey);
-                CareerGrind.delete(ExistingKey);
-                require('./Services/MyCareer/Badges/State').Reset({ ...Context, careerScopeId: Scope });
-                SaveCareers(CareerAttributesFile, Careers);
-                SaveAttributeProfiles(Config.AttributeProfiles, AttributeProfiles);
-                SaveCareerOveralls(CareerOverallFile, CareerOveralls);
-                SaveCareerGrind(CareerGrindFile, CareerGrind);
-                Logger.Info(`cleared stale career state for new save ${ExistingKey}`);
+            if (IsNewSave && Scope) {
+                const RemovedSaveIds = SaveIds.ForgetSlot(Context, Slot);
+                const StaleScopes = [Scope, ...RemovedSaveIds];
+                for (const StaleScope of StaleScopes) {
+                    PlayerCards.Forget({ ...Context, careerScopeId: StaleScope });
+                    CareerBadges.Reset({ ...Context, careerScopeId: StaleScope });
+                    if (Context.userId !== null) {
+                        const StaleKey = `${Context.userId}:${StaleScope}`;
+                        Careers.delete(StaleKey);
+                        AttributeProfiles.delete(StaleKey);
+                        CareerOveralls.delete(StaleKey);
+                        CareerGrind.delete(StaleKey);
+                    }
+                }
+                if (Context.userId !== null) {
+                    SaveCareers(CareerAttributesFile, Careers);
+                    SaveAttributeProfiles(Config.AttributeProfiles, AttributeProfiles);
+                    SaveCareerOveralls(CareerOverallFile, CareerOveralls);
+                    SaveCareerGrind(CareerGrindFile, CareerGrind);
+                    Logger.Info(`cleared stale career state for new save ${Context.userId}:${Scope}`);
+                }
             }
         }
         const ReportedOverall = TargetQuery ? null : RecordOverall(Parsed?.Fields, CareerKey(Context), CareerOveralls);
@@ -685,25 +715,10 @@ function CreateHandler(Config, Dependencies = {}) {
         else if (ArbitrationUpload.Resolve(Route) !== null)
             Reply = ArbitrationUpload.Build(Input, { ...Context, Route });
         else if (Route === 'mycareerv3/getmycareerattributesofdefaultsave') Reply = MyCareerCard.Build(Input, Context);
+        else if (Route === 'mycareerv3/importmycareersave') Reply = MyCareerSave.Import(Input, Context);
         else if (Route === 'attributes/get') Reply = MyCareerAttributes.Build(Input, Context);
         else if (Route === 'mycareerv3/addgrindpoints') Reply = MyCareerAddGrindPoints.Build(Input, Context);
         else if (Route === 'mycareerv3/unlockbadge') Reply = UpdateCareerBadges.Build(Input, Context);
-        else if (
-            Route === 'attributes/direct_price' ||
-            Route === 'mycareer/attributes/direct_price' ||
-            Route === 'attributes/directprice' ||
-            FullUrl.includes('/mycareer/attributes/direct_price')
-        ) {
-            const DirectData = MyCareerAttributePrices.DirectPrice(Input, Context);
-            const JsonBody = Buffer.from(JSON.stringify(DirectData), 'utf8');
-            Res.writeHead(200, {
-                'Content-Type': 'application/json',
-                'Content-Length': String(JsonBody.length),
-                Connection: 'close',
-            });
-            Res.end(JsonBody);
-            return;
-        }
         else if (
             Route === 'attributes/price' ||
             Route === 'gamestatsv4/get_attributes_price' ||

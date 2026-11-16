@@ -41,7 +41,7 @@ function Release(PlayerId, Except) {
     if (!PlayerId) return Touched;
 
     for (const [SlotId, State] of Occupancy) {
-        if (Except !== undefined && SlotId === Except) continue;
+        if (Except instanceof Set ? Except.has(SlotId) : Except !== undefined && SlotId === Except) continue;
         let Hit = false;
         for (let I = 0; I < State.Seats.length; I++) {
             if (State.Seats[I] === PlayerId) {

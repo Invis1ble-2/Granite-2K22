@@ -867,6 +867,12 @@ function PrepareGameTeams(Activity, Name, Home, Away, Profiles, Generation = '2K
     Teams.AwayReleased = false;
     Teams.Ended = false;
     Teams.Reports = new Map();
+    const ExpectedHumans = Teams.NativeSolo
+        ? [Teams.NativeSolo.Owner]
+        : Teams.NativePark
+          ? Teams.NativePark.Humans
+          : [...Teams.Home, ...Teams.Away];
+    Teams.LiveHumans = new Set(ExpectedHumans.map(String));
     const Guid = Court.Guid;
     const Previous = CourtTeams.get(Guid.toString());
     CourtTeams.set(Guid.toString(), Teams);
@@ -914,12 +920,34 @@ function MarkGameConnected(Activity, Name, Puid, Generation = '2K19') {
     if (!Expected.includes(Id)) return { Accepted: false, Advanced: false };
     Teams.Connected ??= new Set();
     Teams.Connected.add(Id);
-    const Advanced = !Teams.GameReady && Expected.every((P) => Teams.Connected.has(P));
+    const LiveExpected = Teams.LiveHumans ? [...Teams.LiveHumans] : Expected;
+    const Advanced = !Teams.GameReady && LiveExpected.length > 0 && LiveExpected.every((P) => Teams.Connected.has(P));
     if (Advanced) {
         Teams.GameReady = true;
         Teams.Phase = 'playing';
     }
-    return { Accepted: true, Advanced, Ready: Teams.Connected.size, total: Expected.length };
+    return { Accepted: true, Advanced, Ready: Teams.Connected.size, total: LiveExpected.length };
+}
+
+function DropGameParticipant(Activity, Name, Puid, MachineId, Generation = '2K19') {
+    const Teams = CourtTeams.get(GameCourt(Activity, Name, Generation).Guid.toString());
+    if (!Teams || Teams.Ended || Puid === null || Puid === undefined) return { Handled: false };
+    const Id = String(Puid);
+    const InRoster = Teams.Home.some((M) => String(M) === Id) || Teams.Away.some((M) => String(M) === Id);
+    if (!InRoster) return { Handled: false };
+    Teams.LiveHumans?.delete(Id);
+    const Remaining = Teams.NativeSolo ? 0 : (Teams.LiveHumans ? Teams.LiveHumans.size : 0);
+    if (Remaining <= 0) return { Handled: true, Remaining: 0, Advanced: false };
+    if (Teams.Transport && MachineId !== null && MachineId !== undefined && BigInt(MachineId) !== 0n) {
+        require('../Net/VconlineRelay').ActiveRouter()?.DropMachine(Teams.Transport, BigInt(MachineId));
+    }
+    const LiveExpected = [...Teams.LiveHumans];
+    const Advanced = !Teams.GameReady && LiveExpected.every((P) => Teams.Connected?.has(P));
+    if (Advanced) {
+        Teams.GameReady = true;
+        Teams.Phase = 'playing';
+    }
+    return { Handled: true, Remaining, Advanced };
 }
 
 function PublishStageCourts(Connection) {
@@ -1001,6 +1029,7 @@ module.exports = {
     GameTeams,
     ReplayPacketIdFor,
     MarkGameConnected,
+    DropGameParticipant,
     PrepareStageTeams,
     ClearStageTeams,
     MarkStageGameConnected,

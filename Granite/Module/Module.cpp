@@ -82,7 +82,6 @@ struct PendingBadgeRequest
 std::unordered_map<HINTERNET, std::shared_ptr<PendingBadgeRequest>> PendingBadgeRequests;
 std::wstring IdentityTicket;
 HMODULE SelfModule = nullptr;
-std::atomic_bool PriceSyncInProgress = false;
 std::mutex LogMutex;
 HANDLE LogFile = INVALID_HANDLE_VALUE;
 wchar_t LogPath[MAX_PATH * 2] = {};
@@ -144,11 +143,6 @@ void Log(LogLevel Level, const std::wstring& Message, bool DetailsEnabled = Modu
 void LogHttp(LogLevel Level, const std::wstring& Message)
 {
     Log(Level, Message, ModuleConfig::LogHttp);
-}
-
-void LogPrice(LogLevel Level, const std::wstring& Message)
-{
-    Log(Level, Message, ModuleConfig::LogAttributePrice);
 }
 
 void LogBadges(LogLevel Level, const std::wstring& Message)
@@ -525,189 +519,6 @@ bool PatchImport(HMODULE Module, const char* ImportedModule, const char* Functio
     return false;
 }
 
-constexpr DWORD DefaultAttributePriceBase = 100;
-constexpr DWORD DefaultAttributePriceStep = 25;
-constexpr int AttributeCount = 24;
-constexpr int MaxAttributeLevel = 75;
-
-// The job factory returns an internal result code.  Returning void here left
-// RAX undefined when the hook was entered, so the caller could discard the
-// otherwise valid price state immediately after the hook returned.
-using CreateAndSendRequestFn = DWORD (*)(void*);
-CreateAndSendRequestFn OriginalCreateAndSendRequest = nullptr;
-
-void PopulateCareerPrices(DWORD BasePrice, DWORD StepPrice, void* JobContext)
-{
-    HMODULE Executable = GetModuleHandleW(nullptr);
-    if (!Executable) return;
-    auto* BaseAddr = reinterpret_cast<unsigned char*>(Executable);
-    auto* StatePtr = reinterpret_cast<DWORD*>(BaseAddr + 0x5280980);
-
-    // Populate prices for 24 attributes x 75 levels
-    for (int Attr = 0; Attr < AttributeCount; ++Attr)
-    {
-        for (int Lvl = 1; Lvl <= MaxAttributeLevel; ++Lvl)
-        {
-            DWORD UnitPrice = BasePrice + (static_cast<DWORD>(Lvl) - 1) * StepPrice;
-            uintptr_t Offset = static_cast<uintptr_t>((Attr * MaxAttributeLevel + Lvl) * 8);
-            *reinterpret_cast<DWORD*>(reinterpret_cast<unsigned char*>(StatePtr) + Offset) = UnitPrice;     // VC
-            *reinterpret_cast<DWORD*>(reinterpret_cast<unsigned char*>(StatePtr) + Offset - 4) = UnitPrice; // SP
-        }
-    }
-
-    // Set state machine to READY (2)
-    *StatePtr = 2;
-
-    // Do not write through JobContext here.  Its layout is build-specific and
-    // the CE proof only changes the global state and price matrix above.
-    // The caller observes the same state through StatePtr.
-    (void)JobContext;
-}
-
-void FetchAndApplyServerPrices(void* JobContext)
-{
-    bool Expected = false;
-    if (!PriceSyncInProgress.compare_exchange_strong(Expected, true)) return;
-    struct SyncGuard
-    {
-        ~SyncGuard() { PriceSyncInProgress.store(false); }
-    } Guard;
-
-    DWORD ResolvedBase = DefaultAttributePriceBase;
-    DWORD ResolvedStep = DefaultAttributePriceStep;
-
-    // Connect to Granite server to get authoritative direct prices
-    HINTERNET Session = WinHttpOpen(L"Granite-DirectConnect/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
-                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (Session)
-    {
-        HINTERNET Connection = WinHttpConnect(Session, RedirectHost, RedirectPort, 0);
-        if (Connection)
-        {
-            // Granite is an HTTPS server on port 21000.  The game-side
-            // redirect keeps the secure request flag; this direct request
-            // must do the same or WinHTTP sends clear-text HTTP to a TLS
-            // socket and the server never sees it.
-            HINTERNET Request = WinHttpOpenRequest(Connection, L"GET",
-                                                   L"/nba/2k19/MyCareer/Attributes/direct_price",
-                                                   nullptr, nullptr,
-                                                   WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-            if (Request)
-            {
-                DWORD Security = SECURITY_FLAG_IGNORE_UNKNOWN_CA | SECURITY_FLAG_IGNORE_CERT_CN_INVALID |
-                                 SECURITY_FLAG_IGNORE_CERT_DATE_INVALID | SECURITY_FLAG_IGNORE_CERT_WRONG_USAGE;
-                WinHttpSetOption(Request, WINHTTP_OPTION_SECURITY_FLAGS, &Security, sizeof(Security));
-                WinHttpSetTimeouts(Request, 3000, 3000, 3000, 3000);
-
-                if (WinHttpSendRequest(Request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                                       WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-                    WinHttpReceiveResponse(Request, nullptr))
-                {
-                    DWORD StatusCode = 0;
-                    DWORD StatusSize = sizeof(StatusCode);
-                    if (WinHttpQueryHeaders(Request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                            WINHTTP_HEADER_NAME_BY_INDEX, &StatusCode, &StatusSize,
-                                            WINHTTP_NO_HEADER_INDEX) &&
-                        StatusCode == 200)
-                    {
-                        std::string ResponseBody;
-                        DWORD BytesAvailable = 0;
-                        while (WinHttpQueryDataAvailable(Request, &BytesAvailable) && BytesAvailable > 0)
-                        {
-                            std::string Chunk(BytesAvailable, '\0');
-                            DWORD ReadBytes = 0;
-                            if (WinHttpReadData(Request, Chunk.data(), BytesAvailable, &ReadBytes) && ReadBytes > 0)
-                            {
-                                ResponseBody.append(Chunk.data(), ReadBytes);
-                            }
-                        }
-
-                        // Parse basePrice and stepPrice from JSON response
-                        auto FindNumber = [&](const std::string& Key) -> DWORD {
-                            size_t Pos = ResponseBody.find("\"" + Key + "\":");
-                            if (Pos == std::string::npos) Pos = ResponseBody.find("\"" + Key + "\" :");
-                            if (Pos == std::string::npos) return 0;
-                            size_t Colon = ResponseBody.find(':', Pos);
-                            if (Colon == std::string::npos) return 0;
-                            size_t Start = ResponseBody.find_first_not_of(" \t", Colon + 1);
-                            if (Start == std::string::npos) return 0;
-                            size_t End = ResponseBody.find_first_of(",}\r\n ", Start);
-                            std::string ValStr = ResponseBody.substr(Start, End == std::string::npos ? std::string::npos : End - Start);
-                            try { return static_cast<DWORD>(std::stoul(ValStr)); } catch (...) { return 0; }
-                        };
-
-                        DWORD SvrBase = FindNumber("basePrice");
-                        DWORD SvrStep = FindNumber("stepPrice");
-                        if (SvrBase > 0) ResolvedBase = SvrBase;
-                        if (SvrStep > 0) ResolvedStep = SvrStep;
-                        LogPrice(LogLevel::Info, L"Received authoritative attribute price parameters from Granite server: base=" +
-                                                std::to_wstring(ResolvedBase) + L", step=" + std::to_wstring(ResolvedStep));
-                    }
-                }
-                else
-                {
-                    LogPrice(LogLevel::Error, L"direct attribute price request failed: " +
-                                            std::to_wstring(GetLastError()));
-                }
-                WinHttpCloseHandle(Request);
-            }
-            else
-            {
-                LogPrice(LogLevel::Error, L"could not create direct attribute price request: " +
-                                        std::to_wstring(GetLastError()));
-            }
-            WinHttpCloseHandle(Connection);
-        }
-        else
-        {
-            LogPrice(LogLevel::Error, L"could not connect to Granite direct price endpoint: " +
-                                    std::to_wstring(GetLastError()));
-        }
-        WinHttpCloseHandle(Session);
-    }
-    else
-    {
-        LogPrice(LogLevel::Error, L"could not open WinHTTP session for direct attribute prices: " +
-                                std::to_wstring(GetLastError()));
-    }
-
-    PopulateCareerPrices(ResolvedBase, ResolvedStep, JobContext);
-    LogPrice(LogLevel::Info, L"Career attribute prices direct-connected! State set to 2 (READY).");
-}
-
-DWORD HookedCreateAndSendRequest(void* JobContext)
-{
-    LogPrice(LogLevel::Info, L">> Intercepted CareerUpgrades_CreateAndSendRequest (0x5f5950). Synchronizing directly with Granite server...");
-    FetchAndApplyServerPrices(JobContext);
-    return 0;
-}
-
-DWORD WINAPI CareerPriceWatchdog(void*)
-{
-    HMODULE Executable = GetModuleHandleW(nullptr);
-    if (!Executable) return 0;
-    auto* BaseAddr = reinterpret_cast<unsigned char*>(Executable);
-    volatile auto* StatePtr = reinterpret_cast<volatile DWORD*>(BaseAddr + 0x5280980);
-
-    while (true)
-    {
-        Sleep(200);
-        DWORD CurrentState = *StatePtr;
-        // State 0 is the initial value used by the online path before its
-        // service lookup completes.  That lookup can fail before WinHTTP is
-        // reached on this 2K22 build, so include 0 as well as pending/failed
-        // states.  This is the same state/matrix transition proven by the CE
-        // script and leaves no dependency on the missing price request.
-        if (CurrentState == 0 || CurrentState == 1 || CurrentState == 3)
-        {
-            LogPrice(LogLevel::Info, L"Watchdog detected attribute price state=" + std::to_wstring(CurrentState) +
-                                    L", synchronizing from Granite server...");
-            FetchAndApplyServerPrices(nullptr);
-        }
-    }
-    return 0;
-}
-
 #include "OnlineMatchFrameRateHooks.h"
 #include "GameSessionDiscovery.h"
 #include "OnlineFrameRateClient.h"
@@ -716,9 +527,6 @@ DWORD WINAPI CareerPriceWatchdog(void*)
 #include "ParkCpu.h"
 #include "AnimationUnlock.h"
 #include "CareerProgressionSync.h"
-#if defined(GRANITE_SOLO_CPU_TRACE)
-#include "SoloCpuTrace22.h"
-#endif
 
 DWORD WINAPI Initialise(void*)
 {
@@ -764,7 +572,7 @@ DWORD WINAPI Initialise(void*)
     if (ModuleConfig::EnableBadgeBudgets)
         LogBadges(LogLevel::Info, L"Native system clock retained; career badge budgets attach to Attributes/get requests");
 
-    // Install CareerUpgrades_CreateAndSendRequest Hook via MinHook
+    // Install game hooks via MinHook
     MH_STATUS MhStatus = MH_Initialize();
     if (MhStatus == MH_OK || MhStatus == MH_ERROR_ALREADY_INITIALIZED)
     {
@@ -776,48 +584,10 @@ DWORD WINAPI Initialise(void*)
         MatchLifecycleHooks::Install(Executable);
         AnimationUnlock::Install(Executable);
         CareerProgressionSync::Install(Executable);
-#if defined(GRANITE_SOLO_CPU_TRACE)
-        SoloCpuTrace22::Install(Executable);
-#endif
-        if (ModuleConfig::EnablePriceWatchdog)
-        {
-            void* Target = reinterpret_cast<void*>(reinterpret_cast<unsigned char*>(Executable) + 0x5f5950);
-            MH_STATUS HookStatus = MH_CreateHook(Target, reinterpret_cast<void*>(&HookedCreateAndSendRequest),
-                                                 reinterpret_cast<void**>(&OriginalCreateAndSendRequest));
-            if (HookStatus == MH_OK)
-            {
-                HookStatus = MH_EnableHook(Target);
-                if (HookStatus == MH_OK)
-                    LogPrice(LogLevel::Info, L"Career attribute price direct-connect hook installed at 0x5f5950");
-                else
-                {
-                    MH_RemoveHook(Target);
-                    LogPrice(LogLevel::Error, L"Failed to enable hook at 0x5f5950: " + std::to_wstring(HookStatus));
-                }
-            }
-            else
-            {
-                LogPrice(LogLevel::Error, L"Failed to create hook at 0x5f5950: " + std::to_wstring(HookStatus));
-            }
-        }
     }
     else
     {
         Log(LogLevel::Error, L"MinHook initialize failed: " + std::to_wstring(MhStatus));
-    }
-
-    // Start background watchdog thread for seamless attribute price state management
-    if (ModuleConfig::EnablePriceWatchdog)
-    {
-        if (HANDLE WatchdogThread = CreateThread(nullptr, 0, CareerPriceWatchdog, nullptr, 0, nullptr))
-        {
-            CloseHandle(WatchdogThread);
-            LogPrice(LogLevel::Info, L"Career attribute price watchdog thread started");
-        }
-        else
-        {
-            LogPrice(LogLevel::Error, L"Career attribute price watchdog thread failed: " + std::to_wstring(GetLastError()));
-        }
     }
 
     if (Connect && Open && Send && Close && Write)

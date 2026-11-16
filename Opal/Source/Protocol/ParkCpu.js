@@ -182,6 +182,12 @@ const Multiplayer = (() => {
             Game.Ended = true;
             CourtData.ClearGameTeams(P.ActivityName, P.Found.Raw.Name, '2K22');
         }
+        if (ReleasePlayers) {
+            for (const Id of P.Players) {
+                if (!Id) continue;
+                for (const Group of P.Found.Groups) Slots.ReleaseFrom(Group.SlotObjectId, Id);
+            }
+        }
         for (const Id of P.Cpu) {
             for (const Group of P.Found.Groups) Slots.ReleaseFrom(Group.SlotObjectId, Id);
             for (const M of P.Members) if (!M.Connection.Closed) {
@@ -189,20 +195,61 @@ const Multiplayer = (() => {
                 catch (_) { /* Cleanup continues for every participant. */ }
             }
         }
-        if (ReleasePlayers) for (const M of P.Members) {
-            if (M.Connection.GotNext !== M.Spot) continue;
-            try {
-                if (M.Connection.Closed) { Slots.Release(M.Connection.Puid); M.Connection.GotNext = null; }
-                else require('./GotNext').Release(M.Connection);
-            } catch (Failure) { Log.Error(`ParkCpu player cleanup failed: ${Failure.message}`); }
+        if (ReleasePlayers) {
+            if (P.Found.Groups[1]) require('./GotNext').AdvanceLine(P.Anchor || P.Context, P.Found.Groups[1]);
+            for (const M of P.Members) {
+                if (M.Connection.GotNext !== M.Spot) continue;
+                try {
+                    if (M.Connection.Closed) { Slots.Release(M.Connection.Puid); M.Connection.GotNext = null; }
+                    else require('./GotNext').Release(M.Connection);
+                } catch (Failure) { Log.Error(`ParkCpu player cleanup failed: ${Failure.message}`); }
+            }
         }
         CourtData.BroadcastCourtGroup(P.Context, P.Found.Groups[0]);
         return true;
     }
+    function CheckMember(P, M, Now) {
+        const C = M.Connection, Control = M.Control, R = Control?.Report;
+        if (C.Closed || C.GotNext !== M.Spot || C.ActivityKey !== P.ActivityKey ||
+            (C.RoomScope || null) !== P.RoomScope || Controls.get(C.Id) !== Control ||
+            !Control || Now - Control.SeenAt > Wire.HeartbeatMs) return 'participant, queue or control connection lost';
+        if (R?.Epoch === Control.Epoch && R.Match === P.MatchId && R.Error)
+            return Wire.ErrorNames[R.Error];
+        if (!R || !(R.Flags & Wire.Flag.Installed) || R.PoolCount !== P.PoolCount || !R.Digest.equals(P.Digest))
+            return 'native module or template pool changed';
+        if (P.Phase !== 'arming' && (!Wire.Matches(R, P, Control) || !(R.Flags & Wire.Flag.Armed) || (R.Created & ~P.CpuMask)))
+            return 'native match authorization lost';
+        if ((P.Phase === 'starting' || P.Phase === 'playing') && !R.ProfileDigest.equals(P.ProfileDigest))
+            return 'server-authored CPU profile digest changed';
+        return null;
+    }
+    function DropMember(P, M, Why, DetachCourt = false) {
+        if (Participants.get(M.Connection.Id) === P) Participants.delete(M.Connection.Id);
+        P.Members = P.Members.filter(Candidate => Candidate !== M);
+        if (P.Members.length) P.Anchor = P.Members[0].Connection;
+        Log.Info(
+            `ParkCpu multiplayer ${P.Found.Raw.Name}: ${M.Connection.Identifier} left (${Why}); ` +
+                `${P.Members.length} human participant(s) continuing with native AI`,
+        );
+        if (DetachCourt && M.Connection.GotNext === M.Spot) {
+            try {
+                if (M.Connection.Closed) require('./GotNext').Vacate(M.Connection);
+                else require('./GotNext').Release(M.Connection);
+            } catch (Failure) { Log.Error(`ParkCpu participant detach failed: ${Failure.message}`); }
+        }
+    }
     function Stop(C, Why = 'queue changed') {
         const Cancelled = CancelWait(C), P = Participants.get(C.Id);
         if (!P) return Cancelled;
-        return Remove(P, Why, P.Phase === 'starting' || P.Phase === 'playing');
+        const Committed = P.Phase === 'starting' || P.Phase === 'playing';
+        if (Committed && P.Members.length > 1) {
+            const Member = P.Members.find(M => M.Connection === C);
+            if (Member) {
+                DropMember(P, Member, Why, Why === 'native instance changed' && !C.Closed);
+                return true;
+            }
+        }
+        return Remove(P, Why, Committed);
     }
     function Disconnect(C) {
         Stop(C, 'participant disconnected or changed activity');
@@ -250,21 +297,17 @@ const Multiplayer = (() => {
         P.CheckedAt = Date.now();
         try {
             const Now = Date.now();
+            const Committed = P.Phase === 'starting' || P.Phase === 'playing';
+            const Failures = [];
             for (const M of P.Members) {
-                const C = M.Connection, Control = M.Control, R = Control?.Report;
-                if (C.Closed || C.GotNext !== M.Spot || C.ActivityKey !== P.ActivityKey ||
-                    (C.RoomScope || null) !== P.RoomScope || Controls.get(C.Id) !== Control ||
-                    !Control || Now - Control.SeenAt > Wire.HeartbeatMs) throw new Error('participant, queue or control connection lost');
-                if (R?.Epoch === Control.Epoch && R.Match === P.MatchId && R.Error)
-                    throw new Error(Wire.ErrorNames[R.Error]);
-                if (!R || !(R.Flags & Wire.Flag.Installed) || R.PoolCount !== P.PoolCount || !R.Digest.equals(P.Digest))
-                    throw new Error('native module or template pool changed');
-                if (P.Phase !== 'arming' && (!Wire.Matches(R, P, Control) || !(R.Flags & Wire.Flag.Armed) || (R.Created & ~P.CpuMask)))
-                    throw new Error('native match authorization lost');
-                if ((P.Phase === 'starting' || P.Phase === 'playing') && !R.ProfileDigest.equals(P.ProfileDigest))
-                    throw new Error('server-authored CPU profile digest changed');
+                const Reason = CheckMember(P, M, Now);
+                if (Reason) Failures.push({ Member: M, Reason });
             }
-            if (P.Phase === 'arming' || P.Phase === 'preloading') {
+            if (Failures.length) {
+                if (!Committed || Failures.length >= P.Members.length) throw new Error(Failures[0].Reason);
+                for (const Entry of Failures) DropMember(P, Entry.Member, Entry.Reason, true);
+            }
+            if (!Committed) {
                 if (!SameQueue(P.Snapshot, Snapshot(P.Anchor, P.Found))) throw new Error('court queue changed during preparation');
             }
             const Reports = P.Members.map(M => M.Control.Report);
